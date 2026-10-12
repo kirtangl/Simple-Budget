@@ -566,3 +566,33 @@ test('updates: "Update now" backs up the data and asks the updater to install it
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('updates: the releases offered follow IMAGE_TAG, so Update now can install them', async () => {
+  const { createUpdates } = require('../src/updates');
+  const releases = [
+    { tag_name: 'v1.0.0', name: '1.0.0', html_url: 'https://github.com/x/y', draft: false, prerelease: false },
+    { tag_name: 'v1.1.0-beta.1', name: 'beta', html_url: 'https://github.com/x/y', draft: false, prerelease: true },
+  ];
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => releases });
+  const make = (imageTag, channel = 'test', url = 'http://updater:8080') => createUpdates({
+    version: '0.9.0', fetchImpl, settings: () => ({ channel, repo: 'x/y', token: '' }), updater: () => ({ url, token: 't', imageTag }),
+  });
+  // A Test copy on the standard image is only offered what that image gets: full releases.
+  let u = make('latest');
+  await u.check();
+  assert.deepEqual([u.view().track, u.view().latest.version, u.view().can_install], ['releases', '1.0.0', true]);
+  // On the beta image it's offered the beta.
+  u = make('beta', '');
+  await u.check();
+  assert.deepEqual([u.view().track, u.view().latest.version], ['beta', '1.1.0-beta.1']);
+  // A fixed version can't be moved by Update now.
+  u = make('0.9.0');
+  await u.check();
+  assert.equal(u.view().track, 'pinned');
+  assert.equal(u.view().can_install, false);
+  await assert.rejects(u.install(), /IMAGE_TAG/);
+  // Without the updater (updated by hand), the build tag decides as before.
+  u = make('latest', 'test', '');
+  await u.check();
+  assert.deepEqual([u.view().track, u.view().latest.version], ['beta', '1.1.0-beta.1']);
+});

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.7.1 (12 October 2026)
+
+- The versions offered in Settings → Updates follow `IMAGE_TAG`, so a copy is only offered what **Update now** can install. A copy on `latest` is never offered a beta, whatever its build tag, and one kept on a fixed version says so. Settings → Updates shows which releases a copy follows.
+- The README explains the test copy's two settings (`APP_CHANNEL` is the label, `IMAGE_TAG` picks the versions) and how to turn a test copy back into a normal one.
+
 ## v0.7.0 (12 October 2026)
 
 - **One-click updates**: **Update now** in Settings → Updates installs a new version and restarts the app, with no terminal. A copy of the database is saved to `backups/` first, and the page reloads by itself when it's done. Main login only.
