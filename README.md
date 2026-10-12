@@ -92,12 +92,12 @@ Everything is stored in one SQLite database file inside the Docker volume `budge
 
 - **Backup and restore**: Settings → General → **Download backup** saves your accounts, income, payees, categories, expenses, goals, debts and settings as a JSON file. **Restore from backup** loads one back in and **replaces** what's there. Passwords and logins aren't included or changed. This is also handy for starting over: wipe the volume (`docker compose down -v`), start again, and restore.
 - **Older backups keep working**: each file records its format version. When a newer app expects data an older file doesn't have, it fills in the defaults, and any section missing from the file is left as it is.
-- **Backups on the server**: Settings → Updates → **Backups** lists copies of the whole database kept in `backups/` in the data volume. One is made before every update and before every restore (the last five are kept), and **Back up now** makes a manual one, which is kept until you delete the file. **Restore** (main login only) puts the budget back as it was then; logins and passwords stay as they are now, so nobody is logged out.
+- **Backups on the server**: Settings → Updates → **Backups** lists copies of the whole database kept in `backups/` in the data volume. One is made before every update and before every restore (the last 5 are kept, or 10 or 20 under **Preferences**), and **Back up now** makes a manual one, which is kept until you delete the file. **Restore** (main login only) puts the budget back as it was then; logins and passwords stay as they are now, so nobody is logged out.
 - **Full database copy**: `docker compose cp budget:/app/data/budget.db ./budget-backup.db`
 
 ### Updating
 
-**Settings → Updates** shows this copy's version, the latest release on GitHub and what's new in it and in the version you're on, with a **Check now** button. The app also checks every 6 hours by itself (turn that off under **Preferences**). When there's a newer version, an **Update** tag appears beside the profile button, which also gets a dot, the Updates tab gets a dot, and the menu offers **Update to vX.Y.Z**.
+**Settings → Updates** shows this copy's version, the latest release on GitHub and what's new in it and in the version you're on, with a **Check now** button. The app also checks by itself, every 6 hours unless you choose otherwise under **Preferences** (every hour to once a day, or off). Turn on **Wait a day before offering updates** there to be offered a new version only once it's 24 hours old, so one that's pulled never reaches you. When there's a newer version, an **Update** tag appears beside the profile button, which also gets a dot, the Updates tab gets a dot, and the menu offers **Update to vX.Y.Z**.
 
 Press **Update now** (main login only) and the app:
 

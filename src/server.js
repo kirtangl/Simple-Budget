@@ -76,7 +76,13 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
   }
 
   const config = createConfig(db);
-  const backups = createBackups({ db, dataDir });
+  const INTERVALS = [1, 3, 6, 12, 24];
+  const KEEPS = [5, 10, 20];
+  const numSetting = (key, allowed, fallback) => {
+    const n = Number(getSetting(db, key));
+    return allowed.includes(n) ? n : fallback;
+  };
+  const backups = createBackups({ db, dataDir, keep: () => numSetting('backups_keep', KEEPS, 5) });
   recordVersion(db, backups);
   const auth = createAuth({ db, secret, secureCookies: () => secureCookies || config.secureCookies() });
   const updates = createUpdates({
@@ -85,7 +91,12 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
     updater: () => ({ url: process.env.UPDATER_URL || '', token: process.env.UPDATER_TOKEN || '', imageTag: process.env.IMAGE_TAG || 'latest' }),
     prefs: () => {
       const beta = getSetting(db, 'updates_beta');
-      return { autoCheck: getSetting(db, 'updates_auto_check') !== '0', beta: beta === '1' ? true : beta === '0' ? false : null };
+      return {
+        autoCheck: getSetting(db, 'updates_auto_check') !== '0',
+        intervalHours: numSetting('updates_interval_hours', INTERVALS, 6),
+        waitDay: getSetting(db, 'updates_wait_day') === '1',
+        beta: beta === '1' ? true : beta === '0' ? false : null,
+      };
     },
     info: () => {
       let just = null;
@@ -146,6 +157,18 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
       if (typeof body.auto_check !== 'boolean') return res.status(400).json({ error: 'auto_check should be true or false.' });
       setSetting(db, 'updates_auto_check', body.auto_check ? '1' : '0');
     }
+    if ('wait_day' in body) {
+      if (typeof body.wait_day !== 'boolean') return res.status(400).json({ error: 'wait_day should be true or false.' });
+      setSetting(db, 'updates_wait_day', body.wait_day ? '1' : '0');
+    }
+    if ('interval_hours' in body) {
+      if (!INTERVALS.includes(body.interval_hours)) return res.status(400).json({ error: `interval_hours should be one of ${INTERVALS.join(', ')}.` });
+      setSetting(db, 'updates_interval_hours', String(body.interval_hours));
+    }
+    if ('backups_keep' in body) {
+      if (!KEEPS.includes(body.backups_keep)) return res.status(400).json({ error: `backups_keep should be one of ${KEEPS.join(', ')}.` });
+      setSetting(db, 'backups_keep', String(body.backups_keep));
+    }
     if (!updates.view().checkedAt && updates.view().auto_check) await updates.check();
     res.json(updates.view());
   });
@@ -166,6 +189,7 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
     available: Boolean(dataDir),
     folder: dataDir ? `${shortPath(backups.dir)}/` : null,
     backups: backups.list(),
+    keep: numSetting('backups_keep', KEEPS, 5),
   });
   app.get('/api/backups', auth.require, (req, res) => res.json(backupsView()));
   app.post('/api/backups', auth.require, backupError((req, res) => {

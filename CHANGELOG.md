@@ -2,6 +2,16 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v0.8.1 (12 October 2026)
+
+### New
+- Wait a day before offering updates: a new version shows up 24 hours after it's released, so one that's pulled never reaches you. Turn it on under Settings → Updates → Preferences.
+- Choose how often to check for updates, from every hour to once a day.
+- Choose how many automatic backups to keep: 5, 10 or 20.
+
+### Improved
+- The Channel line on the Updates page no longer has a "change" link, since it's set on the server.
+
 ## v0.8.0 (12 October 2026)
 
 ### New

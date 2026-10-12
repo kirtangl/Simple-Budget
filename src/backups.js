@@ -1,7 +1,7 @@
 'use strict';
 
 // Copies of the whole database in <data>/backups, listed in Settings → Updates.
-//   budget-before-v0.7.1-<time>.db    made before an update (kept for the last five,
+//   budget-before-v0.7.1-<time>.db    made before an update (the newest 5, 10 or 20 kept,
 //   budget-before-restore-<time>.db   with the ones made before a restore)
 //   budget-manual-<time>.db           made with "Back up now" (kept until deleted by hand)
 // Restoring one puts back the budget itself. Logins, passwords and the app's own
@@ -12,14 +12,14 @@ const path = require('node:path');
 const { openDatabase, transaction } = require('./db');
 const { BACKUP_SETTINGS } = require('./api');
 
-const KEEP_AUTOMATIC = 5;
 const NAME = /^budget-(?:before-(v.+|restore)|manual)-(\d{4}-\d\d-\d\dT[\d-]+)\.db$/;
 
 class BackupError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
-function createBackups({ db, dataDir }) {
+// keep() is how many automatic backups to keep (Settings → Updates → Preferences).
+function createBackups({ db, dataDir, keep = () => 5 }) {
   const dir = dataDir ? path.join(dataDir, 'backups') : null;
 
   function list() {
@@ -41,7 +41,7 @@ function createBackups({ db, dataDir }) {
     const what = kind === 'manual' ? 'manual' : kind === 'restore' ? 'before-restore' : `before-v${String(version).replace(/[^\w.-]/g, '')}`;
     const name = `budget-${what}-${stamp}.db`;
     db.exec(`VACUUM INTO '${path.join(dir, name).replace(/'/g, "''")}'`);
-    for (const old of list().filter((b) => b.kind !== 'manual').slice(KEEP_AUTOMATIC)) {
+    for (const old of list().filter((b) => b.kind !== 'manual').slice(keep())) {
       fs.rmSync(path.join(dir, old.name), { force: true });
     }
     return name;
