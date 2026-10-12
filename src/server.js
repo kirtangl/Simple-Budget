@@ -1,12 +1,13 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
 const { openDatabase, getSetting, setSetting } = require('./db');
 const { createAuth } = require('./auth');
 const { createApi } = require('./api');
-const { createUpdates } = require('./updates');
+const { createUpdates, UpdateError } = require('./updates');
 const { createConfig, ConfigError, splitHosts } = require('./config');
 const { version: VERSION } = require('../package.json');
 
@@ -46,7 +47,20 @@ const SECURITY_HEADERS = {
   'Referrer-Policy': 'same-origin',
 };
 
-function createApp({ db, secureCookies = false, fetchImpl }) {
+// A copy of the database in <data>/backups, made before an update. Keeps the newest five.
+function backupDatabase(db, dataDir, label) {
+  const dir = path.join(dataDir, 'backups');
+  fs.mkdirSync(dir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace('Z', '');
+  const name = `budget-before-v${String(label).replace(/[^\w.-]/g, '')}-${stamp}.db`;
+  db.exec(`VACUUM INTO '${path.join(dir, name).replace(/'/g, "''")}'`);
+  const old = fs.readdirSync(dir).filter((f) => /^budget-before-.*\.db$/.test(f))
+    .map((f) => ({ f, t: fs.statSync(path.join(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t).slice(5);
+  for (const { f } of old) fs.rmSync(path.join(dir, f), { force: true });
+  return name;
+}
+
+function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
   // Keep the cookie signing secret in the database so logins survive restarts.
   let secret = process.env.SESSION_SECRET || getSetting(db, 'session_secret');
   if (!secret) {
@@ -59,6 +73,7 @@ function createApp({ db, secureCookies = false, fetchImpl }) {
   const updates = createUpdates({
     version: VERSION, fetchImpl,
     settings: () => ({ channel: appChannel(config.channel()), repo: config.updateRepo(), token: config.githubToken() }),
+    updater: () => ({ url: process.env.UPDATER_URL || '', token: process.env.UPDATER_TOKEN || '' }),
   });
   const app = express();
   app.disable('x-powered-by');
@@ -83,6 +98,15 @@ function createApp({ db, secureCookies = false, fetchImpl }) {
   app.post('/api/password', auth.changePassword);
   app.get('/api/updates', auth.require, updates.get);
   app.post('/api/updates/check', auth.require, updates.checkNow);
+  app.post('/api/updates/install', auth.require, async (req, res, next) => {
+    if (req.login.id !== 0) return res.status(403).json({ error: 'Only the main login can install updates.' });
+    try {
+      res.json(await updates.install({ backup: dataDir ? (v) => backupDatabase(db, dataDir, v) : null }));
+    } catch (err) {
+      if (err instanceof UpdateError) return res.status(err.status).json({ error: err.message });
+      next(err);
+    }
+  });
   app.get('/api/me', auth.require, auth.me);
   app.put('/api/me/theme', auth.require, auth.saveTheme);
   app.get('/api/logins', auth.require, auth.listLogins);
@@ -153,9 +177,9 @@ if (require.main === module) {
   const port = Number(process.env.PORT) || 3000;
   const dbFile = process.env.DB_FILE || path.join(__dirname, '..', 'data', 'budget.db');
   const db = openDatabase(dbFile);
-  const app = createApp({ db, secureCookies: process.env.SECURE_COOKIES === 'true' });
+  const app = createApp({ db, secureCookies: process.env.SECURE_COOKIES === 'true', dataDir: path.dirname(dbFile) });
   app.locals.updates.start();
-  app.listen(port, () => {
+  const server = app.listen(port, () => {
     console.log(`Simple Budget running on http://localhost:${port}`);
     if (getSetting(db, 'password_must_change') === '1') {
       console.log('The password is still the default "simplebudget". You will be asked to change it when you log in.');
@@ -164,6 +188,11 @@ if (require.main === module) {
       console.warn('APP_PASSWORD is no longer used. The password is now set inside the app (Settings → General).');
     }
   });
+  // Docker asks the app to stop (an update, a restart, or `docker compose down`).
+  // Stop at once instead of waiting to be killed, closing the database cleanly.
+  const stop = () => { server.close(); try { db.close(); } catch { /* already closed */ } process.exit(0); };
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
 }
 
 module.exports = { createApp, hostAllowed };

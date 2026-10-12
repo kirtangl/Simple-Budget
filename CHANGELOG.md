@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.7.0 (12 October 2026)
+
+- **One-click updates**: **Update now** in Settings → Updates installs a new version and restarts the app, with no terminal. A copy of the database is saved to `backups/` first, and the page reloads by itself when it's done. Main login only.
+- Each release is published as a ready-made image (`ghcr.io/kirtangl/simple-budget`), so installing and updating no longer builds on your server. `IMAGE_TAG` picks releases (`latest`), pre-releases too (`beta`), or a fixed version.
+- The app stops straight away when Docker asks it to (restarts and updates take seconds, not 30).
+
+**Moving to v0.7.0** (once, from the terminal): in each copy's folder, `git fetch origin main && git reset --hard origin/main`, add `IMAGE_TAG=beta` to the test copy's `.env`, then `sudo docker compose up -d --build`. That also starts the updater. From then on, use **Update now**.
+
 ## v0.6.1 (12 October 2026)
 
 Fixes from a code review and security audit, and a new **Settings → Advanced** tab.

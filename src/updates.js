@@ -8,6 +8,11 @@
 
 const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
 
+// An install problem, with the HTTP status to answer with.
+class UpdateError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
 // "v1.2.3-beta.4" → { nums: [1, 2, 3], pre: ['beta', 4] }, or null.
 function parseVersion(v) {
   const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(String(v || '').trim());
@@ -39,8 +44,11 @@ function compareVersions(a, b) {
 
 // `settings()` gives { channel, repo, token }, read on every check so they can
 // change while the app runs (Settings → Advanced). Fixed values work too.
-function createUpdates({ version, channel, repo, token, settings, fetchImpl = globalThis.fetch }) {
+// `updater()` gives { url, token } for the updater container (Watchtower) that
+// installs new versions; with no url, updates are installed by hand.
+function createUpdates({ version, channel, repo, token, settings, updater = () => ({}), fetchImpl = globalThis.fetch }) {
   const current = settings || (() => ({ channel, repo, token }));
+  let installing = null; // { version, started_at } once an install has been asked for
   let state = { checkedAt: null, latest: null, error: null };
   let running = null;
 
@@ -94,11 +102,40 @@ function createUpdates({ version, channel, repo, token, settings, fetchImpl = gl
     error: state.error,
     latest: state.latest,
     available: Boolean(state.latest && compareVersions(state.latest.version, version) > 0),
+    can_install: Boolean(updater().url),
+    installing,
   });
+
+  // Ask the updater to pull the new image and restart the app on it. It answers
+  // straight away and does the work in the background, restarting this app.
+  // `backup(version)` saves a copy of the data first and returns its name.
+  async function install({ backup } = {}) {
+    const { url, token: updaterToken } = updater();
+    if (!url) throw new UpdateError(400, "This copy can't update itself. Update it from the terminal instead.");
+    if (!view().available) throw new UpdateError(400, "You're already on the latest version.");
+    const target = state.latest.version;
+    const saved = backup ? backup(target) : null;
+    let res;
+    try {
+      res = await fetchImpl(`${url.replace(/\/$/, '')}/v1/update?async=true`, {
+        method: 'POST',
+        headers: updaterToken ? { Authorization: `Bearer ${updaterToken}` } : {},
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch {
+      throw new UpdateError(502, "Couldn't reach the updater. Check its container is running (sudo docker compose up -d).");
+    }
+    if (res.status === 429) throw new UpdateError(409, 'An update is already running. Give it a minute.');
+    if (res.status === 401 || res.status === 403) throw new UpdateError(502, "The updater didn't accept the app's token. UPDATER_TOKEN must be the same for both.");
+    if (!res.ok) throw new UpdateError(502, `The updater answered ${res.status}. Try again, or update from the terminal.`);
+    installing = { version: target, started_at: new Date().toISOString() };
+    return { ok: true, version: target, backup: saved };
+  }
 
   return {
     check,
     view,
+    install,
     // Forget the last result, e.g. after the repository or token changes.
     reset() { state = { checkedAt: null, latest: null, error: null }; },
     // Check soon after starting, then every few hours.
@@ -117,4 +154,4 @@ function createUpdates({ version, channel, repo, token, settings, fetchImpl = gl
   };
 }
 
-module.exports = { createUpdates, compareVersions, parseVersion };
+module.exports = { createUpdates, compareVersions, parseVersion, UpdateError };
