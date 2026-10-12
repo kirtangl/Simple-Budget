@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.6.1 (12 October 2026)
+
+Fixes from a code review and security audit, and a new **Settings → Advanced** tab.
+
+- **Settings → Advanced**: the server settings that used to need `.env` (extra web addresses, reverse proxy, secure cookies, build tag, where to check for updates and a GitHub token) can be changed in the app. The tab sits apart in red, starts locked behind a warning and an "I understand" tick, and only the main login can save. Anything set in `.env` still wins and shows as locked.
+
+- **Security**
+  - The login limit can no longer be dodged by pretending to be a different address, and lots of wrong guesses from anywhere now slow everyone down for a minute.
+  - The app only answers to home-network addresses, so a website can't trick a browser into reading the budget. **If you open it through your own domain, add it in Settings → Advanced (open the app by its IP address to get there) or to `ALLOWED_HOSTS` in `.env`.**
+  - Pages are sent with security headers (no framing by other sites, a content security policy).
+  - Colours are checked before they're saved, and only a backup restore can send a large file.
+- **Fixes**
+  - A pay frequency or rounding like "constructor" could be saved and break every page. Settings and restores now only accept the real options.
+  - Restoring a backup with an empty entry gives a warning instead of failing.
+  - "Keep in account" no longer counts deposits for bills that haven't started yet.
+  - The loan calculator no longer counts expenses that have ended or not started.
+  - Dates must be between 1900 and 2199, amounts can't be negative, and an end date can't be before the start date.
+  - Typing "6.5%" as an interest rate no longer clears the rate, and "1,5" is no longer read as $15.
+  - Logging out and pressing Back no longer shows the budget.
+  - Double-tapping Save on a goal no longer adds the money twice.
+  - Rows that open an edit form can be reached with the keyboard (Tab, then Enter).
+  - An app left open overnight moves on to the new day when you come back to it.
+  - "Copy commands" on the Updates page works over plain http, and "Last checked" shows the right day.
+  - Editing a login saves nothing if part of it isn't right.
+
 ## v0.6.0 (12 October 2026)
 
 - **Updates**: the app checks GitHub for new releases. An **Update** tag and a dot on the profile button show when one is out, and **Settings → Updates** has the release notes and how to update.

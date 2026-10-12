@@ -27,11 +27,19 @@
   const moneyInput = (cents) => (cents === null || cents === undefined ? '' : (cents / 100).toFixed(2).replace(/\.00$/, ''));
 
   function parseMoney(str) {
-    const s = String(str ?? '').replace(/[$,\s]/g, '');
+    let s = String(str ?? '').replace(/[$\s]/g, '');
+    // Commas only as thousands separators (1,250.50), so "1,5" isn't read as 15.
+    if (s.includes(',')) {
+      if (!/^-?\d{1,3}(,\d{3})+(\.\d*)?$/.test(s)) return NaN;
+      s = s.replace(/,/g, '');
+    }
     if (s === '') return null;
     if (!/^-?\d*(\.\d{0,2})?$/.test(s) || s === '.' || s === '-') return NaN;
     return Math.round(Number(s) * 100);
   }
+
+  // A Date as YYYY-MM-DD on this device's calendar (toISOString would give the UTC day).
+  const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -278,12 +286,25 @@
     const c = parseMoney(val(form, name));
     if (Number.isNaN(c)) throw new Error(`${label} must be a dollar amount, like 79.10`);
     if (required && c === null) throw new Error(`${label} is required.`);
+    if (c !== null && c < 0) throw new Error(`${label} can't be negative.`);
     return c;
+  }
+  // A plain number like an interest rate or a term. "6.5%" is fine; "abc" is an error, not a blank.
+  function numVal(form, name, label) {
+    const s = val(form, name).replace(/[%\s]/g, '');
+    if (s === '') return null;
+    const n = Number(s);
+    if (!Number.isFinite(n)) throw new Error(`${label} must be a number, like 6.24`);
+    return n;
   }
 
   // ---------- Login ----------
 
   function showLogin(defaultPassword) {
+    // Forget the budget, so Back after logging out can't show it again.
+    state.data = null; state.trends = null; state.updates = null; state.advanced = null;
+    // A form left open (e.g. the login ran out mid-save) would sit over the login page.
+    if ($modal.open) closeForm();
     $nav.hidden = true;
     $userMenu.hidden = true;
     $app.innerHTML = html`
@@ -1522,7 +1543,12 @@
 
   async function saveGoalPanel(panel) {
     const g = state.data.goals.find((x) => x.id === Number(panel.dataset.id));
-    if (!g) return;
+    if (!g || panel.dataset.busy) return; // a double tap would add the money twice
+    panel.dataset.busy = '1';
+    try { await saveGoalChange(panel, g); } finally { delete panel.dataset.busy; }
+  }
+
+  async function saveGoalChange(panel, g) {
     const input = panel.querySelector('input');
     const cents = parseMoney(input.value);
     if (Number.isNaN(cents) || !cents || cents < 0) { input.focus(); throw new Error('Enter an amount, like 100.'); }
@@ -1556,6 +1582,7 @@
     }
     if (ev.key === 'Enter' && ev.target.closest && ev.target.closest('.g-panel input')) {
       ev.preventDefault();
+      if (ev.repeat) return;
       saveGoalPanel(ev.target.closest('.g-panel')).catch((err) => toast(err.message));
     }
   });
@@ -1905,7 +1932,7 @@
     // The estimate against the last statement, when they're more than about 1% or $500 apart.
     const h = t && t.history;
     const gap = h ? h.estimated_balance_cents - h.statement_balance_cents : 0;
-    const warn = h && (Math.abs(gap) >= 50000 || Math.abs(gap) >= h.statement_balance_cents * 0.01);
+    const warn = h && gap !== 0 && (Math.abs(gap) >= 50000 || Math.abs(gap) >= h.statement_balance_cents * 0.01);
     const fixed = l.rate_type === 'fixed';
     const daysSinceStatement = l.balance_date ? daysUntil(l.balance_date) * -1 : null;
     const saved = l.bank && t ? l.bank.interest_cents - t.interest_left_cents : null;
@@ -2147,6 +2174,7 @@
   }
 
   let calcTimer;
+  let calcSeq = 0;
   async function runCalc() {
     const f = document.querySelector('#calc-form');
     if (!f) return;
@@ -2155,11 +2183,15 @@
     const amount = parseMoney(el.amount.value.replace(/,/g, ''));
     const q = new URLSearchParams({ rate: el.rate.value || '0', years: el.years.value, frequency: state.calc.frequency, limit_percent: el.limit.value || '70' });
     if (amount > 0) q.set('amount_cents', String(amount));
+    const seq = ++calcSeq; // only the newest answer is shown
+    let result;
     try {
-      state.calc.result = await api('GET', `/loan-calculator?${q}`);
+      result = await api('GET', `/loan-calculator?${q}`);
     } catch {
-      state.calc.result = null; // e.g. no term yet
+      result = null; // e.g. no term yet
     }
+    if (seq !== calcSeq) return;
+    state.calc.result = result;
     const out = document.querySelector('#calc-result');
     if (out) out.innerHTML = calcResult(state.calc.result, state.calc.frequency).s;
   }
@@ -2282,7 +2314,7 @@
         const body = {
           name: val(form, 'name'), lender: val(form, 'lender') || null,
           principal_cents: moneyVal(form, 'principal', 'Amount borrowed'),
-          interest_rate: val(form, 'interest_rate') === '' ? null : Number(val(form, 'interest_rate')),
+          interest_rate: numVal(form, 'interest_rate', 'Interest rate'),
           start_date: val(form, 'start_date') || null,
           term_months: termYears ? Math.round(Number(termYears) * 12) : null,
           repayment_frequency: val(form, 'repayment_frequency'),
@@ -2318,19 +2350,19 @@
 
   // ---------- Settings ----------
 
-  const SETTINGS_TABS = [['income', 'Income'], ['accounts', 'Accounts'], ['payees', 'Payees'], ['categories', 'Categories'], ['cycle', 'General'], ['appearance', 'Appearance'], ['security', 'Security'], ['updates', 'Updates']];
+  const SETTINGS_TABS = [['income', 'Income'], ['accounts', 'Accounts'], ['payees', 'Payees'], ['categories', 'Categories'], ['cycle', 'General'], ['appearance', 'Appearance'], ['security', 'Security'], ['updates', 'Updates'], ['advanced', 'Advanced']];
 
   // Setting up the budget, then the app itself.
-  const SETTINGS_GROUPS = [['income', 'accounts', 'payees', 'categories'], ['cycle', 'appearance', 'security', 'updates']];
+  const SETTINGS_GROUPS = [['income', 'accounts', 'payees', 'categories'], ['cycle', 'appearance', 'security', 'updates'], ['advanced']];
 
   function renderSettings(sub) {
     if (sub === 'logins') sub = 'security'; // its old name
     const tab = SETTINGS_TABS.some(([k]) => k === sub) ? sub : 'income';
-    const body = { income: settingsIncome, accounts: settingsAccounts, payees: settingsPayees, categories: settingsCategories, cycle: settingsCycle, appearance: themeCard, security: settingsSecurity, updates: settingsUpdates }[tab]();
+    const body = { income: settingsIncome, accounts: settingsAccounts, payees: settingsPayees, categories: settingsCategories, cycle: settingsCycle, appearance: themeCard, security: settingsSecurity, updates: settingsUpdates, advanced: settingsAdvanced }[tab]();
     return html`
       <div class="page-head"><h1>Settings</h1></div>
       <nav class="subtabs settings-tabs">${SETTINGS_GROUPS.map((keys, i) => html`${i ? html`<span class="st-sep" aria-hidden="true"></span>` : ''}<div class="st-group st-${keys.length}">
-        ${keys.map((k) => html`<a href="#/settings/${k}" class="${k === tab ? 'active' : ''}">${SETTINGS_TABS.find(([x]) => x === k)[1]}</a>`)}</div>`)}</nav>
+        ${keys.map((k) => html`<a href="#/settings/${k}" class="${k === tab ? 'active' : ''} ${k === 'advanced' ? 'st-advanced' : ''}">${SETTINGS_TABS.find(([x]) => x === k)[1]}</a>`)}</div>`)}</nav>
       ${body}`;
   }
 
@@ -2380,7 +2412,8 @@
   }
 
   function settingsIncome() {
-    const now = state.data.incomes.filter((i) => !i.end_date || i.end_date >= state.data.settings.today);
+    const today = state.data.settings.today;
+    const now = state.data.incomes.filter((i) => (!i.end_date || i.end_date >= today) && (!i.start_date || i.start_date <= today));
     const total = now.filter((i) => i.include_in_budget).reduce((s, i) => s + incomePerCycle(i), 0);
     const other = now.filter((i) => !i.include_in_budget).reduce((s, i) => s + incomePerCycle(i), 0);
     return html`
@@ -2473,7 +2506,7 @@
           <div class="field"><label for="a-owner">Owner</label><input id="a-owner" name="owner" value="${a.owner || ''}"></div>
           <div class="field"><label for="a-bsb">BSB</label><input id="a-bsb" name="bsb" inputmode="numeric" data-input="bsb" maxlength="7" autocomplete="off" value="${a.bsb || ''}" placeholder="000-000">
             <div class="hint">6 digits. The dash is added for you.</div></div>
-          <div class="field"><label for="a-acc">Account number</label><input id="a-acc" name="account_number" inputmode="numeric" data-input="account-number" maxlength="20" autocomplete="off" value="${a.account_number || ''}">
+          <div class="field"><label for="a-acc">Account number</label><input id="a-acc" name="account_number" inputmode="numeric" data-input="account-number" maxlength="30" autocomplete="off" value="${a.account_number || ''}">
             <div class="hint">Numbers only.</div></div>
           <div class="field"><label for="a-color">Colour</label><input id="a-color" type="color" name="color" value="${colorFor(a, i)}"></div>
         </div>`,
@@ -2531,14 +2564,15 @@
       return html`<div class="fields">
         ${f('p-accname', 'account_name', 'Account name')}${f('p-bank', 'bank', 'Bank')}
         ${f('p-bsb', 'bsb', 'BSB', 'inputmode="numeric" data-input="bsb" maxlength="7" autocomplete="off" placeholder="000-000"')}
-        ${f('p-acc', 'account_number', 'Account number', 'inputmode="numeric" data-input="account-number" maxlength="20" autocomplete="off"')}
+        ${f('p-acc', 'account_number', 'Account number', 'inputmode="numeric" data-input="account-number" maxlength="30" autocomplete="off"')}
         <div class="field full"><label for="p-ref">Reference</label><input id="p-ref" name="reference" value="${p.reference || ''}"></div></div>`;
     }
     const label = type === 'direct_debit' ? 'Reference' : 'Biller / reference';
     return html`<div class="field"><label for="p-ref">${label}</label><input id="p-ref" name="reference" value="${p.reference || ''}"></div>`;
   }
 
-  function payeeForm(p = {}) {
+  function payeeForm(saved = {}) {
+    const p = { ...saved }; // typing into the form mustn't change the saved payee until Save
     let type = p.pay_type || 'other';
     openForm({
       title: p.id ? 'Edit payee' : 'Add payee',
@@ -2706,7 +2740,7 @@
     const u = state.updates;
     if (!u) return html`<div class="card"><p class="muted">Couldn't load update details.</p></div>`;
     const label = { test: 'Test', beta: 'Beta' }[u.channel];
-    const when = (iso) => { const d = new Date(iso); return `${fmtDate(d.toISOString().slice(0, 10), true)}, ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`; };
+    const when = (iso) => { const d = new Date(iso); return `${fmtDate(localDate(d), true)}, ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`; };
     const l = u.latest;
     return html`
       <div class="card">
@@ -2724,7 +2758,7 @@
       </div>
       ${l ? html`<div class="card">
         <div class="card-head"><div><h2>${l.name}</h2>
-          <p class="muted small" style="margin:0">${l.published_at ? `Released ${fmtDate(l.published_at.slice(0, 10), true)}` : ''}</p></div>
+          <p class="muted small" style="margin:0">${l.published_at ? `Released ${fmtDate(localDate(new Date(l.published_at)), true)}` : ''}</p></div>
           <a class="btn" href="${l.url}" target="_blank" rel="noopener">View on GitHub</a></div>
         <div class="upd-notes">${releaseNotes(l.notes)}</div>
       </div>` : ''}
@@ -2762,6 +2796,83 @@ sudo docker compose up -d --build</pre>
           </div></li>`)}</ul>
       </div>`;
   }
+
+  // Settings → Advanced: server settings, locked behind a warning until ticked.
+  function settingsAdvanced() {
+    const a = state.advanced;
+    if (!a) return html`<div class="card"><p class="muted">Couldn't load the advanced settings.</p></div>`;
+    const v = a.values;
+    const open = a.can_edit && state.advancedUnlocked;
+    const envTag = (key, name) => (a.locked[key] ? html` <span class="chip env-chip" title="Remove ${name} from .env to change it here">Set in .env</span>` : '');
+    const off = (key) => (!open || a.locked[key] ? raw('disabled') : '');
+    return html`
+      <div class="card adv-warning">
+        <h2>⚠ Advanced settings</h2>
+        <p>These control how the server runs: which addresses it answers to, cookies and where it looks for updates.
+          <b>You shouldn't need to change them.</b> A wrong value can stop the app loading, log everyone out, or make it less secure.</p>
+        <p class="small">Anything set in <code>.env</code> on the server wins and can't be changed here.</p>
+        ${a.can_edit
+          ? html`<label class="check adv-agree"><input type="checkbox" data-action="adv-unlock" ${state.advancedUnlocked ? raw('checked') : ''}> I understand, let me change these settings</label>`
+          : html`<p class="small"><b>Only the main login can change these.</b></p>`}
+      </div>
+      <form class="card" id="adv-form">
+        <fieldset class="adv-fields" ${open ? '' : raw('disabled')}>
+        <div class="field"><label for="adv-hosts">Extra web addresses${envTag('allowed_hosts', 'ALLOWED_HOSTS')}</label>
+          <input id="adv-hosts" name="allowed_hosts" value="${v.allowed_hosts}" placeholder="e.g. budget.example.com" autocomplete="off" ${off('allowed_hosts')}>
+          <div class="hint">Only needed if you open the app through your own domain (a reverse proxy or a Cloudflare Tunnel). Separate several with commas.
+            IP addresses, plain names like <code>nas</code>, and <code>.local</code>, <code>.lan</code> and Tailscale names always work.
+            You're on <b>${a.host}</b>${a.host_is_home ? ', which always works' : ', so it has to stay in this list'}.</div></div>
+        <div class="field"><label for="adv-proxy">Reverse proxy${envTag('trust_proxy', 'TRUST_PROXY')}</label>
+          <input id="adv-proxy" name="trust_proxy" value="${v.trust_proxy}" placeholder="Off" autocomplete="off" ${off('trust_proxy')}>
+          <div class="hint">Only if a reverse proxy sits in front of the app: its address (e.g. <code>172.18.0.1</code>) or <code>1</code>.
+            Then the login limit sees each visitor's own address. Leave it empty otherwise, or anyone could get round the limit.</div></div>
+        <div class="field"><label class="check"><input type="checkbox" name="secure_cookies" ${v.secure_cookies ? raw('checked') : ''} ${off('secure_cookies')} ${!a.https && !v.secure_cookies ? raw('disabled') : ''}> Secure cookies (HTTPS only)${envTag('secure_cookies', 'SECURE_COOKIES')}</label>
+          <div class="hint">${a.https ? 'Logins only work over https://. Turn this on if the app is always opened with https://.'
+            : "Logins would only work over https://. It can only be turned on while you're using the app over https://, so you can't lock yourself out."}</div></div>
+        <div class="field"><label for="adv-channel">Build tag${envTag('app_channel', 'APP_CHANNEL')}</label>
+          <select id="adv-channel" name="app_channel" ${off('app_channel')}>
+            ${[['', 'None (a normal copy)'], ['test', 'Test'], ['beta', 'Beta']].map(([k, label]) => html`<option value="${k}" ${k === v.app_channel ? raw('selected') : ''}>${label}</option>`)}</select>
+          <div class="hint">Puts a Test or Beta tag in the header and page title, and checks for beta releases too.</div></div>
+        <div class="field"><label for="adv-repo">Check for updates from${envTag('update_repo', 'UPDATE_REPO')}</label>
+          <input id="adv-repo" name="update_repo" value="${v.update_repo}" placeholder="kirtangl/Simple-Budget" autocomplete="off" ${off('update_repo')}>
+          <div class="hint">The GitHub repository, as owner/name. Only change it for your own fork.</div></div>
+        <div class="field"><label for="adv-token">GitHub token${envTag('github_token', 'GITHUB_TOKEN')}</label>
+          <input id="adv-token" name="github_token" type="password" value="" placeholder="${a.github_token_set ? 'Saved (type a new one to replace it)' : 'None'}" autocomplete="off" ${off('github_token')}>
+          ${a.github_token_set && !a.locked.github_token ? html`<label class="check small"><input type="checkbox" name="remove_github_token" ${off('github_token')}> Remove the saved token</label>` : ''}
+          <div class="hint">Only for a private fork: a fine-grained token with read-only Contents access. It's never shown again once saved.</div></div>
+        <p class="error" id="adv-error"></p>
+        <div class="row"><button class="primary" type="submit">Save advanced settings</button></div>
+        </fieldset>
+      </form>
+      <div class="card">
+        <h2>Server</h2>
+        <ul class="list adv-info">
+          <li><span class="grow">Version</span><b>v${a.version}</b></li>
+          <li><span class="grow">Time zone</span><b>${a.timezone}</b></li>
+          <li><span class="grow">Connection</span><b>${a.https ? 'HTTPS' : 'Plain http'}</b></li>
+        </ul>
+        <p class="hint">The time zone, port and container name can only be changed in <code>.env</code>, followed by a rebuild.</p>
+      </div>`;
+  }
+
+  async function saveAdvanced(form) {
+    const el = form.elements;
+    const body = {};
+    for (const k of ['allowed_hosts', 'trust_proxy', 'app_channel', 'update_repo']) if (!el[k].disabled) body[k] = el[k].value;
+    if (!el.secure_cookies.disabled) body.secure_cookies = el.secure_cookies.checked;
+    if (!el.github_token.disabled && el.github_token.value.trim()) body.github_token = el.github_token.value.trim();
+    if (el.remove_github_token && el.remove_github_token.checked) body.remove_github_token = true;
+    const err = form.querySelector('#adv-error');
+    err.textContent = '';
+    try {
+      state.advanced = await api('PUT', '/advanced', body);
+    } catch (e) { err.textContent = e.message; return; }
+    state.updates = null;
+    showVersion();
+    await render();
+    toast('Saved');
+  }
+  document.addEventListener('submit', (ev) => { if (ev.target.id === 'adv-form') { ev.preventDefault(); saveAdvanced(ev.target); } });
 
   async function reloadLogins() {
     state.logins = await api('GET', '/logins');
@@ -3022,16 +3133,6 @@ sudo docker compose up -d --build</pre>
     'bill-details': async (el) => billDetails(Number(el.dataset.id), el.dataset),
     'toggle-incomes': () => { state.showIncomes = !state.showIncomes; render(); },
     'toggle-unused': () => { state.showUnused = !state.showUnused; render(); },
-    info: (el) => {
-      const word = cycleWord();
-      const text = {
-        remaining: [`${word[0].toUpperCase() + word.slice(1)} left to pay`, `This ${word}'s bills from the account that haven't come out yet: the bills ${thisCycle()} less what's already been paid. Savings aren't included.`],
-        held: ['Should hold', `About how much should be in the account today so that, with the deposits still to come each ${word}, every bill ${HELD_LABELS[state.data.settings.held_basis].toLowerCase()} can be paid.
-          For example, putting $50 a ${word} towards a $1,300 bill due in two ${word}s, the account should already hold about $1,200.
-          ${el.dataset.on ? `This one is for ${fmtDate(el.dataset.on, true)}, once that ${word}'s deposit is in.` : `For other ${word}s it's what should be there once that ${word}'s deposit is in.`} Savings aren't included. It's a guide only. Change how far ahead it looks in Settings → General.`],
-      }[el.dataset.info];
-      openForm({ title: text[0], body: html`<p>${text[1]}</p>` });
-    },
     'edit-deposit-rules': () => depositRulesForm(),
     'edit-income': (el) => incomeForm(findById(state.data.incomes, el)),
     'new-account': () => accountForm(),
@@ -3105,9 +3206,10 @@ sudo docker compose up -d --build</pre>
     },
     'menu-theme': () => { closeMenu(); location.hash = '#/settings/appearance'; },
     'menu-settings': () => { closeMenu(); location.hash = '#/settings'; },
-    logout: async () => { closeMenu(); await api('POST', '/logout'); state.me = null; state.logins = null; state.themeDraft = null; window.applyAccountColour(null); location.hash = '#/overview'; showLogin(); },
+    logout: async () => { closeMenu(); await api('POST', '/logout'); state.data = null; state.advanced = null; state.advancedUnlocked = false; state.me = null; state.logins = null; state.themeDraft = null; window.applyAccountColour(null); location.hash = '#/overview'; showLogin(); },
     'menu-security': () => { closeMenu(); location.hash = '#/settings/security'; },
     'menu-updates': () => { closeMenu(); location.hash = '#/settings/updates'; },
+    'adv-unlock': (el) => { state.advancedUnlocked = el.checked; render(); },
     'check-updates': async (el) => {
       el.disabled = true; el.textContent = 'Checking…';
       await loadUpdates(true);
@@ -3115,7 +3217,7 @@ sudo docker compose up -d --build</pre>
       toast(state.updates && state.updates.available ? `Version ${state.updates.latest.version} is available` : 'Checked for updates');
     },
     'copy-update-cmd': async () => {
-      try { await navigator.clipboard.writeText('git pull\nsudo docker compose up -d --build'); toast('Copied'); } catch { toast("Couldn't copy. Select the text instead."); }
+      await copyText('git pull\nsudo docker compose up -d --build', 'Commands');
     },
   };
 
@@ -3352,12 +3454,14 @@ sudo docker compose up -d --build</pre>
       else if (page === 'overview' && sub === 'analytics') out = await renderAnalytics();
       else if (page === 'settings') {
         if (sub === 'updates' && !state.updates) await loadUpdates();
+        if (sub === 'advanced' && !state.advanced) state.advanced = await api('GET', '/advanced');
         if ((sub === 'security' || sub === 'logins') && !state.logins) state.logins = await api('GET', '/logins');
         out = renderSettings(sub);
       }
       else out = await renderOverview();
       if (seq === renderSeq) {
         $app.innerHTML = out.s;
+        makeKeyboardReachable($app);
         scrollBillsToToday();
         // On a narrow screen, keep the open settings tab in view in its sideways-scrolling row.
         const sub = $app.querySelector('.subtabs a.active');
@@ -3371,6 +3475,27 @@ sudo docker compose up -d --build</pre>
       }
     }
   }
+
+  // Rows and cards that open something when clicked aren't buttons, so give them
+  // a place in the Tab order; Enter or Space then clicks them (see below).
+  const NOT_NATIVE = '[data-action]:not(button):not(a):not(input):not(select):not(textarea):not(label):not(option)';
+  function makeKeyboardReachable(root) {
+    root.querySelectorAll(NOT_NATIVE).forEach((el) => {
+      if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+      if (!el.hasAttribute('role')) el.setAttribute('role', 'button');
+    });
+  }
+  document.addEventListener('keydown', (ev) => {
+    if ((ev.key !== 'Enter' && ev.key !== ' ') || ev.repeat || !ev.target.matches || !ev.target.matches(NOT_NATIVE)) return;
+    ev.preventDefault();
+    ev.target.click();
+  });
+
+  // A tab or home-screen app left open overnight would still think it was yesterday.
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible' || !state.data || state.data.settings.today === localDate(new Date())) return;
+    try { await reload(); await render(); } catch { /* shown on the next action */ }
+  });
 
   // Brings the Today line to the top of the Overview's bill list (the list only, not the page).
   function scrollBillsToToday() {

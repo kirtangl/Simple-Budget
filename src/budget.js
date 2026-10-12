@@ -20,7 +20,8 @@ function payCycle(frequency, customDays) {
     const days = Math.min(Math.max(Math.round(Number(customDays) || 14), 1), 366);
     return { frequency, days };
   }
-  return PAY_FREQUENCIES[frequency] ? { frequency, days: PAY_FREQUENCIES[frequency] } : DEFAULT_PAY_CYCLE;
+  return Object.hasOwn(PAY_FREQUENCIES, frequency) && PAY_FREQUENCIES[frequency]
+    ? { frequency, days: PAY_FREQUENCIES[frequency] } : DEFAULT_PAY_CYCLE;
 }
 
 function paysPerYear(cycle = DEFAULT_PAY_CYCLE) {
@@ -59,8 +60,10 @@ function daysBetween(a, b) {
   return Math.round((parseDate(b) - parseDate(a)) / DAY_MS);
 }
 
+// A real calendar date between 1900 and 2199. Far-off years aren't useful, and
+// the loan maths steps day by day, so they would make every page slow.
 function isValidDate(str) {
-  return typeof str === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(str) && formatDate(parseDate(str)) === str;
+  return typeof str === 'string' && /^(19|20|21)\d{2}-\d{2}-\d{2}$/.test(str) && formatDate(parseDate(str)) === str;
 }
 
 function lastDayOfMonth(year, monthIndex) {
@@ -146,7 +149,7 @@ const DEFAULT_DEPOSIT_RULES = { rounding: 'up10', buffer_percent: 0 };
 // Round the account's whole per-pay total up (to the cent, $5 or $10),
 // then add the buffer percentage on top. 293 -> up5 -> 295; 301 -> up10 -> 310 -> +10% -> 341.
 function roundUp(cents, rounding) {
-  const step = ROUNDING[rounding] || 1;
+  const step = (Object.hasOwn(ROUNDING, rounding) && ROUNDING[rounding]) || 1;
   // The small epsilon stops float noise like 29300.0000001 rounding up a whole step.
   return Math.max(0, Math.ceil(cents / step - 1e-9) * step);
 }
@@ -349,23 +352,26 @@ function heldEstimates(rows, accounts, { today, anchor = today, payAnchor = anch
   const live = rows.filter((e) => e.active && (e.kind || 'expense') !== 'saving'
     && !(e.end_date && e.end_date < today) && !isSplit(e));
   // Deposits land at the start of each cycle after today.
-  const depositDays = [];
+  const depositCycles = [];
   for (let i = cycleIndexFor(anchor, today, pc) + 1; ; i += 1) {
-    const start = cycleBounds(anchor, i, pc).start;
-    if (start > until) break;
-    depositDays.push(start);
+    const bounds = cycleBounds(anchor, i, pc);
+    if (bounds.start > until) break;
+    depositCycles.push(bounds);
   }
   return accounts.map((a) => {
     const own = live.filter((e) => e.account_id === a.id);
-    const perCycle = own.reduce((sum, e) => sum + perCycleCents(e, pc), 0);
     const events = [];
+    // Each deposit only covers what applies in that cycle (not before it starts or after it ends).
+    for (const bounds of depositCycles) {
+      const perCycle = own.filter((e) => inRange(e, bounds)).reduce((sum, e) => sum + perCycleCents(e, pc), 0);
+      events.push([bounds.start, 0, -perCycle]);
+    }
     for (const e of own) {
       for (const d of occurrences(e, today, until, payAnchor)) {
         if ((e.start_date && d < e.start_date) || (e.end_date && d > e.end_date)) continue;
         events.push([d, 1, e.amount_cents]);
       }
     }
-    depositDays.forEach((d) => events.push([d, 0, -perCycle]));
     // Deposits before bills on the same day; track the most the account is ever short.
     events.sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : x[1] - y[1]));
     let running = 0;

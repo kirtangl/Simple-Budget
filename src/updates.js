@@ -37,15 +37,20 @@ function compareVersions(a, b) {
   return 0;
 }
 
-function createUpdates({ version, channel, repo, token, fetchImpl = globalThis.fetch }) {
+// `settings()` gives { channel, repo, token }, read on every check so they can
+// change while the app runs (Settings → Advanced). Fixed values work too.
+function createUpdates({ version, channel, repo, token, settings, fetchImpl = globalThis.fetch }) {
+  const current = settings || (() => ({ channel, repo, token }));
   let state = { checkedAt: null, latest: null, error: null };
   let running = null;
 
   async function check() {
     if (running) return running;
-    running = (async () => {
+    const { channel, repo, token } = current();
+    const p = (async () => {
       try {
         const res = await fetchImpl(`https://api.github.com/repos/${repo}/releases?per_page=30`, {
+          signal: AbortSignal.timeout(20_000),
           headers: {
             Accept: 'application/vnd.github+json',
             'User-Agent': 'simple-budget',
@@ -67,22 +72,24 @@ function createUpdates({ version, channel, repo, token, fetchImpl = globalThis.f
           error: null,
           latest: top ? {
             version: top.tag_name.replace(/^v/, ''), name: top.name || top.tag_name, notes: top.body || '',
-            url: top.html_url, published_at: top.published_at, prerelease: Boolean(top.prerelease),
+            url: /^https:\/\/github\.com\//.test(top.html_url || '') ? top.html_url : `https://github.com/${repo}/releases`,
+            published_at: top.published_at, prerelease: Boolean(top.prerelease),
           } : null,
         };
       } catch (err) {
-        state = { ...state, checkedAt: new Date().toISOString(), error: err.message || 'Could not reach GitHub.' };
-      } finally {
-        running = null;
+        const timedOut = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
+        state = { ...state, checkedAt: new Date().toISOString(), error: timedOut ? 'GitHub took too long to answer. Try again later.' : (err.message || 'Could not reach GitHub.') };
       }
       return state;
     })();
-    return running;
+    running = p;
+    p.finally(() => { if (running === p) running = null; });
+    return p;
   }
 
   const view = () => ({
     current: version,
-    channel,
+    channel: current().channel,
     checkedAt: state.checkedAt,
     error: state.error,
     latest: state.latest,
@@ -92,6 +99,8 @@ function createUpdates({ version, channel, repo, token, fetchImpl = globalThis.f
   return {
     check,
     view,
+    // Forget the last result, e.g. after the repository or token changes.
+    reset() { state = { checkedAt: null, latest: null, error: null }; },
     // Check soon after starting, then every few hours.
     start() {
       setTimeout(check, 5000).unref();

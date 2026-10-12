@@ -7,15 +7,44 @@ const { openDatabase, getSetting, setSetting } = require('./db');
 const { createAuth } = require('./auth');
 const { createApi } = require('./api');
 const { createUpdates } = require('./updates');
+const { createConfig, ConfigError, splitHosts } = require('./config');
 const { version: VERSION } = require('../package.json');
 
-// Which build this is, shown in the app: "test" (APP_CHANNEL=test, e.g. a test
-// copy), "beta" (a pre-release version like 0.6.0-beta.1), or "" for a release.
-function appChannel() {
-  const set = String(process.env.APP_CHANNEL || '').trim().toLowerCase();
-  if (set === 'test' || set === 'beta') return set;
+// Which build this is, shown in the app: "test" (e.g. a test copy), "beta"
+// (a pre-release version like 0.6.0-beta.1), or "" for a release.
+function appChannel(set = process.env.APP_CHANNEL) {
+  const v = String(set || '').trim().toLowerCase();
+  if (v === 'test' || v === 'beta') return v;
   return /-beta/i.test(VERSION) ? 'beta' : '';
 }
+
+// Which Host names the app answers to. Without this, a web page on another site
+// could point its own name at this server ("DNS rebinding") and read the budget.
+// Home-network names are always fine; anything else (like a domain in front of
+// a reverse proxy) is added in Settings → Advanced or ALLOWED_HOSTS, or * to turn this off.
+const HOME_NAMES = /(^localhost$|\.localhost$|\.local$|\.lan$|\.home$|\.home\.arpa$|\.internal$|\.localdomain$|\.ts\.net$)/i;
+const bareHost = (hostHeader) => String(hostHeader || '').toLowerCase().replace(/:\d+$/, '');
+function homeHost(hostHeader) {
+  const host = bareHost(hostHeader);
+  if (!host) return false;
+  if (host.startsWith('[') || /^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return true; // an IP address
+  return !host.includes('.') || HOME_NAMES.test(host); // e.g. "nas" or "budget.local"
+}
+function hostAllowed(hostHeader, extra = splitHosts(process.env.ALLOWED_HOSTS)) {
+  if (extra.includes('*')) return true;
+  if (homeHost(hostHeader)) return true;
+  const host = bareHost(hostHeader);
+  const full = String(hostHeader || '').toLowerCase();
+  return extra.some((h) => host === h || full === h || (h.startsWith('.') && host.endsWith(h)));
+}
+
+const SECURITY_HEADERS = {
+  'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+    + "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'",
+  'X-Frame-Options': 'DENY',
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'same-origin',
+};
 
 function createApp({ db, secureCookies = false, fetchImpl }) {
   // Keep the cookie signing secret in the database so logins survive restarts.
@@ -25,17 +54,29 @@ function createApp({ db, secureCookies = false, fetchImpl }) {
     setSetting(db, 'session_secret', secret);
   }
 
-  const auth = createAuth({ db, secret, secureCookies });
+  const config = createConfig(db);
+  const auth = createAuth({ db, secret, secureCookies: () => secureCookies || config.secureCookies() });
   const updates = createUpdates({
-    version: VERSION, channel: appChannel(), fetchImpl,
-    repo: process.env.UPDATE_REPO || 'kirtangl/Simple-Budget', token: process.env.GITHUB_TOKEN || '',
+    version: VERSION, fetchImpl,
+    settings: () => ({ channel: appChannel(config.channel()), repo: config.updateRepo(), token: config.githubToken() }),
   });
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', 'loopback, linklocal, uniquelocal');
-  app.use(express.json({ limit: '10mb' }));
+  app.set('trust proxy', config.trustProxy());
+  app.use((req, res, next) => {
+    if (!hostAllowed(req.headers.host, config.allowedHosts())) {
+      return res.status(421).type('text/plain').send(`Simple Budget doesn't answer to "${String(req.headers.host || '').slice(0, 100)}". `
+        + 'If this is your own address, open the app by its IP address and add it in Settings → Advanced, or add it to ALLOWED_HOSTS in .env (see the README).');
+    }
+    res.set(SECURITY_HEADERS);
+    next();
+  });
+  // Small bodies everywhere, except a backup being restored.
+  const smallJson = express.json({ limit: '100kb' });
+  app.use((req, res, next) => (req.path === '/api/import' ? next() : smallJson(req, res, next)));
+  app.use('/api/import', auth.require, express.json({ limit: '10mb' }));
 
-  app.get('/api/version', (req, res) => res.json({ version: VERSION, channel: appChannel() }));
+  app.get('/api/version', (req, res) => res.json({ version: VERSION, channel: appChannel(config.channel()) }));
   app.get('/api/session', auth.status);
   app.post('/api/login', auth.login);
   app.post('/api/logout', auth.logout);
@@ -48,6 +89,50 @@ function createApp({ db, secureCookies = false, fetchImpl }) {
   app.post('/api/logins', auth.require, auth.addLogin);
   app.patch('/api/logins/:id', auth.require, auth.updateLogin);
   app.delete('/api/logins/:id', auth.require, auth.removeLogin);
+
+  // Settings → Advanced: server settings. Anyone can look; only the main login can change them.
+  const isHttps = (req) => req.secure || String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+  const advanced = (req) => ({
+    values: {
+      allowed_hosts: config.get('allowed_hosts'), trust_proxy: config.get('trust_proxy'),
+      secure_cookies: config.secureCookies(), app_channel: config.channel(),
+      update_repo: config.get('update_repo'),
+    },
+    github_token_set: Boolean(config.githubToken()),
+    locked: config.locked(),
+    can_edit: req.login.id === 0,
+    host: String(req.headers.host || ''), host_is_home: homeHost(req.headers.host), https: isHttps(req),
+    version: VERSION, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, database: process.env.DB_FILE ? 'custom' : 'data/budget.db',
+  });
+  app.get('/api/advanced', auth.require, (req, res) => res.json(advanced(req)));
+  app.put('/api/advanced', auth.require, (req, res) => {
+    if (req.login.id !== 0) return res.status(403).json({ error: 'Only the main login can change these.' });
+    const body = req.body && typeof req.body === 'object' ? { ...req.body } : {};
+    // The token is only ever sent in, never back. Leaving it out keeps the saved one.
+    if (body.github_token === undefined) delete body.github_token;
+    if (body.remove_github_token) body.github_token = '';
+    delete body.remove_github_token;
+    try {
+      if ('allowed_hosts' in body) {
+        const hosts = splitHosts(body.allowed_hosts);
+        if (!hostAllowed(req.headers.host, hosts)) {
+          throw new ConfigError(`That would stop the app answering at ${req.headers.host}, the address you're using now. Keep it in the list.`);
+        }
+      }
+      if (body.secure_cookies === true && !secureCookies && !config.secureCookies() && !isHttps(req)) {
+        throw new ConfigError("Secure cookies only work over HTTPS. Open the app with https:// first, or you'd be logged out and unable to log back in.");
+      }
+      const changed = config.update(body);
+      if (changed.includes('trust_proxy')) app.set('trust proxy', config.trustProxy());
+      if (changed.some((k) => ['app_channel', 'update_repo', 'github_token'].includes(k))) updates.reset();
+      // A new cookie setting applies from the next login cookie, so send a fresh one now.
+      if (changed.includes('secure_cookies')) auth.refreshCookie(req, res);
+    } catch (err) {
+      if (err instanceof ConfigError) return res.status(400).json({ error: err.message });
+      throw err;
+    }
+    res.json(advanced(req));
+  });
   app.use('/api', auth.require, createApi(db));
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
 
@@ -55,6 +140,7 @@ function createApp({ db, secureCookies = false, fetchImpl }) {
 
   app.use((err, req, res, next) => {
     if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON.' });
+    if (err && err.type === 'entity.too.large') return res.status(413).json({ error: 'That is too big to send.' });
     console.error(err);
     res.status(500).json({ error: 'Something went wrong on the server.' });
   });
@@ -80,4 +166,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createApp };
+module.exports = { createApp, hostAllowed };
