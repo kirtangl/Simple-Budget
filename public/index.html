@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f766e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Budget">
+  <title>Simple Budget</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" id="favicon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="styles.css">
+  <script src="theme.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/overview"><svg class="logo" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><rect width="24" height="24" rx="5.5" fill="var(--brand)"/><circle cx="12" cy="12" r="6.5" fill="none" stroke="var(--on-brand)" stroke-width="3.6" pathLength="100" stroke-dasharray="44 6 25 6 13 6" transform="rotate(-90 12 12)"/></svg><span class="brand-name">Simple Budget</span><span class="build-tag" id="build-tag" hidden></span></a>
+    <nav class="tabs" id="nav" hidden aria-label="Sections">
+      <a href="#/overview" data-tab="overview"><span class="ico" aria-hidden="true">◎</span><span class="lbl">Overview</span></a>
+      <a href="#/budget" data-tab="budget"><span class="ico" aria-hidden="true">≡</span><span class="lbl">Budget</span></a>
+      <a href="#/goals" data-tab="goals"><span class="ico" aria-hidden="true">★</span><span class="lbl">Goals</span><span class="nav-dot" id="goals-dot" hidden title="Something to pay back is overdue"></span></a>
+      <a href="#/settings" data-tab="settings" class="nav-settings" title="Settings" aria-label="Settings"><span class="ico" aria-hidden="true">⚙</span><span class="lbl">Settings</span></a>
+    </nav>
+    <div class="user-menu" id="user-menu" hidden>
+      <a class="update-pill" id="update-pill" href="#/settings/updates" hidden title="A new version is available">Update</a>
+      <button type="button" class="menu-btn" data-action="toggle-menu" aria-haspopup="menu" aria-expanded="false" aria-label="Household menu">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <div class="menu" role="menu" hidden>
+        <div class="menu-head">Household</div>
+        <div class="menu-version" id="menu-version"></div>
+        <button type="button" role="menuitem" class="menu-update" id="menu-update" data-action="menu-updates" hidden></button>
+        <button type="button" role="menuitem" data-action="menu-theme">Appearance</button>
+        <button type="button" role="menuitem" data-action="change-password">Change password</button>
+        <button type="button" role="menuitem" data-action="menu-security">Security</button>
+        <button type="button" role="menuitem" data-action="menu-settings">Settings</button>
+        <hr>
+        <button type="button" role="menuitem" class="danger-text" data-action="logout">Log out</button>
+      </div>
+    </div>
+  </header>
+  <main id="app" aria-live="polite"></main>
+  <div id="toast" role="status" hidden></div>
+  <dialog id="modal"><form method="dialog" id="modal-form" novalidate></form></dialog>
+  <dialog id="prompt"><form method="dialog" id="prompt-form" novalidate></form></dialog>
+  <script src="app.js"></script>
+</body>
+</html>

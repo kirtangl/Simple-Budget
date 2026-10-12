@@ -1,0 +1,23 @@
+services:
+  budget:
+    build: .
+    # Change these two in .env to run a second copy (e.g. a test one) on the same machine.
+    container_name: ${CONTAINER_NAME:-simple-budget}
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    environment:
+      # Your local timezone, so bills flip to "paid" on the right day.
+      TZ: ${TZ:-Australia/Brisbane}
+      # Set to "true" only if you serve the app over HTTPS.
+      SECURE_COOKIES: ${SECURE_COOKIES:-false}
+      # "test" tags this copy as a test one in the header and page title.
+      APP_CHANNEL: ${APP_CHANNEL:-}
+      # Only for a private fork: where to check for new versions, and a read-only token.
+      UPDATE_REPO: ${UPDATE_REPO:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    volumes:
+      - budget-data:/app/data
+
+volumes:
+  budget-data:
