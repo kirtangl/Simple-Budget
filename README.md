@@ -138,6 +138,14 @@ docker compose up -d
 
 The test copy runs at `http://<your-server>:3001` with its own data. To try live data in it, download a backup from the live app and restore it into the test one.
 
+**Keep betas and branch builds off your real budget.** Your live copy should stay on full releases (`IMAGE_TAG=latest`, no `APP_CHANNEL`):
+
+- A beta or an unreleased branch hasn't been fully tested yet, and you rely on the live copy for real bills.
+- A new version can change how the database is stored. Once it has, an older version may not be able to read it, so "going back" means restoring the copy saved in `backups/` before the update (or a downloaded backup), and losing anything entered since.
+- A branch can contain anyone's code, since the repository is public. Only build branches you or someone you trust wrote, and only on the test copy.
+
+Try those on the test copy, with a restored backup of your live data, and publish a full release once you're happy.
+
 The two test settings do different jobs:
 
 | Setting | What it does | Where |
