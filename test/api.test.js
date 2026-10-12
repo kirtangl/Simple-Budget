@@ -682,3 +682,14 @@ test('updates: preferences, versions behind, and the welcome after an update', a
     assert.equal(r.body.just_updated, null);
   });
 });
+
+test('a release image reports its own version (APP_VERSION), e.g. a beta built from a branch', () => {
+  const { execFileSync } = require('node:child_process');
+  const ask = (v) => execFileSync(process.execPath, ['-e', `
+    const { createApp } = require('./src/server'); const { openDatabase } = require('./src/db');
+    const s = createApp({ db: openDatabase(':memory:') }).listen(0, async () => {
+      const r = await fetch('http://127.0.0.1:' + s.address().port + '/api/version'); console.log(JSON.stringify(await r.json())); s.close();
+    });`], { env: { ...process.env, APP_VERSION: v, APP_CHANNEL: '' }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  assert.deepEqual(JSON.parse(ask('v99.1.0-beta.2')), { version: '99.1.0-beta.2', channel: 'beta' });
+  assert.equal(JSON.parse(ask('not a version')).version, require('../package.json').version);
+});

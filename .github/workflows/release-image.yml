@@ -51,6 +51,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # The app reports the release's own version (0.8.0-beta.1), not package.json's.
+          build-args: APP_VERSION=${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
 
   notes:
     if: github.event_name == 'release' && !github.event.release.body

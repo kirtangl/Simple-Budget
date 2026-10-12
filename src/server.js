@@ -10,7 +10,12 @@ const { createApi } = require('./api');
 const { createUpdates, UpdateError, compareVersions } = require('./updates');
 const { createBackups, BackupError } = require('./backups');
 const { createConfig, ConfigError, splitHosts } = require('./config');
-const { version: VERSION } = require('../package.json');
+const { version: PACKAGE_VERSION } = require('../package.json');
+const { parseVersion } = require('./updates');
+
+// A release image is stamped with its release's version (APP_VERSION, set when
+// it's built), so a pre-release like 0.8.0-beta.1 knows it's that, not 0.8.0.
+const VERSION = parseVersion(process.env.APP_VERSION) ? String(process.env.APP_VERSION).trim().replace(/^v/, '') : PACKAGE_VERSION;
 
 // Which build this is, shown in the app: "test" (e.g. a test copy), "beta"
 // (a pre-release version like 0.6.0-beta.1), or "" for a release.

@@ -156,7 +156,9 @@ The two test settings do different jobs:
 | `APP_CHANNEL=test` | The **Test** tag in the header and page title, so you can tell the copies apart. Only a label. | `.env`, or Build tag in Settings → Advanced if it isn't in `.env` |
 | `IMAGE_TAG=beta` | Which versions it's offered and installs: pre-releases too. Also keeps it from sharing an image with the live copy. | `.env` only (Docker reads it before the app starts) |
 
-To try a branch, `git checkout <branch> && git pull`, then `sudo docker compose up -d --build`; **Update now** later puts it back on the newest release.
+**To try a pull request without the terminal**, publish a pre-release from its branch: on GitHub, **Releases → Draft a new release**, choose the branch as the target, type a new tag like `v0.8.0-beta.1`, tick **Set as a pre-release**, and publish. The image is built in a few minutes, then the test copy (on `IMAGE_TAG=beta`) offers it under **Update now**. The live copy on `latest` never sees it. When the pull request is merged, publish the full release (`v0.8.0`) from `main` and both copies are offered it.
+
+Or from the terminal: `git checkout <branch> && git pull`, then `sudo docker compose up -d --build`. **Update now** later puts it back on the newest release.
 
 To turn a test copy into a normal one, remove the `APP_CHANNEL` and `IMAGE_TAG` lines from its `.env` (keep `CONTAINER_NAME` and `HOST_PORT` while the live copy runs alongside), then `sudo docker compose up -d`.
 

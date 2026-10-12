@@ -2939,8 +2939,9 @@ sudo docker compose up -d --build</pre>`;
         const res = await fetch('api/version', { cache: 'no-store' });
         if (res.ok) v = (await res.json()).version;
       } catch { /* restarting */ }
-      if (v === i.version) {
-        set({ step: 4 });
+      // Any change of version counts: a release built from a branch can report a slightly different one.
+      if (v && v !== i.from) {
+        set({ step: 4, version: v });
         // Make sure the data opens on the new version before showing it.
         try { await api('GET', '/updates'); } catch { /* the reload shows any problem */ }
         location.reload();
@@ -3402,7 +3403,7 @@ sudo docker compose up -d --build</pre>`;
       const v = state.updates.latest.version;
       if (!state.updateFailed && !confirm(`Update to version ${v} now? The app restarts, so anyone using it will see it reload.`)) return;
       state.updateFailed = null;
-      const i = { version: v, step: 1 };
+      const i = { version: v, from: state.updates.current, step: 1 };
       state.updateInstall = i;
       await render();
       try {
