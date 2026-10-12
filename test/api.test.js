@@ -596,3 +596,89 @@ test('updates: the releases offered follow IMAGE_TAG, so Update now can install 
   await u.check();
   assert.deepEqual([u.view().track, u.view().latest.version], ['beta', '1.1.0-beta.1']);
 });
+
+test('backups: listed, made by hand, and restored without touching logins', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-backups-'));
+  try {
+    await withServer({ dataDir }, async (call) => {
+      let r = await call('GET', '/backups');
+      assert.equal(r.body.available, true);
+      assert.deepEqual(r.body.backups, []);
+      await call('POST', '/payees', { name: 'Before' });
+      await call('PUT', '/settings', { buffer_percent: 5 });
+      r = await call('POST', '/backups');
+      assert.match(r.body.created, /^budget-manual-.*\.db$/);
+      assert.equal(r.body.backups[0].kind, 'manual');
+      assert.ok(r.body.backups[0].size > 0);
+      const manual = r.body.created;
+      // Changes after the backup, including a new login, which a restore leaves alone.
+      await call('POST', '/payees', { name: 'After' });
+      await call('PUT', '/settings', { buffer_percent: 10 });
+      await call('POST', '/logins', { name: 'Sam', password: 'sams-password' });
+      assert.equal((await call('POST', '/backups/restore', { name: '../budget.db' })).status, 404);
+      r = await call('POST', '/backups/restore', { name: manual });
+      assert.equal(r.status, 200);
+      assert.match(r.body.backup, /^budget-before-restore-/); // what was there is saved first
+      const data = (await call('GET', '/data')).body;
+      assert.deepEqual(data.payees.map((p) => p.name), ['Before']);
+      assert.equal(data.settings.buffer_percent, 5);
+      assert.equal((await call('GET', '/me')).status, 200); // still logged in
+      assert.ok((await call('GET', '/logins')).body.some((l) => l.name === 'Sam'));
+      // Automatic backups keep the newest five; manual ones stay.
+      for (let i = 0; i < 6; i += 1) await call('POST', '/backups/restore', { name: manual });
+      r = await call('GET', '/backups');
+      assert.equal(r.body.backups.filter((b) => b.kind === 'restore').length, 5);
+      assert.ok(r.body.backups.some((b) => b.name === manual));
+      // Only the main login can restore.
+      await call('POST', '/logout');
+      await call('POST', '/login', { password: 'sams-password' });
+      assert.equal((await call('POST', '/backups/restore', { name: manual })).status, 403);
+    });
+  } finally { fs.rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('updates: preferences, versions behind, and the welcome after an update', async () => {
+  const releases = [
+    { tag_name: 'v99.1.0', name: '99.1', body: 'New: two', html_url: 'https://github.com/x/y', draft: false, prerelease: false },
+    { tag_name: 'v99.2.0-beta.1', name: 'b', body: '', html_url: 'https://github.com/x/y', draft: false, prerelease: true },
+    { tag_name: 'v99.0.0', name: '99.0', body: 'Fixed: one', html_url: 'https://github.com/x/y', draft: false, prerelease: false },
+  ];
+  let calls = 0;
+  const fetchImpl = async () => { calls += 1; return { ok: true, status: 200, json: async () => releases }; };
+  const url = process.env.UPDATER_URL;
+  delete process.env.UPDATER_URL;
+  try {
+    await withServer({ fetchImpl }, async (call) => {
+      let r = await call('GET', '/updates');
+      assert.equal(r.body.behind, 2);
+      assert.deepEqual(r.body.releases.map((x) => x.version), ['99.1.0', '99.0.0']);
+      assert.equal(r.body.beta, false);
+      assert.ok(r.body.installed_at);
+      assert.equal(r.body.just_updated, null); // a fresh install isn't an update
+      r = await call('PUT', '/updates/prefs', { beta: true });
+      assert.equal(r.body.latest.version, '99.2.0-beta.1');
+      assert.equal(r.body.behind, 3);
+      r = await call('PUT', '/updates/prefs', { auto_check: false });
+      assert.equal(r.body.auto_check, false);
+      assert.equal((await call('PUT', '/updates/prefs', { beta: 'yes' })).status, 400);
+    });
+    // With the updater, IMAGE_TAG decides and the switch is locked.
+    process.env.UPDATER_URL = 'http://updater:8080';
+    await withServer({ fetchImpl }, async (call) => {
+      assert.equal((await call('GET', '/updates')).body.beta_locked, true);
+      assert.equal((await call('PUT', '/updates/prefs', { beta: true })).status, 400);
+    });
+  } finally { if (url === undefined) delete process.env.UPDATER_URL; else process.env.UPDATER_URL = url; }
+  // The first start on a newer version welcomes it, until dismissed.
+  const db = openDatabase(':memory:');
+  db.prepare("INSERT INTO settings (key, value) VALUES ('installed_version', '0.0.1')").run();
+  await withServer({ fetchImpl, db }, async (call) => {
+    let r = await call('GET', '/updates');
+    assert.equal(r.body.just_updated.from, '0.0.1');
+    r = await call('POST', '/updates/dismiss');
+    assert.equal(r.body.just_updated, null);
+  });
+});

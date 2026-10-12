@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.8.0 (12 October 2026)
+
+### New
+- Settings → Updates shows backups of your data, with Restore. One is made before every update, and **Back up now** makes one any time.
+- Preferences for updates: turn automatic checks off, or include beta versions.
+- After an update, a welcome card says it went smoothly and where the backup is.
+
+### Improved
+- Settings → Updates is one card that changes with what's happening, and shows each step of an update as it goes.
+- Release notes show what's new, improved and fixed, for the new version and the one you're on.
+- A dot on the Updates tab when there's an update waiting.
+- The Settings tabs sit together in one strip, like Budget and Goals, and fit on a phone without scrolling.
+
 ## v0.7.1 (12 October 2026)
 
 - The versions offered in Settings → Updates follow `IMAGE_TAG`, so a copy is only offered what **Update now** can install. A copy on `latest` is never offered a beta, whatever its build tag, and one kept on a fixed version says so. Settings → Updates shows which releases a copy follows.

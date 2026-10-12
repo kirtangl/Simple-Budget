@@ -92,18 +92,19 @@ Everything is stored in one SQLite database file inside the Docker volume `budge
 
 - **Backup and restore**: Settings → General → **Download backup** saves your accounts, income, payees, categories, expenses, goals, debts and settings as a JSON file. **Restore from backup** loads one back in and **replaces** what's there. Passwords and logins aren't included or changed. This is also handy for starting over: wipe the volume (`docker compose down -v`), start again, and restore.
 - **Older backups keep working**: each file records its format version. When a newer app expects data an older file doesn't have, it fills in the defaults, and any section missing from the file is left as it is.
+- **Backups on the server**: Settings → Updates → **Backups** lists copies of the whole database kept in `backups/` in the data volume. One is made before every update and before every restore (the last five are kept), and **Back up now** makes a manual one, which is kept until you delete the file. **Restore** (main login only) puts the budget back as it was then; logins and passwords stay as they are now, so nobody is logged out.
 - **Full database copy**: `docker compose cp budget:/app/data/budget.db ./budget-backup.db`
 
 ### Updating
 
-**Settings → Updates** shows this copy's version, the latest release on GitHub and its release notes, with a **Check now** button. The app also checks every few hours by itself. When there's a newer version, an **Update** tag appears beside the profile button, which also gets a dot, and the menu offers **Update to vX.Y.Z**.
+**Settings → Updates** shows this copy's version, the latest release on GitHub and what's new in it and in the version you're on, with a **Check now** button. The app also checks every 6 hours by itself (turn that off under **Preferences**). When there's a newer version, an **Update** tag appears beside the profile button, which also gets a dot, the Updates tab gets a dot, and the menu offers **Update to vX.Y.Z**.
 
 Press **Update now** (main login only) and the app:
 
 1. saves a copy of the database to `backups/` in its data volume (the newest five are kept),
 2. asks the updater container to download the new image and restart the app on it.
 
-It takes a minute or two and the page reloads by itself. Your data stays in its volume and everyone stays logged in.
+The page shows each step (backing up, downloading, restarting, checking) and reloads by itself when it's done, usually within a minute or two. Your data stays in its volume and everyone stays logged in. The first time it opens on the new version, a welcome card says so.
 
 Each release is built into an image at `ghcr.io/kirtangl/simple-budget` by a GitHub Action. `IMAGE_TAG` in `.env` picks which one a copy follows:
 
@@ -113,11 +114,13 @@ Each release is built into an image at `ghcr.io/kirtangl/simple-budget` by a Git
 | `beta` | Every release, including pre-releases like `0.8.0-beta.1` |
 | `0.7.0` | Stays on that version (to go back after a bad update: set it, then `sudo docker compose up -d`). Update now is off. |
 
-The app only offers what `IMAGE_TAG` can install, so a `latest` copy is never offered a beta. Settings → Updates says which one a copy follows. After changing `IMAGE_TAG`, run `sudo docker compose up -d` in the copy's folder.
+The app only offers what `IMAGE_TAG` can install, so a `latest` copy is never offered a beta. Settings → Updates says which one a copy follows, and its **Include beta versions** switch shows it but can't change it (the updater pulls whatever `IMAGE_TAG` names). On a copy updated from the terminal, without the updater, the switch does choose. After changing `IMAGE_TAG`, run `sudo docker compose up -d` in the copy's folder.
 
 **From the terminal** (or if you'd rather not run the updater): `git pull`, then `sudo docker compose pull && sudo docker compose up -d`. To build from the code instead, `sudo docker compose up -d --build`.
 
 **How the updater works:** it's [Watchtower](https://github.com/nicholas-fedor/watchtower), which needs the Docker socket to restart containers. It only acts when the app asks (no schedule), only touches this copy (its scope is `CONTAINER_NAME`), and its port isn't published, so only the app can reach it. `UPDATER_TOKEN` in `.env` sets the password between the two if you'd like your own. To do without it, remove the `updater` service from `docker-compose.yml`; the app then shows the terminal commands instead.
+
+**Writing release notes:** Settings → Updates shows each release's notes as **New**, **Improved** and **Fixed** items. In the GitHub release, put bullets under `### New`, `### Improved` and `### Fixed` headings (or start lines with `New:`, `Improved:` or `Fixed:`), written for the household rather than for developers. Notes without them are shown as written.
 
 No setup is needed for update checks. GitHub allows about 60 checks an hour without a login, far more than the app uses. If you run a private fork, add a fine-grained token with read-only **Contents** access as `GITHUB_TOKEN=...` and set `UPDATE_REPO=owner/name` (or set both in Settings → Advanced).
 
