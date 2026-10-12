@@ -4,6 +4,9 @@
 #
 # Tags: the version (0.7.0, 0.7), "beta" for every release including
 # pre-releases, and "latest" for full releases only.
+#
+# A release published with no notes gets its version's section of
+# CHANGELOG.md as its notes. Notes typed in by hand are left alone.
 name: Release image
 
 on:
@@ -48,3 +51,22 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  notes:
+    if: github.event_name == 'release' && !github.event.release.body
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Copy this version's CHANGELOG section into the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          awk -v v="## ${TAG#v} " -v w="## v${TAG#v} " '
+            index($0, v) == 1 || index($0, w) == 1 { on = 1; next }
+            on && /^## / { exit }
+            on { print }' CHANGELOG.md > notes.md
+          if [ -s notes.md ]; then gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+          else echo "No CHANGELOG section for $TAG, so the notes stay empty."; fi

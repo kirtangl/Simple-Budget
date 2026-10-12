@@ -1,5 +1,7 @@
 # Changelog
 
+Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
+
 ## v0.8.0 (12 October 2026)
 
 ### New
@@ -15,14 +17,21 @@
 
 ## v0.7.1 (12 October 2026)
 
-- The versions offered in Settings → Updates follow `IMAGE_TAG`, so a copy is only offered what **Update now** can install. A copy on `latest` is never offered a beta, whatever its build tag, and one kept on a fixed version says so. Settings → Updates shows which releases a copy follows.
-- The README explains the test copy's two settings (`APP_CHANNEL` is the label, `IMAGE_TAG` picks the versions) and how to turn a test copy back into a normal one.
+### Improved
+- Updates only offer versions this copy can actually install.
+- Test copies show which release track they follow, and the README explains how to turn one back into a normal copy.
+
+### Fixed
+- Copies on `latest` are no longer offered beta builds.
 
 ## v0.7.0 (12 October 2026)
 
-- **One-click updates**: **Update now** in Settings → Updates installs a new version and restarts the app, with no terminal. A copy of the database is saved to `backups/` first, and the page reloads by itself when it's done. Main login only.
-- Each release is published as a ready-made image (`ghcr.io/kirtangl/simple-budget`), so installing and updating no longer builds on your server. `IMAGE_TAG` picks releases (`latest`), pre-releases too (`beta`), or a fixed version.
-- The app stops straight away when Docker asks it to (restarts and updates take seconds, not 30).
+### New
+- One-click updates: **Update now** in Settings → Updates installs the new version and restarts the app, with no terminal. Your data is backed up first, and the page reloads by itself when it's done.
+- Each release comes ready-made, so updating no longer builds the app on your server.
+
+### Improved
+- Restarts and updates take seconds instead of half a minute.
 
 **Moving to v0.7.0** (once, from the terminal): in each copy's folder, `git fetch origin main && git reset --hard origin/main`, add `IMAGE_TAG=beta` to the test copy's `.env`, then `sudo docker compose up -d --build`. That also starts the updater. From then on, use **Update now**.
 

@@ -120,7 +120,7 @@ The app only offers what `IMAGE_TAG` can install, so a `latest` copy is never of
 
 **How the updater works:** it's [Watchtower](https://github.com/nicholas-fedor/watchtower), which needs the Docker socket to restart containers. It only acts when the app asks (no schedule), only touches this copy (its scope is `CONTAINER_NAME`), and its port isn't published, so only the app can reach it. `UPDATER_TOKEN` in `.env` sets the password between the two if you'd like your own. To do without it, remove the `updater` service from `docker-compose.yml`; the app then shows the terminal commands instead.
 
-**Writing release notes:** Settings → Updates shows each release's notes as **New**, **Improved** and **Fixed** items. In the GitHub release, put bullets under `### New`, `### Improved` and `### Fixed` headings (or start lines with `New:`, `Improved:` or `Fixed:`), written for the household rather than for developers. Notes without them are shown as written.
+**Writing release notes:** Settings → Updates shows each release's notes as **New**, **Improved** and **Fixed** items, written for the household rather than for developers. Write them in `CHANGELOG.md` under `### New`, `### Improved` and `### Fixed` headings, then publish the release with its notes left empty: the release workflow copies that version's section in. Notes typed into the release by hand are kept, and notes without those headings are shown as written.
 
 No setup is needed for update checks. GitHub allows about 60 checks an hour without a login, far more than the app uses. If you run a private fork, add a fine-grained token with read-only **Contents** access as `GITHUB_TOKEN=...` and set `UPDATE_REPO=owner/name` (or set both in Settings → Advanced).
 
