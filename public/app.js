@@ -2812,6 +2812,10 @@
         s.extra = html`<pre class="upd-cmd">git pull
 sudo docker compose up -d --build</pre>`;
       }
+    } else if (u.waiting) {
+      s = { mode: 'ok', eyebrow: 'New version · waiting a day', title: `Simple Budget v${u.waiting.version} is out`,
+        sub: `It'll be offered ${offerWhen(u.waiting.offer_at)}, a day after it came out, in case it's pulled. You can turn the wait off under Preferences.`,
+        secondary: ['check-updates', 'Check again'] };
     } else if (u.just_updated) {
       s = { mode: 'done', eyebrow: 'Updated', title: `Welcome to v${u.current}`,
         sub: u.just_updated.backup ? 'Everything went smoothly. Your backup is listed under Backups if you ever need it.' : 'Everything went smoothly.',
@@ -2849,8 +2853,8 @@ sudo docker compose up -d --build</pre>`;
       <div class="upd-foot">
         <span>This copy <b class="mono">v${u.current}</b>${tag ? html` <span class="build-tag" data-channel="${u.channel}">${tag}</span>` : ''}</span>
         <span>Latest <b class="mono">${l ? `v${l.version}` : '—'}</b></span>
-        <span>Channel <b>${channel}</b> · <button class="linkish" data-action="upd-to-prefs">change</button></span>
-        <span>Checked <b>${u.checkedAt ? updWhen(u.checkedAt) : 'not yet'}</b> · ${u.auto_check ? 'every 6 hours' : 'automatic checks off'}</span>
+        <span>Channel <b>${channel}</b></span>
+        <span>Checked <b>${u.checkedAt ? updWhen(u.checkedAt) : 'not yet'}</b> · ${u.auto_check ? everyHours(u.interval_hours) : 'automatic checks off'}</span>
       </div>
     </section>`;
   }
@@ -2865,6 +2869,17 @@ sudo docker compose up -d --build</pre>`;
       if (location.hash.startsWith('#/settings/updates')) render();
     }, 60 * 1000);
   }
+
+  // "later today at 7:42 pm", "tomorrow at …" or "on Wed 14 Oct at …".
+  function offerWhen(iso) {
+    const d = new Date(iso);
+    const day = localDate(d);
+    const today = localDate(new Date());
+    const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    if (day <= today) return `later today at ${time}`;
+    return `${day === addDaysIso(today, 1) ? 'tomorrow' : `on ${fmtDate(day)}`} at ${time}`;
+  }
+  const everyHours = (h) => (h === 1 ? 'every hour' : h === 24 ? 'once a day' : `every ${h} hours`);
 
   // The four steps of an update. The server says when the backup is done; the rest
   // is seen from here: it stops answering while it restarts, then answers on the new version.
@@ -2885,10 +2900,12 @@ sudo docker compose up -d --build</pre>`;
 
   function updNotesCard(u) {
     const all = u.releases || [];
-    const latest = all[0];
+    // What's offered (u.latest), which may not be the newest release while a new one waits a day.
+    const latest = u.latest && all.find((r) => r.version === u.latest.version);
+    const waiting = u.waiting && all.find((r) => r.version === u.waiting.version);
     const mine = all.find((r) => r.version === u.current);
-    const show = u.available ? [latest, mine].filter(Boolean) : all.slice(0, 2);
-    const repo = latest ? latest.url.replace(/\/releases\/.*$/, '/releases') : null;
+    const show = u.available ? [...new Set([waiting, latest, mine].filter(Boolean))] : all.slice(0, 2);
+    const repo = all[0] ? all[0].url.replace(/\/releases\/.*$/, '/releases') : null;
     const kindLabel = { new: 'New', improved: 'Improved', fixed: 'Fixed' };
     return html`<section class="card upd-notes-card" id="upd-notes">
       <div class="upd-card-head"><div><h3>What's new</h3>
@@ -2897,7 +2914,8 @@ sudo docker compose up -d --build</pre>`;
       ${show.length ? show.map((r) => {
         const items = noteItems(r.notes);
         const badge = r.version === u.current ? html`<span class="upd-badge">Installed</span>`
-          : u.available && r === latest ? html`<span class="upd-badge new">Not installed</span>` : '';
+          : u.available && r === latest ? html`<span class="upd-badge new">Not installed</span>`
+          : u.waiting && r.version === u.waiting.version ? html`<span class="upd-badge">Waiting a day</span>` : '';
         return html`<div class="upd-release ${r.version === u.current ? 'mine' : ''}">
           <div class="upd-release-head"><a class="mono" href="${r.url}" target="_blank" rel="noopener">v${r.version}</a>
             ${r.published_at ? html`<span class="upd-date">${fmtDate(localDate(new Date(r.published_at)), true)}</span>` : ''}
@@ -2914,7 +2932,7 @@ sudo docker compose up -d --build</pre>`;
     const label = (x) => (x.kind === 'manual' ? 'Manual backup' : x.kind === 'restore' ? 'Before a restore' : `Before v${x.version}`);
     return html`<section class="card upd-backups" id="upd-backups">
       <div class="upd-card-head"><div><h3>Backups</h3>
-        <p class="upd-card-sub">Made automatically before every update. Kept for the last 5.</p></div>
+        <p class="upd-card-sub">Made automatically before every update. Kept for the last ${b ? b.keep || 5 : 5}.</p></div>
         ${b && b.available ? html`<button class="linkish" data-action="backup-now">Back up now</button>` : ''}</div>
       ${!b ? html`<p class="muted small">Couldn't load the backups.</p>`
         : !b.available ? html`<p class="muted small">This copy doesn't keep backups on the server. Download one under <a href="#/settings/cycle">General</a> instead.</p>`
@@ -2934,13 +2952,34 @@ sudo docker compose up -d --build</pre>`;
         data-action="upd-pref" data-key="${key}" ${disabled ? raw('disabled') : ''}>
         <span><span class="upd-pref-title">${title}</span><span class="upd-card-sub">${sub}</span></span>
         <span class="upd-switch" aria-hidden="true"></span></button>`;
+    const pick = (key, value, title, sub, options, disabled) => html`<label class="upd-pref upd-pick">
+        <span><span class="upd-pref-title">${title}</span><span class="upd-card-sub">${sub}</span></span>
+        <select data-pref="${key}" ${disabled ? raw('disabled') : ''}>${options.map(([v, text]) => html`<option value="${v}" ${v === value ? raw('selected') : ''}>${text}</option>`)}</select></label>`;
+    const keep = state.backups && state.backups.keep;
     return html`<section class="card upd-prefs" id="upd-prefs">
       <h3>Preferences</h3>
-      ${row('auto_check', u.auto_check, 'Check for updates automatically', 'Every 6 hours, from GitHub', !main)}
+      ${row('auto_check', u.auto_check, 'Check for updates automatically', 'From GitHub, in the background', !main)}
+      ${pick('interval_hours', u.interval_hours, 'How often to check', u.auto_check ? 'Or press Check now any time' : 'Automatic checks are off',
+        [[1, 'Every hour'], [3, 'Every 3 hours'], [6, 'Every 6 hours'], [12, 'Every 12 hours'], [24, 'Once a day']], !main || !u.auto_check)}
+      ${row('wait_day', u.wait_day, 'Wait a day before offering updates', "A new version shows up 24 hours after it's released, so one that's pulled never reaches you", !main)}
       ${row('beta', u.beta, 'Include beta versions', betaNote, !main || u.beta_locked)}
+      ${keep ? pick('backups_keep', keep, 'Backups to keep', 'Made before updates and restores. Manual backups are always kept', [[5, 'Last 5'], [10, 'Last 10'], [20, 'Last 20']], !main) : ''}
       ${main ? '' : html`<p class="upd-card-sub" style="margin:8px 0 0">Only the main login can change these.</p>`}
     </section>`;
   }
+
+  // Preferences picked from a list (how often to check, backups to keep).
+  document.addEventListener('change', async (ev) => {
+    const el = ev.target.closest && ev.target.closest('select[data-pref]');
+    if (!el) return;
+    el.disabled = true;
+    try {
+      state.updates = await api('PUT', '/updates/prefs', { [el.dataset.pref]: Number(el.value) });
+      if (el.dataset.pref === 'backups_keep') state.backups = await api('GET', '/backups');
+      toast('Saved');
+    } catch (err) { toast(err.message); }
+    render();
+  });
 
   // After "Update now": watch the app go down and come back on the new version, then reload.
   async function waitForUpdate() {
@@ -3450,7 +3489,6 @@ sudo docker compose up -d --build</pre>`;
       void el.offsetWidth; // restart the highlight if pressed again
       el.classList.add('flash');
     },
-    'upd-to-prefs': () => document.getElementById('upd-prefs')?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
     'upd-to-backups': () => document.getElementById('upd-backups')?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
     'upd-pref': async (el) => {
       const key = el.dataset.key;

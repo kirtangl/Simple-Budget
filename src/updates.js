@@ -6,7 +6,7 @@
 // see its releases. Results are kept in memory and refreshed every few
 // hours, or straight away when someone presses "Check now".
 
-const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
 
 // An install problem, with the HTTP status to answer with.
 class UpdateError extends Error {
@@ -42,8 +42,9 @@ function compareVersions(a, b) {
   return 0;
 }
 
-// `prefs()` gives { autoCheck, beta }, the household's choices in Settings →
-// Updates (beta is null when not chosen). `info()` adds to what the page is sent.
+// `prefs()` gives { autoCheck, intervalHours, waitDay, beta }, the household's
+// choices in Settings → Updates (beta is null when not chosen). With waitDay, a
+// release is only offered once it's a day old, so one that's pulled never is. `info()` adds to what the page is sent.
 // `settings()` gives { channel, repo, token }, read on every check so they can
 // change while the app runs (Settings → Advanced). Fixed values work too.
 // `updater()` gives { url, token, imageTag } for the updater container
@@ -132,11 +133,11 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
           error: null,
           latest: list[0] || null,
           releases: list,
-          behind: usable.filter((r) => compareVersions(r.tag_name, version) > 0).length,
           imageReady: null,
         };
         if (updater().url && state.latest && compareVersions(state.latest.version, version) > 0) {
           state.imageReady = await imageReady(repo, state.latest.version);
+          state.imageFor = state.latest.version;
         }
       } catch (err) {
         const timedOut = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
@@ -149,27 +150,40 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
     return p;
   }
 
-  const view = () => ({
-    ...info(),
-    current: version,
-    channel: current().channel,
-    checkedAt: state.checkedAt,
-    error: state.error,
-    latest: state.latest,
-    releases: state.releases,
-    behind: state.behind || 0,
-    auto_check: prefs().autoCheck !== false,
-    // With the updater, IMAGE_TAG decides (it's what gets pulled), so the switch can't.
-    beta: track() === 'beta',
-    beta_locked: Boolean(updater().url),
-    available: Boolean(state.latest && compareVersions(state.latest.version, version) > 0),
-    can_install: Boolean(updater().url) && track() !== 'pinned',
-    // Published on GitHub, but its image is still being built.
-    building: state.imageReady === false,
-    track: track(),
-    image_tag: updater().url ? String(updater().imageTag || 'latest') : null,
-    installing,
-  });
+  // What's offered, worked out each time so a day's wait ends without a new check.
+  function view() {
+    const p = prefs();
+    const newer = (r) => compareVersions(r.version, version) > 0;
+    const tooNew = (r) => p.waitDay && newer(r) && r.published_at && Date.now() - Date.parse(r.published_at) < 24 * HOUR;
+    const latest = state.releases.find((r) => !tooNew(r)) || null;
+    const waiting = state.releases.find(tooNew);
+    return {
+      ...info(),
+      current: version,
+      channel: current().channel,
+      checkedAt: state.checkedAt,
+      error: state.error,
+      latest,
+      releases: state.releases,
+      behind: state.releases.filter((r) => newer(r) && !tooNew(r)).length,
+      // The newest release, while it's younger than a day and waitDay is on.
+      waiting: waiting && (!latest || compareVersions(waiting.version, latest.version) > 0)
+        ? { ...waiting, offer_at: new Date(Date.parse(waiting.published_at) + 24 * HOUR).toISOString() } : null,
+      auto_check: p.autoCheck !== false,
+      interval_hours: p.intervalHours || 6,
+      wait_day: Boolean(p.waitDay),
+      // With the updater, IMAGE_TAG decides (it's what gets pulled), so the switch can't.
+      beta: track() === 'beta',
+      beta_locked: Boolean(updater().url),
+      available: Boolean(latest && newer(latest)),
+      can_install: Boolean(updater().url) && track() !== 'pinned',
+      // Published on GitHub, but its image is still being built.
+      building: Boolean(latest && state.imageReady === false && state.imageFor === latest.version),
+      track: track(),
+      image_tag: updater().url ? String(updater().imageTag || 'latest') : null,
+      installing,
+    };
+  }
 
   // Ask the updater to pull the new image and restart the app on it. It answers
   // straight away and does the work in the background, restarting this app.
@@ -179,12 +193,12 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
     if (!url) throw new UpdateError(400, "This copy can't update itself. Update it from the terminal instead.");
     if (track() === 'pinned') throw new UpdateError(400, `This copy is kept on ${updater().imageTag} by IMAGE_TAG in .env. Change it to latest (or beta) to update.`);
     if (!view().available) throw new UpdateError(400, "You're already on the latest version.");
-    if (state.imageReady === false) {
+    if (view().building) {
       await check();
-      if (state.imageReady === false) throw new UpdateError(409, `v${state.latest.version} is still being built on GitHub. Try again in a few minutes.`);
+      if (view().building) throw new UpdateError(409, `v${view().latest.version} is still being built on GitHub. Try again in a few minutes.`);
       if (!view().available) throw new UpdateError(400, "You're already on the latest version.");
     }
-    const target = state.latest.version;
+    const target = view().latest.version;
     const saved = backup ? backup(target) : null;
     let res;
     try {
@@ -209,11 +223,15 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
     install,
     // Forget the last result, e.g. after the repository or token changes.
     reset() { state = EMPTY; },
-    // Check soon after starting, then every few hours, unless that's turned off.
+    // Check soon after starting, then every few hours (Preferences), unless that's turned off.
     start() {
-      const auto = () => { if (prefs().autoCheck !== false) check(); };
+      const auto = () => {
+        const p = prefs();
+        if (p.autoCheck === false) return;
+        if (!state.checkedAt || Date.now() - Date.parse(state.checkedAt) >= (p.intervalHours || 6) * HOUR - 60_000) check();
+      };
       setTimeout(auto, 5000).unref();
-      setInterval(auto, CHECK_EVERY_MS).unref();
+      setInterval(auto, 5 * 60 * 1000).unref();
     },
     async get(req, res) {
       if (!state.checkedAt && prefs().autoCheck !== false) await check();

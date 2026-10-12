@@ -715,3 +715,43 @@ test('updates: a release whose image is still being built is shown, but not inst
   assert.equal(r.version, '1.0.0');
   assert.equal(u.view().building, false);
 });
+
+test('updates: wait a day, how often to check, and how many backups to keep', async () => {
+  const hoursAgo = (h) => new Date(Date.now() - h * 3600e3).toISOString();
+  const releases = [
+    { tag_name: 'v99.2.0', name: 'new', body: '', html_url: 'https://github.com/x/y', draft: false, prerelease: false, published_at: hoursAgo(2) },
+    { tag_name: 'v99.1.0', name: 'older', body: '', html_url: 'https://github.com/x/y', draft: false, prerelease: false, published_at: hoursAgo(48) },
+  ];
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => releases });
+  const url = process.env.UPDATER_URL;
+  delete process.env.UPDATER_URL;
+  try {
+    await withServer({ fetchImpl }, async (call) => {
+      let r = await call('GET', '/updates');
+      assert.deepEqual([r.body.latest.version, r.body.behind, r.body.waiting, r.body.interval_hours, r.body.wait_day], ['99.2.0', 2, null, 6, false]);
+      r = await call('PUT', '/updates/prefs', { wait_day: true, interval_hours: 12 });
+      // The two-hour-old release waits; the older one is offered meanwhile.
+      assert.deepEqual([r.body.latest.version, r.body.behind, r.body.waiting.version, r.body.interval_hours], ['99.1.0', 1, '99.2.0', 12]);
+      assert.equal(Date.parse(r.body.waiting.offer_at), Date.parse(releases[0].published_at) + 24 * 3600e3);
+      assert.equal((await call('PUT', '/updates/prefs', { interval_hours: 5 })).status, 400);
+      assert.equal((await call('PUT', '/updates/prefs', { backups_keep: 7 })).status, 400);
+      assert.equal((await call('PUT', '/updates/prefs', { backups_keep: 10 })).status, 200);
+    });
+  } finally { if (url === undefined) delete process.env.UPDATER_URL; else process.env.UPDATER_URL = url; }
+  // Automatic backups past the chosen number are removed; manual ones stay.
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-keep-'));
+  try {
+    await withServer({ dataDir }, async (call) => {
+      await call('PUT', '/updates/prefs', { backups_keep: 10 });
+      const manual = (await call('POST', '/backups')).body.created;
+      for (let i = 0; i < 12; i += 1) await call('POST', '/backups/restore', { name: manual });
+      const r = await call('GET', '/backups');
+      assert.equal(r.body.keep, 10);
+      assert.equal(r.body.backups.filter((b) => b.kind === 'restore').length, 10);
+      assert.ok(r.body.backups.some((b) => b.name === manual));
+    });
+  } finally { fs.rmSync(dataDir, { recursive: true, force: true }); }
+});
