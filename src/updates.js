@@ -43,9 +43,10 @@ function createUpdates({ version, channel, repo, token, fetchImpl = globalThis.f
 
   async function check() {
     if (running) return running;
-    running = (async () => {
+    const p = (async () => {
       try {
         const res = await fetchImpl(`https://api.github.com/repos/${repo}/releases?per_page=30`, {
+          signal: AbortSignal.timeout(20_000),
           headers: {
             Accept: 'application/vnd.github+json',
             'User-Agent': 'simple-budget',
@@ -67,17 +68,19 @@ function createUpdates({ version, channel, repo, token, fetchImpl = globalThis.f
           error: null,
           latest: top ? {
             version: top.tag_name.replace(/^v/, ''), name: top.name || top.tag_name, notes: top.body || '',
-            url: top.html_url, published_at: top.published_at, prerelease: Boolean(top.prerelease),
+            url: /^https:\/\/github\.com\//.test(top.html_url || '') ? top.html_url : `https://github.com/${repo}/releases`,
+            published_at: top.published_at, prerelease: Boolean(top.prerelease),
           } : null,
         };
       } catch (err) {
-        state = { ...state, checkedAt: new Date().toISOString(), error: err.message || 'Could not reach GitHub.' };
-      } finally {
-        running = null;
+        const timedOut = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
+        state = { ...state, checkedAt: new Date().toISOString(), error: timedOut ? 'GitHub took too long to answer. Try again later.' : (err.message || 'Could not reach GitHub.') };
       }
       return state;
     })();
-    return running;
+    running = p;
+    p.finally(() => { if (running === p) running = null; });
+    return p;
   }
 
   const view = () => ({

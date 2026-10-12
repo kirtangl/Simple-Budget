@@ -27,11 +27,19 @@
   const moneyInput = (cents) => (cents === null || cents === undefined ? '' : (cents / 100).toFixed(2).replace(/\.00$/, ''));
 
   function parseMoney(str) {
-    const s = String(str ?? '').replace(/[$,\s]/g, '');
+    let s = String(str ?? '').replace(/[$\s]/g, '');
+    // Commas only as thousands separators (1,250.50), so "1,5" isn't read as 15.
+    if (s.includes(',')) {
+      if (!/^-?\d{1,3}(,\d{3})+(\.\d*)?$/.test(s)) return NaN;
+      s = s.replace(/,/g, '');
+    }
     if (s === '') return null;
     if (!/^-?\d*(\.\d{0,2})?$/.test(s) || s === '.' || s === '-') return NaN;
     return Math.round(Number(s) * 100);
   }
+
+  // A Date as YYYY-MM-DD on this device's calendar (toISOString would give the UTC day).
+  const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -278,12 +286,25 @@
     const c = parseMoney(val(form, name));
     if (Number.isNaN(c)) throw new Error(`${label} must be a dollar amount, like 79.10`);
     if (required && c === null) throw new Error(`${label} is required.`);
+    if (c !== null && c < 0) throw new Error(`${label} can't be negative.`);
     return c;
+  }
+  // A plain number like an interest rate or a term. "6.5%" is fine; "abc" is an error, not a blank.
+  function numVal(form, name, label) {
+    const s = val(form, name).replace(/[%\s]/g, '');
+    if (s === '') return null;
+    const n = Number(s);
+    if (!Number.isFinite(n)) throw new Error(`${label} must be a number, like 6.24`);
+    return n;
   }
 
   // ---------- Login ----------
 
   function showLogin(defaultPassword) {
+    // Forget the budget, so Back after logging out can't show it again.
+    state.data = null; state.trends = null; state.updates = null;
+    // A form left open (e.g. the login ran out mid-save) would sit over the login page.
+    if ($modal.open) closeForm();
     $nav.hidden = true;
     $userMenu.hidden = true;
     $app.innerHTML = html`
@@ -1522,7 +1543,12 @@
 
   async function saveGoalPanel(panel) {
     const g = state.data.goals.find((x) => x.id === Number(panel.dataset.id));
-    if (!g) return;
+    if (!g || panel.dataset.busy) return; // a double tap would add the money twice
+    panel.dataset.busy = '1';
+    try { await saveGoalChange(panel, g); } finally { delete panel.dataset.busy; }
+  }
+
+  async function saveGoalChange(panel, g) {
     const input = panel.querySelector('input');
     const cents = parseMoney(input.value);
     if (Number.isNaN(cents) || !cents || cents < 0) { input.focus(); throw new Error('Enter an amount, like 100.'); }
@@ -1556,6 +1582,7 @@
     }
     if (ev.key === 'Enter' && ev.target.closest && ev.target.closest('.g-panel input')) {
       ev.preventDefault();
+      if (ev.repeat) return;
       saveGoalPanel(ev.target.closest('.g-panel')).catch((err) => toast(err.message));
     }
   });
@@ -1905,7 +1932,7 @@
     // The estimate against the last statement, when they're more than about 1% or $500 apart.
     const h = t && t.history;
     const gap = h ? h.estimated_balance_cents - h.statement_balance_cents : 0;
-    const warn = h && (Math.abs(gap) >= 50000 || Math.abs(gap) >= h.statement_balance_cents * 0.01);
+    const warn = h && gap !== 0 && (Math.abs(gap) >= 50000 || Math.abs(gap) >= h.statement_balance_cents * 0.01);
     const fixed = l.rate_type === 'fixed';
     const daysSinceStatement = l.balance_date ? daysUntil(l.balance_date) * -1 : null;
     const saved = l.bank && t ? l.bank.interest_cents - t.interest_left_cents : null;
@@ -2147,6 +2174,7 @@
   }
 
   let calcTimer;
+  let calcSeq = 0;
   async function runCalc() {
     const f = document.querySelector('#calc-form');
     if (!f) return;
@@ -2155,11 +2183,15 @@
     const amount = parseMoney(el.amount.value.replace(/,/g, ''));
     const q = new URLSearchParams({ rate: el.rate.value || '0', years: el.years.value, frequency: state.calc.frequency, limit_percent: el.limit.value || '70' });
     if (amount > 0) q.set('amount_cents', String(amount));
+    const seq = ++calcSeq; // only the newest answer is shown
+    let result;
     try {
-      state.calc.result = await api('GET', `/loan-calculator?${q}`);
+      result = await api('GET', `/loan-calculator?${q}`);
     } catch {
-      state.calc.result = null; // e.g. no term yet
+      result = null; // e.g. no term yet
     }
+    if (seq !== calcSeq) return;
+    state.calc.result = result;
     const out = document.querySelector('#calc-result');
     if (out) out.innerHTML = calcResult(state.calc.result, state.calc.frequency).s;
   }
@@ -2282,7 +2314,7 @@
         const body = {
           name: val(form, 'name'), lender: val(form, 'lender') || null,
           principal_cents: moneyVal(form, 'principal', 'Amount borrowed'),
-          interest_rate: val(form, 'interest_rate') === '' ? null : Number(val(form, 'interest_rate')),
+          interest_rate: numVal(form, 'interest_rate', 'Interest rate'),
           start_date: val(form, 'start_date') || null,
           term_months: termYears ? Math.round(Number(termYears) * 12) : null,
           repayment_frequency: val(form, 'repayment_frequency'),
@@ -2380,7 +2412,8 @@
   }
 
   function settingsIncome() {
-    const now = state.data.incomes.filter((i) => !i.end_date || i.end_date >= state.data.settings.today);
+    const today = state.data.settings.today;
+    const now = state.data.incomes.filter((i) => (!i.end_date || i.end_date >= today) && (!i.start_date || i.start_date <= today));
     const total = now.filter((i) => i.include_in_budget).reduce((s, i) => s + incomePerCycle(i), 0);
     const other = now.filter((i) => !i.include_in_budget).reduce((s, i) => s + incomePerCycle(i), 0);
     return html`
@@ -2473,7 +2506,7 @@
           <div class="field"><label for="a-owner">Owner</label><input id="a-owner" name="owner" value="${a.owner || ''}"></div>
           <div class="field"><label for="a-bsb">BSB</label><input id="a-bsb" name="bsb" inputmode="numeric" data-input="bsb" maxlength="7" autocomplete="off" value="${a.bsb || ''}" placeholder="000-000">
             <div class="hint">6 digits. The dash is added for you.</div></div>
-          <div class="field"><label for="a-acc">Account number</label><input id="a-acc" name="account_number" inputmode="numeric" data-input="account-number" maxlength="20" autocomplete="off" value="${a.account_number || ''}">
+          <div class="field"><label for="a-acc">Account number</label><input id="a-acc" name="account_number" inputmode="numeric" data-input="account-number" maxlength="30" autocomplete="off" value="${a.account_number || ''}">
             <div class="hint">Numbers only.</div></div>
           <div class="field"><label for="a-color">Colour</label><input id="a-color" type="color" name="color" value="${colorFor(a, i)}"></div>
         </div>`,
@@ -2531,14 +2564,15 @@
       return html`<div class="fields">
         ${f('p-accname', 'account_name', 'Account name')}${f('p-bank', 'bank', 'Bank')}
         ${f('p-bsb', 'bsb', 'BSB', 'inputmode="numeric" data-input="bsb" maxlength="7" autocomplete="off" placeholder="000-000"')}
-        ${f('p-acc', 'account_number', 'Account number', 'inputmode="numeric" data-input="account-number" maxlength="20" autocomplete="off"')}
+        ${f('p-acc', 'account_number', 'Account number', 'inputmode="numeric" data-input="account-number" maxlength="30" autocomplete="off"')}
         <div class="field full"><label for="p-ref">Reference</label><input id="p-ref" name="reference" value="${p.reference || ''}"></div></div>`;
     }
     const label = type === 'direct_debit' ? 'Reference' : 'Biller / reference';
     return html`<div class="field"><label for="p-ref">${label}</label><input id="p-ref" name="reference" value="${p.reference || ''}"></div>`;
   }
 
-  function payeeForm(p = {}) {
+  function payeeForm(saved = {}) {
+    const p = { ...saved }; // typing into the form mustn't change the saved payee until Save
     let type = p.pay_type || 'other';
     openForm({
       title: p.id ? 'Edit payee' : 'Add payee',
@@ -2706,7 +2740,7 @@
     const u = state.updates;
     if (!u) return html`<div class="card"><p class="muted">Couldn't load update details.</p></div>`;
     const label = { test: 'Test', beta: 'Beta' }[u.channel];
-    const when = (iso) => { const d = new Date(iso); return `${fmtDate(d.toISOString().slice(0, 10), true)}, ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`; };
+    const when = (iso) => { const d = new Date(iso); return `${fmtDate(localDate(d), true)}, ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`; };
     const l = u.latest;
     return html`
       <div class="card">
@@ -2724,7 +2758,7 @@
       </div>
       ${l ? html`<div class="card">
         <div class="card-head"><div><h2>${l.name}</h2>
-          <p class="muted small" style="margin:0">${l.published_at ? `Released ${fmtDate(l.published_at.slice(0, 10), true)}` : ''}</p></div>
+          <p class="muted small" style="margin:0">${l.published_at ? `Released ${fmtDate(localDate(new Date(l.published_at)), true)}` : ''}</p></div>
           <a class="btn" href="${l.url}" target="_blank" rel="noopener">View on GitHub</a></div>
         <div class="upd-notes">${releaseNotes(l.notes)}</div>
       </div>` : ''}
@@ -3022,16 +3056,6 @@ sudo docker compose up -d --build</pre>
     'bill-details': async (el) => billDetails(Number(el.dataset.id), el.dataset),
     'toggle-incomes': () => { state.showIncomes = !state.showIncomes; render(); },
     'toggle-unused': () => { state.showUnused = !state.showUnused; render(); },
-    info: (el) => {
-      const word = cycleWord();
-      const text = {
-        remaining: [`${word[0].toUpperCase() + word.slice(1)} left to pay`, `This ${word}'s bills from the account that haven't come out yet: the bills ${thisCycle()} less what's already been paid. Savings aren't included.`],
-        held: ['Should hold', `About how much should be in the account today so that, with the deposits still to come each ${word}, every bill ${HELD_LABELS[state.data.settings.held_basis].toLowerCase()} can be paid.
-          For example, putting $50 a ${word} towards a $1,300 bill due in two ${word}s, the account should already hold about $1,200.
-          ${el.dataset.on ? `This one is for ${fmtDate(el.dataset.on, true)}, once that ${word}'s deposit is in.` : `For other ${word}s it's what should be there once that ${word}'s deposit is in.`} Savings aren't included. It's a guide only. Change how far ahead it looks in Settings → General.`],
-      }[el.dataset.info];
-      openForm({ title: text[0], body: html`<p>${text[1]}</p>` });
-    },
     'edit-deposit-rules': () => depositRulesForm(),
     'edit-income': (el) => incomeForm(findById(state.data.incomes, el)),
     'new-account': () => accountForm(),
@@ -3105,7 +3129,7 @@ sudo docker compose up -d --build</pre>
     },
     'menu-theme': () => { closeMenu(); location.hash = '#/settings/appearance'; },
     'menu-settings': () => { closeMenu(); location.hash = '#/settings'; },
-    logout: async () => { closeMenu(); await api('POST', '/logout'); state.me = null; state.logins = null; state.themeDraft = null; window.applyAccountColour(null); location.hash = '#/overview'; showLogin(); },
+    logout: async () => { closeMenu(); await api('POST', '/logout'); state.data = null; state.me = null; state.logins = null; state.themeDraft = null; window.applyAccountColour(null); location.hash = '#/overview'; showLogin(); },
     'menu-security': () => { closeMenu(); location.hash = '#/settings/security'; },
     'menu-updates': () => { closeMenu(); location.hash = '#/settings/updates'; },
     'check-updates': async (el) => {
@@ -3115,7 +3139,7 @@ sudo docker compose up -d --build</pre>
       toast(state.updates && state.updates.available ? `Version ${state.updates.latest.version} is available` : 'Checked for updates');
     },
     'copy-update-cmd': async () => {
-      try { await navigator.clipboard.writeText('git pull\nsudo docker compose up -d --build'); toast('Copied'); } catch { toast("Couldn't copy. Select the text instead."); }
+      await copyText('git pull\nsudo docker compose up -d --build', 'Commands');
     },
   };
 
@@ -3358,6 +3382,7 @@ sudo docker compose up -d --build</pre>
       else out = await renderOverview();
       if (seq === renderSeq) {
         $app.innerHTML = out.s;
+        makeKeyboardReachable($app);
         scrollBillsToToday();
         // On a narrow screen, keep the open settings tab in view in its sideways-scrolling row.
         const sub = $app.querySelector('.subtabs a.active');
@@ -3371,6 +3396,27 @@ sudo docker compose up -d --build</pre>
       }
     }
   }
+
+  // Rows and cards that open something when clicked aren't buttons, so give them
+  // a place in the Tab order; Enter or Space then clicks them (see below).
+  const NOT_NATIVE = '[data-action]:not(button):not(a):not(input):not(select):not(textarea):not(label):not(option)';
+  function makeKeyboardReachable(root) {
+    root.querySelectorAll(NOT_NATIVE).forEach((el) => {
+      if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+      if (!el.hasAttribute('role')) el.setAttribute('role', 'button');
+    });
+  }
+  document.addEventListener('keydown', (ev) => {
+    if ((ev.key !== 'Enter' && ev.key !== ' ') || ev.repeat || !ev.target.matches || !ev.target.matches(NOT_NATIVE)) return;
+    ev.preventDefault();
+    ev.target.click();
+  });
+
+  // A tab or home-screen app left open overnight would still think it was yesterday.
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible' || !state.data || state.data.settings.today === localDate(new Date())) return;
+    try { await reload(); await render(); } catch { /* shown on the next action */ }
+  });
 
   // Brings the Today line to the top of the Overview's bill list (the list only, not the page).
   function scrollBillsToToday() {

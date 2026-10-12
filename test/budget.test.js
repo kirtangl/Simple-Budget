@@ -207,6 +207,30 @@ test('what an account should hold today', () => {
   assert.equal(budget.lookAheadEnd('2026-08-01', 'financial'), '2027-06-30');
 });
 
+test("deposits for a bill that hasn't started yet don't count towards what's held before it starts", () => {
+  const pc = budget.payCycle('fortnightly');
+  const opts = { today: '2026-01-10', anchor: '2026-01-06', payCycle: pc };
+  const bill = { id: 1, active: 1, account_id: 1, frequency: 'yearly', amount_cents: 130000, day_of_month: 2, start_month: 2 };
+  const later = { id: 2, active: 1, account_id: 1, frequency: 'monthly', amount_cents: 50000, day_of_month: 15, start_date: '2026-08-01' };
+  const [alone] = budget.heldEstimates([bill], [{ id: 1 }], opts);
+  const [both] = budget.heldEstimates([bill, later], [{ id: 1 }], opts);
+  assert.equal(both.held_cents, alone.held_cents);
+});
+
+test('dates must be real and between 1900 and 2199', () => {
+  assert.equal(budget.isValidDate('2026-02-28'), true);
+  assert.equal(budget.isValidDate('2026-02-30'), false);
+  assert.equal(budget.isValidDate('0100-01-01'), false);
+  assert.equal(budget.isValidDate('2200-01-01'), false);
+  assert.equal(budget.isValidDate('1900-01-01'), true);
+});
+
+test('unknown pay frequencies and rounding fall back to the defaults', () => {
+  assert.deepEqual(budget.payCycle('constructor'), { frequency: 'fortnightly', days: 14 });
+  assert.deepEqual(budget.payCycle('toString'), { frequency: 'fortnightly', days: 14 });
+  assert.equal(budget.roundUp(29301, 'toString'), 29301);
+});
+
 test('ended income leaves the current cycle, and savings are kept apart from bills per account', () => {
   const c = budget.buildCycle({ anchor: '2026-10-06', index: 0, today: '2026-10-11',
     expenses: [{ id: 1, active: 1, kind: 'saving', frequency: 'fortnightly', day_offset: 0, amount_cents: 2000, account_id: 1, name: 'Save' }],

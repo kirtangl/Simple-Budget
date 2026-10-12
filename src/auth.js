@@ -39,6 +39,18 @@ function checkPassword(stored, given) {
   return crypto.timingSafeEqual(expected, actual);
 }
 
+// The same check without blocking the server while it hashes, for the login page.
+async function checkPasswordAsync(stored, given) {
+  if (typeof given !== 'string' || typeof stored !== 'string') return false;
+  const [scheme, salt, hash] = stored.split('$');
+  if (scheme !== 'scrypt' || !salt || !hash) return false;
+  const expected = Buffer.from(hash, 'base64url');
+  const actual = await new Promise((resolve, reject) => {
+    crypto.scrypt(given, salt, expected.length, (err, key) => (err ? reject(err) : resolve(key)));
+  });
+  return crypto.timingSafeEqual(expected, actual);
+}
+
 // Put the default password back on the main login and ask for a new one at next login.
 function resetPassword(db) {
   transaction(db, () => {
@@ -57,7 +69,8 @@ function readCookie(req, name) {
   for (const part of header.split(';')) {
     const idx = part.indexOf('=');
     if (idx === -1) continue;
-    if (part.slice(0, idx).trim() === name) return decodeURIComponent(part.slice(idx + 1).trim());
+    if (part.slice(0, idx).trim() !== name) continue;
+    try { return decodeURIComponent(part.slice(idx + 1).trim()); } catch { return undefined; }
   }
   return undefined;
 }
@@ -78,7 +91,30 @@ function cleanCustomTheme(value) {
 
 function createAuth({ db, secret, secureCookies }) {
   ensurePassword(db);
+  // Wrong guesses, per address and in total. Five wrong in a row locks that
+  // address out for a minute; lots of wrong guesses from anywhere slow everyone
+  // down, in case something is pretending to be many different addresses.
   const failures = new Map(); // ip -> { count, until }
+  let recentFailures = []; // times of wrong guesses in the last minute
+  const PER_IP = 5;
+  const OVERALL = 30;
+  const WINDOW_MS = 60_000;
+  function blocked(ip) {
+    const now = Date.now();
+    recentFailures = recentFailures.filter((t) => t > now - WINDOW_MS);
+    const entry = failures.get(ip);
+    return (entry && entry.until > now) || recentFailures.length >= OVERALL;
+  }
+  function recordFailure(ip) {
+    const now = Date.now();
+    for (const [key, e] of failures) if (e.until && e.until <= now) failures.delete(key);
+    if (failures.size > 10_000) failures.clear();
+    const entry = failures.get(ip);
+    const count = (entry && !(entry.until && entry.until <= now) ? entry.count : 0) + 1;
+    failures.set(ip, { count, until: count >= PER_IP ? now + WINDOW_MS : 0 });
+    recentFailures.push(now);
+  }
+  const TOO_MANY = 'Too many attempts. Please wait a minute and try again.';
 
   const mustChange = () => getSetting(db, 'password_must_change') === '1';
   const extras = () => db.prepare('SELECT * FROM logins ORDER BY name COLLATE NOCASE, id').all();
@@ -140,10 +176,13 @@ function createAuth({ db, secret, secureCookies }) {
   });
 
   // A new password must be long enough, not the default, and not one another login already uses.
-  function checkNewPassword(password, exceptId) {
+  // Being told it's taken reveals another login's password, so that counts as a wrong guess.
+  function checkNewPassword(password, exceptId, ip) {
     if (typeof password !== 'string' || password.length < MIN_LENGTH) return `Please use at least ${MIN_LENGTH} characters.`;
     if (password === DEFAULT_PASSWORD) return 'Please choose something other than the default password.';
+    if (blocked(ip)) return TOO_MANY;
     if (allLogins().some((l) => l.id !== exceptId && checkPassword(l.password_hash, password))) {
+      recordFailure(ip);
       return 'Another login already uses that password. Each login needs its own.';
     }
     return null;
@@ -165,22 +204,24 @@ function createAuth({ db, secret, secureCookies }) {
     },
 
     // The password alone says which login it is.
-    login(req, res) {
-      const ip = req.ip;
-      const entry = failures.get(ip);
-      if (entry && entry.until > Date.now()) {
-        return res.status(429).json({ error: 'Too many attempts. Please wait a minute and try again.' });
-      }
-      const given = req.body && req.body.password;
-      const match = allLogins().find((l) => checkPassword(l.password_hash, given));
-      if (!match) {
-        const count = (entry ? entry.count : 0) + 1;
-        failures.set(ip, { count, until: count >= 5 ? Date.now() + 60_000 : 0 });
-        return res.status(401).json({ error: 'That password is not right.' });
-      }
-      failures.delete(ip);
-      setCookie(res, match.id);
-      res.json({ ok: true, mustChangePassword: mustChange() });
+    async login(req, res, next) {
+      try {
+        const ip = req.ip;
+        if (blocked(ip)) return res.status(429).json({ error: TOO_MANY });
+        const given = req.body && req.body.password;
+        let match = null;
+        for (const l of allLogins()) {
+          // eslint-disable-next-line no-await-in-loop
+          if (await checkPasswordAsync(l.password_hash, given)) { match = l; break; }
+        }
+        if (!match) {
+          recordFailure(ip);
+          return res.status(401).json({ error: 'That password is not right.' });
+        }
+        failures.delete(ip);
+        setCookie(res, match.id);
+        res.json({ ok: true, mustChangePassword: mustChange() });
+      } catch (err) { next(err); }
     },
 
     logout(req, res) {
@@ -198,8 +239,8 @@ function createAuth({ db, secret, secureCookies }) {
       if (!first && !checkPassword(me.password_hash, current)) {
         return res.status(400).json({ error: 'Your current password is not right.' });
       }
-      const problem = checkNewPassword(password, me.id);
-      if (problem) return res.status(400).json({ error: problem });
+      const problem = checkNewPassword(password, me.id, req.ip);
+      if (problem) return res.status(problem === TOO_MANY ? 429 : 400).json({ error: problem });
       if (me.id === MAIN) {
         transaction(db, () => {
           setSetting(db, 'password_hash', hashPassword(password));
@@ -254,8 +295,8 @@ function createAuth({ db, secret, secureCookies }) {
       if (!n) return res.status(400).json({ error: 'Give the login a name, like "Sam".' });
       let c;
       try { c = cleanColour(colour); } catch (err) { return res.status(400).json({ error: err.message }); }
-      const problem = checkNewPassword(password, null);
-      if (problem) return res.status(400).json({ error: problem });
+      const problem = checkNewPassword(password, null, req.ip);
+      if (problem) return res.status(problem === TOO_MANY ? 429 : 400).json({ error: problem });
       const { lastInsertRowid } = db.prepare('INSERT INTO logins (name, password_hash, colour) VALUES (?, ?, ?)').run(n, hashPassword(password), c);
       res.status(201).json(publicLogin(loginById(Number(lastInsertRowid)), req.login.id));
     },
@@ -266,25 +307,34 @@ function createAuth({ db, secret, secureCookies }) {
       const login = Number.isInteger(id) ? loginById(id) : null;
       if (!login) return res.status(404).json({ error: 'Not found.' });
       const { name, password, colour } = req.body || {};
+      // Check everything first, so a bad field doesn't leave the others half saved.
+      let c; let n;
       if (colour !== undefined) {
-        let c;
         try { c = cleanColour(colour); } catch (err) { return res.status(400).json({ error: err.message }); }
-        if (id === MAIN) setSetting(db, 'main_colour', c || '');
-        else db.prepare('UPDATE logins SET colour = ? WHERE id = ?').run(c, id);
       }
       if (name !== undefined) {
-        const n = cleanName(name);
+        n = cleanName(name);
         if (!n) return res.status(400).json({ error: 'Give the login a name.' });
-        if (id === MAIN) setSetting(db, 'main_login_name', n);
-        else db.prepare('UPDATE logins SET name = ? WHERE id = ?').run(n, id);
       }
       if (password !== undefined) {
         if (id === req.login.id) return res.status(400).json({ error: 'Use "Change password" to change your own.' });
-        const problem = checkNewPassword(password, id);
-        if (problem) return res.status(400).json({ error: problem });
-        if (id === MAIN) setSetting(db, 'password_hash', hashPassword(password));
-        else db.prepare('UPDATE logins SET password_hash = ? WHERE id = ?').run(hashPassword(password), id);
+        const problem = checkNewPassword(password, id, req.ip);
+        if (problem) return res.status(problem === TOO_MANY ? 429 : 400).json({ error: problem });
       }
+      transaction(db, () => {
+        if (colour !== undefined) {
+          if (id === MAIN) setSetting(db, 'main_colour', c || '');
+          else db.prepare('UPDATE logins SET colour = ? WHERE id = ?').run(c, id);
+        }
+        if (name !== undefined) {
+          if (id === MAIN) setSetting(db, 'main_login_name', n);
+          else db.prepare('UPDATE logins SET name = ? WHERE id = ?').run(n, id);
+        }
+        if (password !== undefined) {
+          if (id === MAIN) setSetting(db, 'password_hash', hashPassword(password));
+          else db.prepare('UPDATE logins SET password_hash = ? WHERE id = ?').run(hashPassword(password), id);
+        }
+      });
       res.json(publicLogin(loginById(id), req.login.id));
     },
 

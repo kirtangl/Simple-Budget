@@ -25,10 +25,23 @@ const T = {
     if (n !== null && Math.abs(n) > 1e12) throw new BadRequest('is too large');
     return n;
   },
-  bool: (v) => (v === undefined || v === null ? null : v ? 1 : 0),
+  // Money that can't be below zero, like a balance held in an offset account.
+  positiveCents: (v) => {
+    const n = T.cents(v);
+    if (n !== null && n < 0) throw new BadRequest("can't be negative");
+    return n;
+  },
+  // A colour from the colour picker, like #2563eb. Anything else is dropped,
+  // since it ends up in the page's styles.
+  colour: (v) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v.trim()) ? v.trim().toLowerCase() : null),
+  bool: (v) => {
+    if (v === undefined || v === null) return null;
+    if (v === 'false' || v === '0') return 0;
+    return v ? 1 : 0;
+  },
   date: (v) => {
     if (v === undefined || v === null || v === '') return null;
-    if (!budget.isValidDate(v)) throw new BadRequest('must be a date like 2026-10-06');
+    if (!budget.isValidDate(v)) throw new BadRequest('must be a date like 2026-10-06, between 1900 and 2199');
     return v;
   },
   // Australian BSB: six digits, stored as 000-000. Accepts 000000, 000-000 or 000 000.
@@ -77,7 +90,7 @@ const LABELS = {
 const RESOURCES = {
   accounts: {
     fields: { name: T.text, nickname: T.text, institution: T.text, type: T.text, owner: T.text,
-      bsb: T.bsb, account_number: T.accountNumber, color: T.text, sort_order: T.int },
+      bsb: T.bsb, account_number: T.accountNumber, color: T.colour, sort_order: T.int },
     required: ['name'],
     order: 'sort_order, name COLLATE NOCASE',
     unique: { label: 'An account' },
@@ -92,7 +105,7 @@ const RESOURCES = {
     unique: { label: 'A payee' },
   },
   categories: {
-    fields: { name: T.text, color: T.text, sort_order: T.int },
+    fields: { name: T.text, color: T.colour, sort_order: T.int },
     required: ['name'],
     order: 'sort_order, name COLLATE NOCASE',
     unique: { label: 'A category' },
@@ -105,12 +118,12 @@ const RESOURCES = {
   },
   expenses: {
     fields: {
-      name: T.text, amount_cents: T.cents, frequency: T.enumOf(...Object.keys(budget.FREQUENCIES)),
+      name: T.text, amount_cents: T.positiveCents, frequency: T.enumOf(...Object.keys(budget.FREQUENCIES)),
       day_offset: T.range(0, 13), day_of_month: T.range(1, 31), start_month: T.range(1, 12),
       payee_id: T.int, category_id: T.int, subcategory_id: T.int, account_id: T.int,
       reference: T.text, notes: T.text, active: T.bool,
-      kind: T.enumOf('expense', 'saving'), goal_cents: T.cents,
-      yearly_cents: T.cents, show_as_expense: T.bool, start_date: T.date, end_date: T.date,
+      kind: T.enumOf('expense', 'saving'), goal_cents: T.positiveCents,
+      yearly_cents: T.positiveCents, show_as_expense: T.bool, start_date: T.date, end_date: T.date,
     },
     required: ['name', 'amount_cents', 'frequency'],
     order: 'name COLLATE NOCASE',
@@ -122,34 +135,34 @@ const RESOURCES = {
     },
   },
   incomes: {
-    fields: { name: T.text, payer: T.text, after_tax_cents: T.cents, before_tax_cents: T.cents,
-      super_cents: T.cents, start_date: T.date, end_date: T.date, include_in_budget: T.bool,
-      frequency: T.enumOf(...Object.keys(budget.INCOME_FREQUENCIES)), color: T.text },
+    fields: { name: T.text, payer: T.text, after_tax_cents: T.positiveCents, before_tax_cents: T.positiveCents,
+      super_cents: T.positiveCents, start_date: T.date, end_date: T.date, include_in_budget: T.bool,
+      frequency: T.enumOf(...Object.keys(budget.INCOME_FREQUENCIES)), color: T.colour },
     required: ['name', 'after_tax_cents'],
     order: 'name COLLATE NOCASE',
   },
   goals: {
-    fields: { kind: T.enumOf('goal', 'debt'), group_name: T.text, name: T.text, target_cents: T.cents,
-      current_cents: T.cents, notes: T.text, done: T.bool, sort_order: T.int,
+    fields: { kind: T.enumOf('goal', 'debt'), group_name: T.text, name: T.text, target_cents: T.positiveCents,
+      current_cents: T.positiveCents, notes: T.text, done: T.bool, sort_order: T.int,
       start_date: T.date, target_date: T.date, target_firm: T.bool, account_id: T.int },
     required: ['kind', 'name'],
     order: 'done, group_name COLLATE NOCASE, sort_order, name COLLATE NOCASE',
   },
   loans: {
-    fields: { name: T.text, lender: T.text, account_id: T.int, category_id: T.int, principal_cents: T.cents,
+    fields: { name: T.text, lender: T.text, account_id: T.int, category_id: T.int, principal_cents: T.positiveCents,
       interest_rate: T.rate, start_date: T.date, term_months: T.range(1, 600),
-      repayment_frequency: T.enumOf(...Object.keys(budget.LOAN_FREQUENCIES)), repayment_cents: T.cents,
-      balance_cents: T.cents, balance_date: T.date, interest_day: T.range(1, 31),
+      repayment_frequency: T.enumOf(...Object.keys(budget.LOAN_FREQUENCIES)), repayment_cents: T.positiveCents,
+      balance_cents: T.positiveCents, balance_date: T.date, interest_day: T.range(1, 31),
       include_in_budget: T.bool, paid_off: T.bool, notes: T.text, scheduled_date: T.date,
-      budget_frequency: T.enumOf(...Object.keys(budget.LOAN_FREQUENCIES)), budget_cents: T.cents, budget_date: T.date,
-      rate_type: T.enumOf('variable', 'fixed'), fixed_until: T.date, offset_cents: T.cents, monthly_fee_cents: T.cents, break_fees: T.text },
+      budget_frequency: T.enumOf(...Object.keys(budget.LOAN_FREQUENCIES)), budget_cents: T.positiveCents, budget_date: T.date,
+      rate_type: T.enumOf('variable', 'fixed'), fixed_until: T.date, offset_cents: T.positiveCents, monthly_fee_cents: T.positiveCents, break_fees: T.text },
     required: ['name'],
     order: 'paid_off, name COLLATE NOCASE',
     unique: { label: 'A loan' },
   },
   // Categories on the Goals and Debts tabs. Goals refer to them by name (goals.group_name).
   goal_groups: {
-    fields: { kind: T.enumOf('goal', 'debt'), name: T.text, color: T.text },
+    fields: { kind: T.enumOf('goal', 'debt'), name: T.text, color: T.colour },
     required: ['kind', 'name'],
     order: 'kind, name COLLATE NOCASE',
     // Renaming a category moves its goals with it.
@@ -183,8 +196,9 @@ function clean(resource, body, { partial }) {
       throw new BadRequest(`${LABELS[key] || key} is required.`);
     }
   }
+  if (out.start_date && out.end_date && out.start_date > out.end_date) throw new BadRequest('The end date should be after the start date.');
   // Columns with NOT NULL defaults: don't write null over them.
-  for (const key of ['current_cents', 'sort_order', 'active', 'done', 'include_in_budget', 'target_firm', 'kind', 'repayment_frequency', 'paid_off', 'show_as_expense']) {
+  for (const key of ['current_cents', 'sort_order', 'active', 'done', 'include_in_budget', 'target_firm', 'kind', 'repayment_frequency', 'paid_off', 'show_as_expense', 'frequency']) {
     if (out[key] === null) delete out[key];
   }
   return out;
@@ -213,7 +227,7 @@ function depositRules(db) {
   const rounding = getSetting(db, 'rounding');
   const buffer = Number(getSetting(db, 'buffer_percent'));
   return {
-    rounding: rounding in budget.ROUNDING ? rounding : budget.DEFAULT_DEPOSIT_RULES.rounding,
+    rounding: Object.hasOwn(budget.ROUNDING, rounding) ? rounding : budget.DEFAULT_DEPOSIT_RULES.rounding,
     buffer_percent: Number.isFinite(buffer) ? buffer : budget.DEFAULT_DEPOSIT_RULES.buffer_percent,
   };
 }
@@ -367,7 +381,7 @@ function createApi(db) {
 
   router.get('/loan-calculator', (req, res) => {
     const q = req.query;
-    const freq = budget.LOAN_FREQUENCIES[q.frequency] ? q.frequency : 'monthly';
+    const freq = Object.hasOwn(budget.LOAN_FREQUENCIES, q.frequency) ? q.frequency : 'monthly';
     const perYear = budget.LOAN_FREQUENCIES[freq];
     const rate = T.rate(q.rate) ?? 0;
     const years = Number(q.years);
@@ -379,11 +393,13 @@ function createApi(db) {
     // What this pay already commits: all the deposits (bills, savings, loans).
     const pc = payCycleOf(db);
     const anchor = payAnchor(db);
-    const cycle = budget.buildCycle({ anchor, index: budget.cycleIndexFor(anchor, today(), pc), today: today(), expenses: budgetRows(),
+    const index = budget.cycleIndexFor(anchor, today(), pc);
+    const bounds = budget.cycleBounds(anchor, index, pc);
+    const cycle = budget.buildCycle({ anchor, index, today: today(), expenses: budgetRows(),
       accounts: list('accounts'), incomes: list('incomes'), rules: depositRules(db), payCycle: pc });
     const perPayToPerYear = budget.paysPerYear(pc);
     const incomeYear = cycle.totals.income_cents * perPayToPerYear;
-    const committedYear = budgetRows().filter((e) => e.active).reduce((s, e) => s + budget.perPayCents(e, pc), 0) * perPayToPerYear;
+    const committedYear = budgetRows().filter((e) => e.active && budget.inRange(e, bounds)).reduce((s, e) => s + budget.perPayCents(e, pc), 0) * perPayToPerYear;
     const spareRepayment = Math.max(0, ((incomeYear * limit) / 100 - committedYear) / perYear);
     res.json({
       repayment_cents: amount ? Math.round(budget.amortisedRepayment(amount, rate, perYear, periods)) : null,
@@ -407,11 +423,11 @@ function createApi(db) {
       if (!changes.pay_anchor_date) throw new BadRequest('Pay day must be a date like 2026-10-06.');
     }
     if ('rounding' in body) {
-      if (!(body.rounding in budget.ROUNDING)) throw new BadRequest('Rounding must be exact, up5 or up10.');
+      if (!Object.hasOwn(budget.ROUNDING, body.rounding)) throw new BadRequest('Rounding must be exact, up5 or up10.');
       changes.rounding = body.rounding;
     }
     if ('pay_frequency' in body) {
-      if (!(body.pay_frequency in budget.PAY_FREQUENCIES)) throw new BadRequest('Pay frequency must be weekly, fortnightly, monthly or custom.');
+      if (!Object.hasOwn(budget.PAY_FREQUENCIES, body.pay_frequency)) throw new BadRequest('Pay frequency must be weekly, fortnightly, monthly or custom.');
       changes.pay_frequency = body.pay_frequency;
     }
     if ('pay_custom_days' in body && body.pay_custom_days !== null) {
@@ -585,6 +601,7 @@ function importBackup(db, input) {
   }
   let data = structuredClone(input);
   let version = Number(data.format_version) || 1;
+  if (!Number.isInteger(version) || version < 1) throw new BadRequest("That file doesn't look like a Simple Budget backup.");
   if (version > BACKUP_FORMAT_VERSION) {
     throw new BadRequest('That backup was made by a newer version of Simple Budget. Update the app, then try again.');
   }
@@ -615,6 +632,10 @@ function importBackup(db, input) {
     const map = new Map();
     let n = 0;
     rows.forEach((raw, i) => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        warnings.push(`Skipped ${table.replace(/s$/, '').replace('_', ' ')} #${i + 1}: it isn't a valid entry.`);
+        return;
+      }
       try {
         const row = clean(RESOURCES[table], prepare ? prepare(raw) : raw, { partial: false });
         map.set(Number(raw.id), insert(table, row));
@@ -654,7 +675,7 @@ function importBackup(db, input) {
     restoreRows('categories', data.categories, 'categories');
     if (Array.isArray(data.categories)) {
       const subRows = data.categories.flatMap((c) => (Array.isArray(c && c.subcategories) ? c.subcategories : [])
-        .map((sub) => ({ ...sub, category_id: c.id })));
+        .filter((sub) => sub && typeof sub === 'object').map((sub) => ({ ...sub, category_id: c.id })));
       restoreRows('subcategories', subRows, 'subcategories', (sub) => ({ ...sub, category_id: idMaps.categories.get(Number(sub.category_id)) }));
     }
     restoreRows('incomes', data.incomes, 'incomes');
@@ -672,10 +693,10 @@ function importBackup(db, input) {
 
     const s = data.settings && typeof data.settings === 'object' ? data.settings : {};
     if (budget.isValidDate(s.pay_anchor_date)) setSetting(db, 'pay_anchor_date', s.pay_anchor_date);
-    if (s.rounding in budget.ROUNDING) setSetting(db, 'rounding', s.rounding);
+    if (Object.hasOwn(budget.ROUNDING, s.rounding)) setSetting(db, 'rounding', s.rounding);
     const pct = Number(s.buffer_percent);
     if (s.buffer_percent !== undefined && Number.isInteger(pct) && pct >= 0 && pct <= 20) setSetting(db, 'buffer_percent', String(pct));
-    if (s.pay_frequency in budget.PAY_FREQUENCIES) setSetting(db, 'pay_frequency', s.pay_frequency);
+    if (Object.hasOwn(budget.PAY_FREQUENCIES, s.pay_frequency)) setSetting(db, 'pay_frequency', s.pay_frequency);
     if (budget.HELD_BASES.includes(s.held_basis)) setSetting(db, 'held_basis', s.held_basis);
     const days = Number(s.pay_custom_days);
     if (Number.isInteger(days) && days >= 1 && days <= 366) setSetting(db, 'pay_custom_days', String(days));

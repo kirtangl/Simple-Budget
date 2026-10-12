@@ -17,6 +17,39 @@ function appChannel() {
   return /-beta/i.test(VERSION) ? 'beta' : '';
 }
 
+// Only trust X-Forwarded-For from a reverse proxy you name (TRUST_PROXY), so
+// nobody can dodge the login limit by pretending to be another address.
+function trustProxy() {
+  const v = String(process.env.TRUST_PROXY || '').trim();
+  if (!v || v === 'false') return false;
+  if (v === 'true') return true;
+  if (/^\d+$/.test(v)) return Number(v);
+  return v;
+}
+
+// Which Host names the app answers to. Without this, a web page on another site
+// could point its own name at this server ("DNS rebinding") and read the budget.
+// Home-network names are always fine; anything else (like a domain in front of
+// a reverse proxy) goes in ALLOWED_HOSTS, or ALLOWED_HOSTS=* to turn this off.
+const HOME_NAMES = /(^localhost$|\.localhost$|\.local$|\.lan$|\.home$|\.home\.arpa$|\.internal$|\.localdomain$|\.ts\.net$)/i;
+function hostAllowed(hostHeader) {
+  const extra = String(process.env.ALLOWED_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+  if (extra.includes('*')) return true;
+  const host = String(hostHeader || '').toLowerCase().replace(/:\d+$/, '');
+  if (!host) return false;
+  if (host.startsWith('[') || /^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return true; // an IP address
+  if (!host.includes('.') || HOME_NAMES.test(host)) return true; // e.g. "nas" or "budget.local"
+  return extra.some((h) => host === h || (h.startsWith('.') && host.endsWith(h)));
+}
+
+const SECURITY_HEADERS = {
+  'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+    + "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'",
+  'X-Frame-Options': 'DENY',
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'same-origin',
+};
+
 function createApp({ db, secureCookies = false, fetchImpl }) {
   // Keep the cookie signing secret in the database so logins survive restarts.
   let secret = process.env.SESSION_SECRET || getSetting(db, 'session_secret');
@@ -32,8 +65,19 @@ function createApp({ db, secureCookies = false, fetchImpl }) {
   });
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', 'loopback, linklocal, uniquelocal');
-  app.use(express.json({ limit: '10mb' }));
+  app.set('trust proxy', trustProxy());
+  app.use((req, res, next) => {
+    if (!hostAllowed(req.headers.host)) {
+      return res.status(421).type('text/plain').send(`Simple Budget doesn't answer to "${String(req.headers.host || '').slice(0, 100)}". `
+        + 'If this is your own address, add it to ALLOWED_HOSTS in .env (see the README).');
+    }
+    res.set(SECURITY_HEADERS);
+    next();
+  });
+  // Small bodies everywhere, except a backup being restored.
+  const smallJson = express.json({ limit: '100kb' });
+  app.use((req, res, next) => (req.path === '/api/import' ? next() : smallJson(req, res, next)));
+  app.use('/api/import', auth.require, express.json({ limit: '10mb' }));
 
   app.get('/api/version', (req, res) => res.json({ version: VERSION, channel: appChannel() }));
   app.get('/api/session', auth.status);
@@ -55,6 +99,7 @@ function createApp({ db, secureCookies = false, fetchImpl }) {
 
   app.use((err, req, res, next) => {
     if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON.' });
+    if (err && err.type === 'entity.too.large') return res.status(413).json({ error: 'That is too big to send.' });
     console.error(err);
     res.status(500).json({ error: 'Something went wrong on the server.' });
   });
@@ -80,4 +125,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createApp };
+module.exports = { createApp, hostAllowed };
