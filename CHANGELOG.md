@@ -15,6 +15,7 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 - A dot on the Updates tab when there's an update waiting.
 - The Settings tabs sit together in one strip, like Budget and Goals, and fit on a phone without scrolling.
 - A beta built from a pull request can be installed on the test copy with **Update now**, and shows its own version number.
+- A version published in the last few minutes shows as on its way until it's ready to install, and an update that never starts says so instead of waiting forever.
 
 ## v0.7.1 (12 October 2026)
 

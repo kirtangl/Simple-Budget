@@ -693,3 +693,25 @@ test('a release image reports its own version (APP_VERSION), e.g. a beta built f
   assert.deepEqual(JSON.parse(ask('v99.1.0-beta.2')), { version: '99.1.0-beta.2', channel: 'beta' });
   assert.equal(JSON.parse(ask('not a version')).version, require('../package.json').version);
 });
+
+test('updates: a release whose image is still being built is shown, but not installed yet', async () => {
+  const { createUpdates } = require('../src/updates');
+  let built = false;
+  const asked = [];
+  const fetchImpl = async (url, opts = {}) => {
+    asked.push(url);
+    if (url.startsWith('https://ghcr.io/token')) return { ok: true, status: 200, json: async () => ({ token: 'anon' }) };
+    if (url.startsWith('https://ghcr.io/v2/')) return { ok: built, status: built ? 200 : 404 };
+    if (url.startsWith('http://updater')) return { ok: true, status: 202 };
+    return { ok: true, status: 200, json: async () => [{ tag_name: 'v1.0.0', name: '1', html_url: 'https://github.com/x/y', draft: false, prerelease: false }] };
+  };
+  const u = createUpdates({ version: '0.9.0', fetchImpl, settings: () => ({ channel: '', repo: 'Owner/Repo', token: '' }), updater: () => ({ url: 'http://updater:8080', token: 't', imageTag: 'latest' }) });
+  await u.check();
+  assert.equal(u.view().building, true);
+  assert.ok(asked.includes('https://ghcr.io/v2/owner/repo/manifests/1.0.0'));
+  await assert.rejects(u.install(), /still being built/);
+  built = true;
+  const r = await u.install();
+  assert.equal(r.version, '1.0.0');
+  assert.equal(u.view().building, false);
+});

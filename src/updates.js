@@ -70,7 +70,29 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
     const { channel: c } = current();
     return c === 'beta' || c === 'test' ? 'beta' : 'releases';
   }
-  const EMPTY = { checkedAt: null, latest: null, releases: [], error: null };
+  const EMPTY = { checkedAt: null, latest: null, releases: [], error: null, imageReady: null };
+
+  // Has the release's image been published yet? It's built a minute or two after
+  // the release, and until then the updater finds nothing new and does nothing.
+  // true or false, or null when the registry can't be asked (then don't hold anything up).
+  async function imageReady(repo, ver) {
+    const image = String(repo).toLowerCase();
+    try {
+      const t = await fetchImpl(`https://ghcr.io/token?scope=repository:${image}:pull`, { signal: AbortSignal.timeout(10_000) });
+      if (!t.ok) return null;
+      const { token: pull } = await t.json();
+      const res = await fetchImpl(`https://ghcr.io/v2/${image}/manifests/${encodeURIComponent(ver)}`, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(10_000),
+        headers: {
+          Accept: 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json',
+          ...(pull ? { Authorization: `Bearer ${pull}` } : {}),
+        },
+      });
+      if (res.status === 404) return false;
+      return res.ok ? true : null;
+    } catch { return null; }
+  }
   let state = EMPTY;
   let running = null;
 
@@ -111,7 +133,11 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
           latest: list[0] || null,
           releases: list,
           behind: usable.filter((r) => compareVersions(r.tag_name, version) > 0).length,
+          imageReady: null,
         };
+        if (updater().url && state.latest && compareVersions(state.latest.version, version) > 0) {
+          state.imageReady = await imageReady(repo, state.latest.version);
+        }
       } catch (err) {
         const timedOut = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
         state = { ...state, checkedAt: new Date().toISOString(), error: timedOut ? 'GitHub took too long to answer. Try again later.' : (err.message || 'Could not reach GitHub.') };
@@ -138,6 +164,8 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
     beta_locked: Boolean(updater().url),
     available: Boolean(state.latest && compareVersions(state.latest.version, version) > 0),
     can_install: Boolean(updater().url) && track() !== 'pinned',
+    // Published on GitHub, but its image is still being built.
+    building: state.imageReady === false,
     track: track(),
     image_tag: updater().url ? String(updater().imageTag || 'latest') : null,
     installing,
@@ -151,6 +179,11 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
     if (!url) throw new UpdateError(400, "This copy can't update itself. Update it from the terminal instead.");
     if (track() === 'pinned') throw new UpdateError(400, `This copy is kept on ${updater().imageTag} by IMAGE_TAG in .env. Change it to latest (or beta) to update.`);
     if (!view().available) throw new UpdateError(400, "You're already on the latest version.");
+    if (state.imageReady === false) {
+      await check();
+      if (state.imageReady === false) throw new UpdateError(409, `v${state.latest.version} is still being built on GitHub. Try again in a few minutes.`);
+      if (!view().available) throw new UpdateError(400, "You're already on the latest version.");
+    }
     const target = state.latest.version;
     const saved = backup ? backup(target) : null;
     let res;

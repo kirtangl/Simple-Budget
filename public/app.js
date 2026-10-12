@@ -2796,7 +2796,11 @@
     } else if (u.available) {
       const behind = u.behind > 1 ? ` · ${u.behind} versions behind` : ' · 1 version behind';
       s = { mode: 'new', eyebrow: `Update available${behind}`, title: `Simple Budget v${l.version} is ready`, secondary: ['check-updates', 'Check again'] };
-      if (u.can_install) {
+      if (u.can_install && u.building) {
+        s.title = `Simple Budget v${l.version} is on its way`;
+        s.sub = "It's still being built on GitHub, which takes a few minutes after it's published. This page checks again by itself.";
+        updWatchBuild();
+      } else if (u.can_install) {
         s.sub = main ? "About 1–2 minutes. Your data is backed up first, and the page reloads by itself when it's done."
           : 'Ask whoever has the main login to install it. It takes about 1–2 minutes.';
         if (main) s.primary = ['install-update', 'Update now'];
@@ -2849,6 +2853,17 @@ sudo docker compose up -d --build</pre>`;
         <span>Checked <b>${u.checkedAt ? updWhen(u.checkedAt) : 'not yet'}</b> · ${u.auto_check ? 'every 6 hours' : 'automatic checks off'}</span>
       </div>
     </section>`;
+  }
+
+  // While a new version's image is still being built, look again every minute.
+  function updWatchBuild() {
+    if (state.buildTimer) return;
+    state.buildTimer = setTimeout(async () => {
+      state.buildTimer = null;
+      if (!state.updates || !state.updates.building || state.updateInstall) return;
+      await loadUpdates(true);
+      if (location.hash.startsWith('#/settings/updates')) render();
+    }, 60 * 1000);
   }
 
   // The four steps of an update. The server says when the backup is done; the rest
@@ -2952,6 +2967,12 @@ sudo docker compose up -d --build</pre>`;
         // It came back, but on the old version.
         state.updateInstall = null;
         state.updateFailed = { version: i.version, error: `The app restarted on v${v}. The new version may not have downloaded. Check the updater with sudo docker compose logs updater.` };
+        render();
+        return;
+      } else if (i.step === 2 && Date.now() - started > 4 * 60 * 1000) {
+        // The app never went down: the updater didn't find anything to install.
+        state.updateInstall = null;
+        state.updateFailed = { version: i.version, error: "The updater didn't restart the app, so it may not have found the new version yet. Try again in a minute. If it happens again, check the updater with sudo docker compose logs updater." };
         render();
         return;
       } else if (!i.slow && Date.now() - started > 5 * 60 * 1000) set({ slow: true });
