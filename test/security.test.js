@@ -131,3 +131,63 @@ test('the update check recovers after GitHub fails straight away', async () => {
   assert.equal(u.view().available, true);
   assert.equal(u.view().latest.url, 'https://github.com/o/r/releases');
 });
+
+test('Settings → Advanced: server settings can be changed in the app, and .env still wins', async () => {
+  // This machine may have its own GITHUB_TOKEN; the test needs it unset.
+  const token = process.env.GITHUB_TOKEN;
+  delete process.env.GITHUB_TOKEN;
+  try { await advancedTest(); } finally { if (token !== undefined) process.env.GITHUB_TOKEN = token; }
+});
+
+const advancedTest = () => withServer(async (call, { withHost, logout }) => {
+  let r = await call('GET', '/advanced');
+  assert.equal(r.status, 200);
+  assert.equal(r.body.can_edit, true);
+  assert.equal(r.body.github_token_set, false);
+
+  // Your own domain, added in the app.
+  assert.equal(await withHost('budget.example.com'), 421);
+  assert.equal((await call('PUT', '/advanced', { allowed_hosts: 'not a host!' })).status, 400);
+  r = await call('PUT', '/advanced', { allowed_hosts: 'budget.example.com' });
+  assert.equal(r.status, 200);
+  assert.equal(await withHost('budget.example.com'), 200);
+
+  // Secure cookies would lock you out over plain http.
+  assert.equal((await call('PUT', '/advanced', { secure_cookies: true })).status, 400);
+
+  // The token is saved but never sent back.
+  r = await call('PUT', '/advanced', { github_token: 'github_pat_abcdefghij1234567890' });
+  assert.equal(r.body.github_token_set, true);
+  assert.doesNotMatch(JSON.stringify(r.body), /github_pat_/);
+  r = await call('PUT', '/advanced', { remove_github_token: true });
+  assert.equal(r.body.github_token_set, false);
+
+  // A build tag set here shows in the header.
+  await call('PUT', '/advanced', { app_channel: 'beta' });
+  assert.equal((await call('GET', '/version')).body.channel, 'beta');
+  assert.equal((await call('PUT', '/advanced', { app_channel: 'nightly' })).status, 400);
+
+  // Something set in .env can't be changed here.
+  const before = process.env.UPDATE_REPO;
+  try {
+    process.env.UPDATE_REPO = 'someone/fork';
+    r = await call('GET', '/advanced');
+    assert.equal(r.body.locked.update_repo, true);
+    assert.equal((await call('PUT', '/advanced', { update_repo: 'other/repo' })).status, 400);
+  } finally {
+    if (before === undefined) delete process.env.UPDATE_REPO; else process.env.UPDATE_REPO = before;
+  }
+
+  // Trusting a proxy takes effect straight away: each forwarded address gets its own limit.
+  assert.equal((await call('PUT', '/advanced', { trust_proxy: 'loopback' })).status, 200);
+  assert.equal((await call('PUT', '/advanced', { trust_proxy: '300.1.1.1' })).status, 400);
+  await call('POST', '/logins', { name: 'Sam', password: 'sams-password' });
+  logout();
+  for (let i = 0; i < 5; i += 1) await call('POST', '/login', { password: `wrong-${i}` }, { 'x-forwarded-for': '203.0.113.5' });
+  assert.equal((await call('POST', '/login', { password: 'sams-password' }, { 'x-forwarded-for': '203.0.113.5' })).status, 429);
+  assert.equal((await call('POST', '/login', { password: 'sams-password' }, { 'x-forwarded-for': '203.0.113.6' })).status, 200);
+
+  // Only the main login can change them.
+  assert.equal((await call('GET', '/advanced')).body.can_edit, false);
+  assert.equal((await call('PUT', '/advanced', { app_channel: '' })).status, 403);
+});

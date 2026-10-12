@@ -302,7 +302,7 @@
 
   function showLogin(defaultPassword) {
     // Forget the budget, so Back after logging out can't show it again.
-    state.data = null; state.trends = null; state.updates = null;
+    state.data = null; state.trends = null; state.updates = null; state.advanced = null;
     // A form left open (e.g. the login ran out mid-save) would sit over the login page.
     if ($modal.open) closeForm();
     $nav.hidden = true;
@@ -2350,19 +2350,19 @@
 
   // ---------- Settings ----------
 
-  const SETTINGS_TABS = [['income', 'Income'], ['accounts', 'Accounts'], ['payees', 'Payees'], ['categories', 'Categories'], ['cycle', 'General'], ['appearance', 'Appearance'], ['security', 'Security'], ['updates', 'Updates']];
+  const SETTINGS_TABS = [['income', 'Income'], ['accounts', 'Accounts'], ['payees', 'Payees'], ['categories', 'Categories'], ['cycle', 'General'], ['appearance', 'Appearance'], ['security', 'Security'], ['updates', 'Updates'], ['advanced', 'Advanced']];
 
   // Setting up the budget, then the app itself.
-  const SETTINGS_GROUPS = [['income', 'accounts', 'payees', 'categories'], ['cycle', 'appearance', 'security', 'updates']];
+  const SETTINGS_GROUPS = [['income', 'accounts', 'payees', 'categories'], ['cycle', 'appearance', 'security', 'updates'], ['advanced']];
 
   function renderSettings(sub) {
     if (sub === 'logins') sub = 'security'; // its old name
     const tab = SETTINGS_TABS.some(([k]) => k === sub) ? sub : 'income';
-    const body = { income: settingsIncome, accounts: settingsAccounts, payees: settingsPayees, categories: settingsCategories, cycle: settingsCycle, appearance: themeCard, security: settingsSecurity, updates: settingsUpdates }[tab]();
+    const body = { income: settingsIncome, accounts: settingsAccounts, payees: settingsPayees, categories: settingsCategories, cycle: settingsCycle, appearance: themeCard, security: settingsSecurity, updates: settingsUpdates, advanced: settingsAdvanced }[tab]();
     return html`
       <div class="page-head"><h1>Settings</h1></div>
       <nav class="subtabs settings-tabs">${SETTINGS_GROUPS.map((keys, i) => html`${i ? html`<span class="st-sep" aria-hidden="true"></span>` : ''}<div class="st-group st-${keys.length}">
-        ${keys.map((k) => html`<a href="#/settings/${k}" class="${k === tab ? 'active' : ''}">${SETTINGS_TABS.find(([x]) => x === k)[1]}</a>`)}</div>`)}</nav>
+        ${keys.map((k) => html`<a href="#/settings/${k}" class="${k === tab ? 'active' : ''} ${k === 'advanced' ? 'st-advanced' : ''}">${SETTINGS_TABS.find(([x]) => x === k)[1]}</a>`)}</div>`)}</nav>
       ${body}`;
   }
 
@@ -2797,6 +2797,83 @@ sudo docker compose up -d --build</pre>
       </div>`;
   }
 
+  // Settings → Advanced: server settings, locked behind a warning until ticked.
+  function settingsAdvanced() {
+    const a = state.advanced;
+    if (!a) return html`<div class="card"><p class="muted">Couldn't load the advanced settings.</p></div>`;
+    const v = a.values;
+    const open = a.can_edit && state.advancedUnlocked;
+    const envTag = (key, name) => (a.locked[key] ? html` <span class="chip env-chip" title="Remove ${name} from .env to change it here">Set in .env</span>` : '');
+    const off = (key) => (!open || a.locked[key] ? raw('disabled') : '');
+    return html`
+      <div class="card adv-warning">
+        <h2>⚠ Advanced settings</h2>
+        <p>These control how the server runs: which addresses it answers to, cookies and where it looks for updates.
+          <b>You shouldn't need to change them.</b> A wrong value can stop the app loading, log everyone out, or make it less secure.</p>
+        <p class="small">Anything set in <code>.env</code> on the server wins and can't be changed here.</p>
+        ${a.can_edit
+          ? html`<label class="check adv-agree"><input type="checkbox" data-action="adv-unlock" ${state.advancedUnlocked ? raw('checked') : ''}> I understand, let me change these settings</label>`
+          : html`<p class="small"><b>Only the main login can change these.</b></p>`}
+      </div>
+      <form class="card" id="adv-form">
+        <fieldset class="adv-fields" ${open ? '' : raw('disabled')}>
+        <div class="field"><label for="adv-hosts">Extra web addresses${envTag('allowed_hosts', 'ALLOWED_HOSTS')}</label>
+          <input id="adv-hosts" name="allowed_hosts" value="${v.allowed_hosts}" placeholder="e.g. budget.example.com" autocomplete="off" ${off('allowed_hosts')}>
+          <div class="hint">Only needed if you open the app through your own domain (a reverse proxy or a Cloudflare Tunnel). Separate several with commas.
+            IP addresses, plain names like <code>nas</code>, and <code>.local</code>, <code>.lan</code> and Tailscale names always work.
+            You're on <b>${a.host}</b>${a.host_is_home ? ', which always works' : ', so it has to stay in this list'}.</div></div>
+        <div class="field"><label for="adv-proxy">Reverse proxy${envTag('trust_proxy', 'TRUST_PROXY')}</label>
+          <input id="adv-proxy" name="trust_proxy" value="${v.trust_proxy}" placeholder="Off" autocomplete="off" ${off('trust_proxy')}>
+          <div class="hint">Only if a reverse proxy sits in front of the app: its address (e.g. <code>172.18.0.1</code>) or <code>1</code>.
+            Then the login limit sees each visitor's own address. Leave it empty otherwise, or anyone could get round the limit.</div></div>
+        <div class="field"><label class="check"><input type="checkbox" name="secure_cookies" ${v.secure_cookies ? raw('checked') : ''} ${off('secure_cookies')} ${!a.https && !v.secure_cookies ? raw('disabled') : ''}> Secure cookies (HTTPS only)${envTag('secure_cookies', 'SECURE_COOKIES')}</label>
+          <div class="hint">${a.https ? 'Logins only work over https://. Turn this on if the app is always opened with https://.'
+            : "Logins would only work over https://. It can only be turned on while you're using the app over https://, so you can't lock yourself out."}</div></div>
+        <div class="field"><label for="adv-channel">Build tag${envTag('app_channel', 'APP_CHANNEL')}</label>
+          <select id="adv-channel" name="app_channel" ${off('app_channel')}>
+            ${[['', 'None (a normal copy)'], ['test', 'Test'], ['beta', 'Beta']].map(([k, label]) => html`<option value="${k}" ${k === v.app_channel ? raw('selected') : ''}>${label}</option>`)}</select>
+          <div class="hint">Puts a Test or Beta tag in the header and page title, and checks for beta releases too.</div></div>
+        <div class="field"><label for="adv-repo">Check for updates from${envTag('update_repo', 'UPDATE_REPO')}</label>
+          <input id="adv-repo" name="update_repo" value="${v.update_repo}" placeholder="kirtangl/Simple-Budget" autocomplete="off" ${off('update_repo')}>
+          <div class="hint">The GitHub repository, as owner/name. Only change it for your own fork.</div></div>
+        <div class="field"><label for="adv-token">GitHub token${envTag('github_token', 'GITHUB_TOKEN')}</label>
+          <input id="adv-token" name="github_token" type="password" value="" placeholder="${a.github_token_set ? 'Saved (type a new one to replace it)' : 'None'}" autocomplete="off" ${off('github_token')}>
+          ${a.github_token_set && !a.locked.github_token ? html`<label class="check small"><input type="checkbox" name="remove_github_token" ${off('github_token')}> Remove the saved token</label>` : ''}
+          <div class="hint">Only for a private fork: a fine-grained token with read-only Contents access. It's never shown again once saved.</div></div>
+        <p class="error" id="adv-error"></p>
+        <div class="row"><button class="primary" type="submit">Save advanced settings</button></div>
+        </fieldset>
+      </form>
+      <div class="card">
+        <h2>Server</h2>
+        <ul class="list adv-info">
+          <li><span class="grow">Version</span><b>v${a.version}</b></li>
+          <li><span class="grow">Time zone</span><b>${a.timezone}</b></li>
+          <li><span class="grow">Connection</span><b>${a.https ? 'HTTPS' : 'Plain http'}</b></li>
+        </ul>
+        <p class="hint">The time zone, port and container name can only be changed in <code>.env</code>, followed by a rebuild.</p>
+      </div>`;
+  }
+
+  async function saveAdvanced(form) {
+    const el = form.elements;
+    const body = {};
+    for (const k of ['allowed_hosts', 'trust_proxy', 'app_channel', 'update_repo']) if (!el[k].disabled) body[k] = el[k].value;
+    if (!el.secure_cookies.disabled) body.secure_cookies = el.secure_cookies.checked;
+    if (!el.github_token.disabled && el.github_token.value.trim()) body.github_token = el.github_token.value.trim();
+    if (el.remove_github_token && el.remove_github_token.checked) body.remove_github_token = true;
+    const err = form.querySelector('#adv-error');
+    err.textContent = '';
+    try {
+      state.advanced = await api('PUT', '/advanced', body);
+    } catch (e) { err.textContent = e.message; return; }
+    state.updates = null;
+    showVersion();
+    await render();
+    toast('Saved');
+  }
+  document.addEventListener('submit', (ev) => { if (ev.target.id === 'adv-form') { ev.preventDefault(); saveAdvanced(ev.target); } });
+
   async function reloadLogins() {
     state.logins = await api('GET', '/logins');
     const me = state.logins.find((l) => l.you);
@@ -3129,9 +3206,10 @@ sudo docker compose up -d --build</pre>
     },
     'menu-theme': () => { closeMenu(); location.hash = '#/settings/appearance'; },
     'menu-settings': () => { closeMenu(); location.hash = '#/settings'; },
-    logout: async () => { closeMenu(); await api('POST', '/logout'); state.data = null; state.me = null; state.logins = null; state.themeDraft = null; window.applyAccountColour(null); location.hash = '#/overview'; showLogin(); },
+    logout: async () => { closeMenu(); await api('POST', '/logout'); state.data = null; state.advanced = null; state.advancedUnlocked = false; state.me = null; state.logins = null; state.themeDraft = null; window.applyAccountColour(null); location.hash = '#/overview'; showLogin(); },
     'menu-security': () => { closeMenu(); location.hash = '#/settings/security'; },
     'menu-updates': () => { closeMenu(); location.hash = '#/settings/updates'; },
+    'adv-unlock': (el) => { state.advancedUnlocked = el.checked; render(); },
     'check-updates': async (el) => {
       el.disabled = true; el.textContent = 'Checking…';
       await loadUpdates(true);
@@ -3376,6 +3454,7 @@ sudo docker compose up -d --build</pre>
       else if (page === 'overview' && sub === 'analytics') out = await renderAnalytics();
       else if (page === 'settings') {
         if (sub === 'updates' && !state.updates) await loadUpdates();
+        if (sub === 'advanced' && !state.advanced) state.advanced = await api('GET', '/advanced');
         if ((sub === 'security' || sub === 'logins') && !state.logins) state.logins = await api('GET', '/logins');
         out = renderSettings(sub);
       }

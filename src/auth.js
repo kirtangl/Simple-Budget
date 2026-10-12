@@ -172,7 +172,7 @@ function createAuth({ db, secret, secureCookies }) {
   }
 
   const setCookie = (res, id) => res.cookie(COOKIE, makeToken(id), {
-    httpOnly: true, sameSite: 'lax', secure: secureCookies, maxAge: MAX_AGE_MS, path: '/',
+    httpOnly: true, sameSite: 'lax', secure: typeof secureCookies === 'function' ? secureCookies() : Boolean(secureCookies), maxAge: MAX_AGE_MS, path: '/',
   });
 
   // A new password must be long enough, not the default, and not one another login already uses.
@@ -261,6 +261,10 @@ function createAuth({ db, secret, secureCookies }) {
       // Move a login from the old shared cookie onto this copy's own.
       if (usedLegacy(req)) { setCookie(res, me.id); res.clearCookie(LEGACY_COOKIE, { path: '/' }); }
       next();
+    },
+
+    refreshCookie(req, res) {
+      if (req.login) setCookie(res, req.login.id);
     },
 
     // Who's logged in, and their theme.

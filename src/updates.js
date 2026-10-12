@@ -37,12 +37,16 @@ function compareVersions(a, b) {
   return 0;
 }
 
-function createUpdates({ version, channel, repo, token, fetchImpl = globalThis.fetch }) {
+// `settings()` gives { channel, repo, token }, read on every check so they can
+// change while the app runs (Settings → Advanced). Fixed values work too.
+function createUpdates({ version, channel, repo, token, settings, fetchImpl = globalThis.fetch }) {
+  const current = settings || (() => ({ channel, repo, token }));
   let state = { checkedAt: null, latest: null, error: null };
   let running = null;
 
   async function check() {
     if (running) return running;
+    const { channel, repo, token } = current();
     const p = (async () => {
       try {
         const res = await fetchImpl(`https://api.github.com/repos/${repo}/releases?per_page=30`, {
@@ -85,7 +89,7 @@ function createUpdates({ version, channel, repo, token, fetchImpl = globalThis.f
 
   const view = () => ({
     current: version,
-    channel,
+    channel: current().channel,
     checkedAt: state.checkedAt,
     error: state.error,
     latest: state.latest,
@@ -95,6 +99,8 @@ function createUpdates({ version, channel, repo, token, fetchImpl = globalThis.f
   return {
     check,
     view,
+    // Forget the last result, e.g. after the repository or token changes.
+    reset() { state = { checkedAt: null, latest: null, error: null }; },
     // Check soon after starting, then every few hours.
     start() {
       setTimeout(check, 5000).unref();

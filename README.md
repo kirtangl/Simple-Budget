@@ -78,6 +78,8 @@ You'll be asked to choose a new password the next time you log in. Other logins 
 
 ### Settings (`.env`)
 
+Most of these can also be changed in the app under **Settings → Advanced** (behind a warning, main login only). A value set in `.env` always wins and shows there as "Set in .env".
+
 | Variable         | What it does                                                                 | Default              |
 |------------------|------------------------------------------------------------------------------|----------------------|
 | `TZ`             | Your timezone, so bills flip to "paid" on the right day.                     | `Australia/Brisbane` |
@@ -85,7 +87,7 @@ You'll be asked to choose a new password the next time you log in. Other logins 
 | `ALLOWED_HOSTS`  | Extra web addresses the app answers to, comma separated, e.g. `budget.example.com`. See below. | none |
 | `TRUST_PROXY`    | Only behind a reverse proxy: its address (e.g. `172.18.0.1`), or `1`, so the login limit sees each visitor's real address. | off |
 
-The app only answers to home-network addresses: an IP address like `192.168.1.20`, `localhost`, a plain name like `nas`, and names ending in `.local`, `.lan`, `.home.arpa`, `.internal` or `.ts.net` (Tailscale). This stops a website on the internet from tricking your browser into reading the budget. If you open the app through your own domain (a reverse proxy or a Cloudflare Tunnel), add that domain to `ALLOWED_HOSTS`, or you'll see "Simple Budget doesn't answer to ...".
+The app only answers to home-network addresses: an IP address like `192.168.1.20`, `localhost`, a plain name like `nas`, and names ending in `.local`, `.lan`, `.home.arpa`, `.internal` or `.ts.net` (Tailscale). This stops a website on the internet from tricking your browser into reading the budget. If you open the app through your own domain (a reverse proxy or a Cloudflare Tunnel), add that domain in **Settings → Advanced** (open the app by its IP address to get there) or to `ALLOWED_HOSTS`, or you'll see "Simple Budget doesn't answer to ...".
 
 ### Your data and backups
 
@@ -119,7 +121,7 @@ The test copy runs at `http://<your-server>:3001` with its own data, and `APP_CH
 
 ### Using it away from home
 
-The app is meant to run on your home network. To reach it from outside, put it behind something that adds HTTPS, such as [Tailscale](https://tailscale.com/), a Cloudflare Tunnel, or a reverse proxy like Caddy, and set `SECURE_COOKIES=true`. If it's reached through your own domain, add it to `ALLOWED_HOSTS`. Don't expose port 3000 directly to the internet.
+The app is meant to run on your home network. To reach it from outside, put it behind something that adds HTTPS, such as [Tailscale](https://tailscale.com/), a Cloudflare Tunnel, or a reverse proxy like Caddy, and turn on **Secure cookies** in Settings → Advanced (or set `SECURE_COOKIES=true`). If it's reached through your own domain, add it there too (or to `ALLOWED_HOSTS`). Don't expose port 3000 directly to the internet.
 
 ## Running without Docker
 

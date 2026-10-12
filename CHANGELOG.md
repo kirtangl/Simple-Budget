@@ -2,11 +2,13 @@
 
 ## v0.6.1 (12 October 2026)
 
-Fixes from a code review and security audit.
+Fixes from a code review and security audit, and a new **Settings → Advanced** tab.
+
+- **Settings → Advanced**: the server settings that used to need `.env` (extra web addresses, reverse proxy, secure cookies, build tag, where to check for updates and a GitHub token) can be changed in the app. The tab sits apart in red, starts locked behind a warning and an "I understand" tick, and only the main login can save. Anything set in `.env` still wins and shows as locked.
 
 - **Security**
   - The login limit can no longer be dodged by pretending to be a different address, and lots of wrong guesses from anywhere now slow everyone down for a minute.
-  - The app only answers to home-network addresses, so a website can't trick a browser into reading the budget. **If you open it through your own domain, add it to `ALLOWED_HOSTS` in `.env`.**
+  - The app only answers to home-network addresses, so a website can't trick a browser into reading the budget. **If you open it through your own domain, add it in Settings → Advanced (open the app by its IP address to get there) or to `ALLOWED_HOSTS` in `.env`.**
   - Pages are sent with security headers (no framing by other sites, a content security policy).
   - Colours are checked before they're saved, and only a backup restore can send a large file.
 - **Fixes**

@@ -391,12 +391,24 @@ input::-webkit-date-and-time-value { text-align: left; }
 .settings-tabs { align-items: center; }
 .st-group { display: flex; gap: 6px; }
 .st-sep { flex: none; width: 1px; height: 22px; margin: 0 6px; background: var(--line); }
+/* Advanced: set apart in a warning red. */
+.subtabs a.st-advanced { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 35%, transparent); color: var(--danger); }
+.subtabs a.st-advanced.active { background: var(--danger); border-color: var(--danger); color: #fff; }
+.adv-warning { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: color-mix(in srgb, var(--danger-soft) 55%, var(--card)); }
+.adv-warning h2 { color: var(--danger); }
+.adv-agree { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); }
+.adv-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.adv-fields[disabled] { opacity: .55; }
+.adv-fields .field { max-width: 640px; }
+.env-chip { background: var(--upcoming-soft); color: var(--upcoming); font-weight: 600; }
+.adv-info li { display: flex; gap: 8px; }
 @media (max-width: 720px) {
   /* Two rows of equal buttons instead of a sideways scroll. */
   .settings-tabs { display: grid; gap: 6px; overflow: visible; }
   .st-group { display: grid; gap: 6px; }
   .st-group.st-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .st-group.st-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .st-group.st-1 { grid-template-columns: 1fr; }
   .st-group a { padding: 8px 2px; text-align: center; font-size: 13px; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; }
   .st-sep { display: none; }
 }

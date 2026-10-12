@@ -10,7 +10,7 @@ services:
       # Your local timezone, so bills flip to "paid" on the right day.
       TZ: ${TZ:-Australia/Brisbane}
       # Set to "true" only if you serve the app over HTTPS.
-      SECURE_COOKIES: ${SECURE_COOKIES:-false}
+      SECURE_COOKIES: ${SECURE_COOKIES:-}
       # Your own domain, if you open the app through one (see the README).
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
       # Only behind a reverse proxy: its address, or 1.
