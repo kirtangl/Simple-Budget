@@ -1476,3 +1476,10 @@ dialog.loan-modal .error:empty { display: none; }
   /* No room beside the centred logo: the dot on the profile button and the menu item say it instead. */
   .update-pill { display: none; }
 }
+
+/* One-click update */
+.upd-install { border-color: color-mix(in srgb, var(--brand) 40%, var(--line)); }
+.upd-install h2 { display: flex; align-items: center; gap: 10px; }
+.spinner { width: 16px; height: 16px; border-radius: 50%; border: 2.5px solid var(--brand-soft); border-top-color: var(--brand); animation: spin .8s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }

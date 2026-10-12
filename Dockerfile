@@ -1,4 +1,6 @@
 FROM node:22-alpine
+LABEL org.opencontainers.image.source="https://github.com/kirtangl/Simple-Budget" \
+      org.opencontainers.image.description="Simple Budget: a self-hosted household budget"
 
 WORKDIR /app
 COPY package.json package-lock.json ./

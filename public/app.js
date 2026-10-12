@@ -2762,13 +2762,46 @@
           <a class="btn" href="${l.url}" target="_blank" rel="noopener">View on GitHub</a></div>
         <div class="upd-notes">${releaseNotes(l.notes)}</div>
       </div>` : ''}
-      ${u.available ? html`<div class="card">
+      ${state.updateInstall ? installingCard(state.updateInstall)
+        : u.available && u.can_install ? html`<div class="card upd-install">
+        <div class="card-head"><div><h2>Update to v${l.version}</h2>
+          <p class="muted small" style="margin:0">Installs the new version and restarts the app. A copy of your data is saved on the server first.
+            It usually takes a minute or two; this page reloads by itself when it's done.</p></div>
+          ${state.me && state.me.main ? html`<button class="primary" data-action="install-update">Update now</button>` : ''}</div>
+        ${state.me && state.me.main ? '' : html`<p class="muted small">Only the main login can install updates.</p>`}
+      </div>`
+        : u.available ? html`<div class="card">
         <h2>How to update</h2>
         <p class="muted small">Your data stays as it is. Download a backup first under General if you'd like to be extra safe. Then, in this copy's folder on the server:</p>
         <pre class="upd-cmd">git pull
 sudo docker compose up -d --build</pre>
         <div class="row"><button data-action="copy-update-cmd">Copy commands</button></div>
       </div>` : ''}`;
+  }
+
+  function installingCard(i) {
+    return html`<div class="card upd-install">
+      <h2>${i.slow ? 'Still updating…' : html`<span class="spinner" aria-hidden="true"></span> Updating to v${i.version}…`}</h2>
+      ${i.backup ? html`<p class="small">Your data was saved first as <code>backups/${i.backup}</code> in the app's data folder.</p>` : ''}
+      ${i.slow ? html`<p class="small">This is taking longer than usual. The new version may still be downloading.
+          If nothing changes, check on the server that both containers are running (<code>sudo docker compose ps</code>),
+          or update from the terminal with <code>git pull</code> and <code>sudo docker compose up -d --build</code>.</p>`
+        : html`<p class="muted small">Downloading the new version and restarting the app. This page reloads by itself when it's back.</p>`}
+    </div>`;
+  }
+
+  // After "Update now": wait for the app to come back on the new version, then reload.
+  async function waitForUpdate() {
+    const i = state.updateInstall;
+    const deadline = Date.now() + 5 * 60 * 1000;
+    while (state.updateInstall === i) {
+      await new Promise((r) => { setTimeout(r, 3000); });
+      try {
+        const res = await fetch('api/version', { cache: 'no-store' });
+        if (res.ok && (await res.json()).version === i.version) { location.reload(); return; }
+      } catch { /* restarting */ }
+      if (!i.slow && Date.now() > deadline) { i.slow = true; render(); }
+    }
   }
 
   function settingsSecurity() {
@@ -3210,6 +3243,17 @@ sudo docker compose up -d --build</pre>
     'menu-security': () => { closeMenu(); location.hash = '#/settings/security'; },
     'menu-updates': () => { closeMenu(); location.hash = '#/settings/updates'; },
     'adv-unlock': (el) => { state.advancedUnlocked = el.checked; render(); },
+    'install-update': async (el) => {
+      const v = state.updates.latest.version;
+      if (!confirm(`Update to version ${v} now? The app restarts, so anyone using it will see it reload.`)) return;
+      el.disabled = true; el.textContent = 'Starting…';
+      try {
+        const r = await api('POST', '/updates/install');
+        state.updateInstall = { version: r.version, backup: r.backup };
+      } catch (err) { el.disabled = false; el.textContent = 'Update now'; throw err; }
+      await render();
+      waitForUpdate();
+    },
     'check-updates': async (el) => {
       el.disabled = true; el.textContent = 'Checking…';
       await loadUpdates(true);

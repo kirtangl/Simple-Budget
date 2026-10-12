@@ -45,8 +45,10 @@ You need [Docker](https://docs.docker.com/get-docker/) with Docker Compose.
 git clone https://github.com/kirtangl/Simple-Budget.git
 cd Simple-Budget
 cp .env.example .env        # optional: change TZ if you're not in Queensland
-docker compose up -d --build
+docker compose up -d
 ```
+
+This downloads the ready-made image and starts two containers: the app, and a small updater that installs new versions when you press **Update now** (see [Updating](#updating)). To build from the code in this folder instead, use `docker compose up -d --build`.
 
 Then open `http://<your-server>:3000` and log in with the default password **`simplebudget`**. You'll be asked to choose your own password straight away.
 
@@ -57,12 +59,7 @@ First steps once you're in:
 3. **Settings → Income**: add each person's fortnightly after-tax pay.
 4. **Expenses**: add your bills.
 
-To update to a newer version:
-
-```sh
-git pull
-docker compose up -d --build
-```
+To update, press **Update now** in Settings → Updates (see [Updating](#updating)).
 
 ### Passwords and logins
 
@@ -97,11 +94,30 @@ Everything is stored in one SQLite database file inside the Docker volume `budge
 - **Older backups keep working**: each file records its format version. When a newer app expects data an older file doesn't have, it fills in the defaults, and any section missing from the file is left as it is.
 - **Full database copy**: `docker compose cp budget:/app/data/budget.db ./budget-backup.db`
 
-### Checking for updates
+### Updating
 
-**Settings → Updates** shows this copy's version, the latest release on GitHub and its release notes, with a **Check now** button. The app also checks every few hours by itself. When there's a newer version, an **Update** tag appears beside the profile button, which also gets a dot, and the menu offers **Update to vX.Y.Z**. A test or beta copy also looks at pre-releases.
+**Settings → Updates** shows this copy's version, the latest release on GitHub and its release notes, with a **Check now** button. The app also checks every few hours by itself. When there's a newer version, an **Update** tag appears beside the profile button, which also gets a dot, and the menu offers **Update to vX.Y.Z**.
 
-No setup is needed. GitHub allows about 60 checks an hour without a login, far more than the app uses. If you run a private fork, add a fine-grained token with read-only **Contents** access to it as `GITHUB_TOKEN=...` in `.env`, and set `UPDATE_REPO=owner/name`.
+Press **Update now** (main login only) and the app:
+
+1. saves a copy of the database to `backups/` in its data volume (the newest five are kept),
+2. asks the updater container to download the new image and restart the app on it.
+
+It takes a minute or two and the page reloads by itself. Your data stays in its volume and everyone stays logged in.
+
+Each release is built into an image at `ghcr.io/kirtangl/simple-budget` by a GitHub Action. `IMAGE_TAG` in `.env` picks which one a copy follows:
+
+| `IMAGE_TAG` | Follows |
+|---|---|
+| `latest` (default) | Full releases |
+| `beta` | Every release, including pre-releases like `0.8.0-beta.1` |
+| `0.7.0` | Stays on that version (to go back after a bad update: set it, then `sudo docker compose up -d`) |
+
+**From the terminal** (or if you'd rather not run the updater): `git pull`, then `sudo docker compose pull && sudo docker compose up -d`. To build from the code instead, `sudo docker compose up -d --build`.
+
+**How the updater works:** it's [Watchtower](https://github.com/nicholas-fedor/watchtower), which needs the Docker socket to restart containers. It only acts when the app asks (no schedule), only touches this copy (its scope is `CONTAINER_NAME`), and its port isn't published, so only the app can reach it. `UPDATER_TOKEN` in `.env` sets the password between the two if you'd like your own. To do without it, remove the `updater` service from `docker-compose.yml`; the app then shows the terminal commands instead.
+
+No setup is needed for update checks. GitHub allows about 60 checks an hour without a login, far more than the app uses. If you run a private fork, add a fine-grained token with read-only **Contents** access as `GITHUB_TOKEN=...` and set `UPDATE_REPO=owner/name` (or set both in Settings → Advanced).
 
 ### Running a test copy alongside
 
@@ -114,10 +130,11 @@ cp .env.example .env
 echo "CONTAINER_NAME=simple-budget-test" >> .env
 echo "HOST_PORT=3001" >> .env
 echo "APP_CHANNEL=test" >> .env
-docker compose up -d --build
+echo "IMAGE_TAG=beta" >> .env
+docker compose up -d
 ```
 
-The test copy runs at `http://<your-server>:3001` with its own data, and `APP_CHANNEL=test` puts a **Test** tag in its header and page title. The version is shown in the menu (top right). A pre-release version such as `0.6.0-beta.1` shows a **Beta** tag. To try live data in it, download a backup from the live app and restore it into the test one. Switch the test folder to any branch with `git checkout <branch> && git pull`, then rebuild.
+The test copy runs at `http://<your-server>:3001` with its own data, and `APP_CHANNEL=test` puts a **Test** tag in its header and page title. The version is shown in the menu (top right). A pre-release version such as `0.6.0-beta.1` shows a **Beta** tag. To try live data in it, download a backup from the live app and restore it into the test one. `IMAGE_TAG=beta` makes it follow pre-releases too, and keeps it from sharing an image with the live copy. To try a branch, `git checkout <branch> && git pull`, then `sudo docker compose up -d --build`; **Update now** later puts it back on the newest release.
 
 ### Using it away from home
 

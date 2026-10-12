@@ -516,3 +516,53 @@ test('updates: version order and picking the newest release from GitHub', async 
     });
   } finally { if (token !== undefined) process.env.GITHUB_TOKEN = token; }
 });
+
+test('updates: "Update now" backs up the data and asks the updater to install it', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-update-'));
+  const releases = [{ tag_name: 'v98.0.0', name: 'New', body: '', html_url: 'https://github.com/x/y', draft: false, prerelease: false }];
+  const asked = [];
+  let updaterStatus = 202;
+  const fetchImpl = async (url, opts = {}) => {
+    if (url.startsWith('http://updater')) {
+      asked.push({ url, auth: opts.headers && opts.headers.Authorization, method: opts.method });
+      return { ok: updaterStatus < 300, status: updaterStatus, json: async () => ({}) };
+    }
+    return { ok: true, status: 200, json: async () => releases };
+  };
+  const before = { url: process.env.UPDATER_URL, token: process.env.UPDATER_TOKEN };
+  try {
+    // Without an updater, the app says to use the terminal.
+    delete process.env.UPDATER_URL;
+    await withServer({ fetchImpl, dataDir }, async (call) => {
+      assert.equal((await call('GET', '/updates')).body.can_install, false);
+      assert.equal((await call('POST', '/updates/install')).status, 400);
+    });
+    process.env.UPDATER_URL = 'http://updater:8080';
+    process.env.UPDATER_TOKEN = 'shh';
+    await withServer({ fetchImpl, dataDir }, async (call) => {
+      assert.equal((await call('GET', '/updates')).body.can_install, true);
+      updaterStatus = 429;
+      assert.equal((await call('POST', '/updates/install')).status, 409);
+      updaterStatus = 202;
+      const r = await call('POST', '/updates/install');
+      assert.equal(r.status, 200);
+      assert.equal(r.body.version, '98.0.0');
+      assert.match(r.body.backup, /^budget-before-v98\.0\.0-.*\.db$/);
+      assert.ok(fs.existsSync(path.join(dataDir, 'backups', r.body.backup)));
+      assert.deepEqual(asked.at(-1), { url: 'http://updater:8080/v1/update?async=true', auth: 'Bearer shh', method: 'POST' });
+      assert.equal((await call('GET', '/updates')).body.installing.version, '98.0.0');
+      // Only the main login can install.
+      await call('POST', '/logins', { name: 'Sam', password: 'sams-password' });
+      await call('POST', '/logout');
+      await call('POST', '/login', { password: 'sams-password' });
+      assert.equal((await call('POST', '/updates/install')).status, 403);
+    });
+  } finally {
+    if (before.url === undefined) delete process.env.UPDATER_URL; else process.env.UPDATER_URL = before.url;
+    if (before.token === undefined) delete process.env.UPDATER_TOKEN; else process.env.UPDATER_TOKEN = before.token;
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});

@@ -1,5 +1,10 @@
 services:
   budget:
+    # The ready-made image from GitHub (see "Updating" in the README). IMAGE_TAG
+    # picks which: "latest" (releases), "beta" (releases and pre-releases), or a
+    # version like "0.7.0" to stay on it. `docker compose up -d --build` builds
+    # from this folder's code instead, e.g. to try a branch.
+    image: ghcr.io/kirtangl/simple-budget:${IMAGE_TAG:-latest}
     build: .
     # Change these two in .env to run a second copy (e.g. a test one) on the same machine.
     container_name: ${CONTAINER_NAME:-simple-budget}
@@ -9,19 +14,41 @@ services:
     environment:
       # Your local timezone, so bills flip to "paid" on the right day.
       TZ: ${TZ:-Australia/Brisbane}
-      # Set to "true" only if you serve the app over HTTPS.
+      # The rest can also be set in the app (Settings → Advanced); .env wins.
       SECURE_COOKIES: ${SECURE_COOKIES:-}
-      # Your own domain, if you open the app through one (see the README).
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
-      # Only behind a reverse proxy: its address, or 1.
       TRUST_PROXY: ${TRUST_PROXY:-}
-      # "test" tags this copy as a test one in the header and page title.
       APP_CHANNEL: ${APP_CHANNEL:-}
-      # Only for a private fork: where to check for new versions, and a read-only token.
       UPDATE_REPO: ${UPDATE_REPO:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      # How the app asks the updater (below) to install a new version.
+      UPDATER_URL: http://updater:8080
+      UPDATER_TOKEN: ${UPDATER_TOKEN:-simple-budget-updater}
+    labels:
+      # Only this copy's updater may update it.
+      com.centurylinklabs.watchtower.enable: "true"
+      com.centurylinklabs.watchtower.scope: ${CONTAINER_NAME:-simple-budget}
     volumes:
       - budget-data:/app/data
+
+  # Installs a new version when you press "Update now" in Settings → Updates:
+  # it pulls the new image and restarts the app on it. Your data stays in the
+  # budget-data volume. It only does anything when the app asks, and its port
+  # isn't published, so only the app can reach it.
+  updater:
+    image: nickfedor/watchtower:1
+    container_name: ${CONTAINER_NAME:-simple-budget}-updater
+    restart: unless-stopped
+    environment:
+      WATCHTOWER_HTTP_API_UPDATE: "true"
+      WATCHTOWER_HTTP_API_TOKEN: ${UPDATER_TOKEN:-simple-budget-updater}
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_SCOPE: ${CONTAINER_NAME:-simple-budget}
+      WATCHTOWER_CLEANUP: "true"
+    labels:
+      com.centurylinklabs.watchtower.scope: ${CONTAINER_NAME:-simple-budget}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   budget-data:
