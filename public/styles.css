@@ -380,20 +380,17 @@ input::-webkit-date-and-time-value { text-align: left; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .toolbar input, .toolbar select { width: auto; flex: 1; min-width: 140px; }
 
-/* Settings sub navigation */
-.subtabs { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 16px; padding-bottom: 2px; }
-.subtabs a {
-  white-space: nowrap; padding: 7px 14px; border-radius: 999px; text-decoration: none;
-  border: 1px solid var(--line); color: var(--muted); background: var(--card); font-weight: 500;
-}
-.subtabs a.active { background: var(--brand-soft); border-color: transparent; color: var(--brand); font-weight: 600; }
-/* Settings: budget set-up | the app itself, with a quiet divider between. */
+/* Settings: one strip of tabs like Budget and Goals. Budget set-up | the app itself | Advanced, with quiet dividers. */
 .settings-tabs { align-items: center; }
-.st-group { display: flex; gap: 6px; }
+.st-group { display: flex; gap: 2px; }
+.settings-tabs a.active { background: var(--brand-soft); color: var(--brand); }
 .st-sep { flex: none; width: 1px; height: 22px; margin: 0 6px; background: var(--line); }
+.st-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--brand); flex: none; }
+.st-dot[hidden] { display: none; }
 /* Advanced: set apart in a warning red. */
-.subtabs a.st-advanced { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 35%, transparent); color: var(--danger); }
-.subtabs a.st-advanced.active { background: var(--danger); border-color: var(--danger); color: #fff; }
+.settings-tabs a.st-advanced { color: var(--danger); }
+.settings-tabs a.st-advanced:hover { background: color-mix(in srgb, var(--danger) 10%, var(--card)); }
+.settings-tabs a.st-advanced.active { background: var(--danger-soft); color: var(--danger); }
 .adv-warning { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: color-mix(in srgb, var(--danger-soft) 55%, var(--card)); }
 .adv-warning h2 { color: var(--danger); }
 .adv-agree { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); }
@@ -402,15 +399,15 @@ input::-webkit-date-and-time-value { text-align: left; }
 .adv-fields .field { max-width: 640px; }
 .env-chip { background: var(--upcoming-soft); color: var(--upcoming); font-weight: 600; }
 .adv-info li { display: flex; gap: 8px; }
-@media (max-width: 720px) {
-  /* Two rows of equal buttons instead of a sideways scroll. */
-  .settings-tabs { display: grid; gap: 6px; overflow: visible; }
-  .st-group { display: grid; gap: 6px; }
+@media (max-width: 899px) {
+  /* Rows of equal buttons in the one strip, instead of a sideways scroll. */
+  .sec-tabs.settings-tabs { display: grid; gap: 2px; }
+  .st-group { display: grid; gap: 2px; }
   .st-group.st-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .st-group.st-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .st-group.st-1 { grid-template-columns: 1fr; }
-  .st-group a { padding: 8px 2px; text-align: center; font-size: 13px; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; }
-  .st-sep { display: none; }
+  .settings-tabs .st-group a { padding: 7px 2px; gap: 5px; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .st-sep { width: auto; height: 1px; margin: 2px 6px; }
+}
 }
 
 .tags { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1455,31 +1452,120 @@ dialog.loan-modal .error:empty { display: none; }
   background: var(--brand); box-shadow: 0 0 0 2px var(--card); }
 .menu .menu-update { color: var(--brand); font-weight: 600; }
 .menu .menu-update[hidden] { display: none; }
-.upd-status { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin-top: 12px; border-radius: 8px; overflow: hidden;
-  background: var(--line); border: 1px solid var(--line); }
-.upd-status > div { background: var(--inset); padding: 10px 12px; min-width: 0; }
-.upd-lbl { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
-.upd-val { margin-top: 3px; font-weight: 700; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.upd-val.small { font-size: 13px; font-weight: 600; }
-.upd-msg { margin: 12px 0 0; font-weight: 600; }
-.upd-msg.ok { color: var(--paid); }
-.upd-msg.new { color: var(--brand); }
-.upd-msg.bad { color: var(--danger); font-weight: 500; }
-.upd-notes h4 { margin: 14px 0 4px; font-size: 14px; }
+.upd-notes { font-size: 13px; }
+.upd-notes h4 { margin: 14px 0 4px; font-size: 13px; }
 .upd-notes h4:first-child { margin-top: 0; }
 .upd-notes p { margin: 6px 0; }
 .upd-notes ul { margin: 6px 0; padding-left: 20px; }
 .upd-notes li { margin: 3px 0; }
-.upd-cmd { margin: 8px 0 12px; padding: 10px 12px; border-radius: 8px; background: var(--inset); border: 1px solid var(--line); font-size: 13px; overflow-x: auto; }
+.upd-cmd { margin: 16px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--inset); border: 1px solid var(--line); font-size: 13px; overflow-x: auto; }
 @media (max-width: 720px) {
-  .upd-status { grid-template-columns: 1fr; }
   /* No room beside the centred logo: the dot on the profile button and the menu item say it instead. */
   .update-pill { display: none; }
 }
 
-/* One-click update */
-.upd-install { border-color: color-mix(in srgb, var(--brand) 40%, var(--line)); }
-.upd-install h2 { display: flex; align-items: center; gap: 10px; }
-.spinner { width: 16px; height: 16px; border-radius: 50%; border: 2.5px solid var(--brand-soft); border-top-color: var(--brand); animation: spin .8s linear infinite; flex: none; }
+/* Settings → Updates. Every colour comes from the theme: --brand for an update,
+   --paid once it's done, --danger when it fails. */
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.upd-main { --acc: var(--paid); position: relative; overflow: hidden; padding: 24px 26px; border-radius: 12px; }
+.upd-main[data-mode="new"], .upd-main[data-mode="busy"] { --acc: var(--brand); }
+.upd-main[data-mode="bad"] { --acc: var(--danger); }
+.upd-main[data-mode="warn"] { --acc: var(--due); }
+.upd-main:not([data-mode="ok"]) { border-color: color-mix(in srgb, var(--acc) 45%, var(--line));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--acc) 14%, var(--card)) 0%, var(--card) 60%); }
+.upd-bg-ring { position: absolute; top: -60px; right: -60px; width: 260px; height: 260px; opacity: .1; color: var(--acc); pointer-events: none; }
+.upd-main[data-mode="ok"] .upd-bg-ring { color: var(--brand); }
+.upd-row { position: relative; display: flex; align-items: center; gap: 20px; }
+.upd-tile { flex: none; display: grid; place-items: center; width: 64px; height: 64px; border-radius: 15px;
+  background: var(--acc); color: var(--card); }
+.upd-main[data-mode="ok"] .upd-tile { background: var(--brand-soft); color: var(--brand); }
+.upd-tile svg { width: 40px; height: 40px; }
+.upd-tile .spin { animation: spin 1.2s linear infinite; }
+.upd-tick { font-size: 30px; font-weight: 700; line-height: 1; }
+.upd-text { flex: 1; min-width: 0; }
+.upd-eyebrow { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--acc); }
+.upd-main[data-mode="ok"] .upd-eyebrow { color: var(--paid); }
+.upd-title { margin: 4px 0 4px; font-size: 22px; font-weight: 700; }
+.upd-sub { margin: 0; font-size: 13px; color: var(--muted); }
+.upd-sub code { font-size: 12px; }
+.upd-err { color: var(--danger); }
+.upd-actions { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.upd-primary { height: 42px; min-height: 0; padding: 0 20px; border-radius: 9px; font-size: 15px; font-weight: 700; }
+.upd-actions .linkish { font-size: 13px; }
+.upd-foot { position: relative; display: flex; flex-wrap: wrap; gap: 6px 28px; margin-top: 20px; padding-top: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--acc) 30%, var(--line)); font-size: 12px; color: var(--muted); }
+.upd-main[data-mode="ok"] .upd-foot { border-top-color: var(--line); }
+.upd-foot b { color: var(--text); font-weight: 700; }
+.upd-foot .linkish { font-size: 12px; }
+.upd-foot .build-tag { font-size: 10px; padding: 1px 5px; }
+
+/* The four steps while updating */
+.upd-steps { position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 20px 0 0; padding: 0; list-style: none; }
+.upd-steps li { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.upd-bar { height: 4px; border-radius: 2px; background: var(--line); }
+.upd-steps .done .upd-bar { background: var(--paid); }
+.upd-steps .active .upd-bar { background: linear-gradient(90deg, var(--brand) 50%, var(--line) 50%); }
+.upd-step-lbl { font-size: 13px; font-weight: 600; color: var(--muted); }
+.upd-steps .done .upd-step-lbl { color: var(--paid); }
+.upd-steps .active .upd-step-lbl { color: var(--brand); }
+.upd-step-sub { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.upd-step-sub.mono, .upd-step-sub .mono { font-size: 11px; }
+
+/* What's new | Backups and Preferences */
+.upd-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px; margin-top: 16px; align-items: start; }
+.upd-grid .card + .card { margin-top: 16px; }
+.upd-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 8px; }
+.upd-card-head h3, .upd-prefs h3 { margin: 0; font-size: 15px; font-weight: 700; }
+.upd-card-head > a, .upd-card-head > .linkish { flex: none; font-size: 13px; }
+.upd-card-sub { display: block; margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+.upd-release { padding: 12px 0; border-top: 1px solid var(--line); }
+.upd-release:last-child { padding-bottom: 0; }
+/* "See what's new" lights up the installed version's notes for a moment. */
+.upd-release.flash { animation: upd-flash 2.4s ease-out; border-radius: 8px; }
+@keyframes upd-flash { 0%, 35% { background: var(--brand-soft); box-shadow: 0 0 0 8px var(--brand-soft); } 100% { background: transparent; box-shadow: 0 0 0 8px transparent; } }
+.upd-release-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.upd-release-head > a { font-weight: 700; color: var(--text); }
+.upd-date { font-size: 12px; color: var(--muted); }
+.upd-badge { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  background: var(--upcoming-soft); color: var(--muted); }
+.upd-badge.new { background: var(--brand-soft); color: var(--brand); }
+.upd-items { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.upd-items li { display: flex; align-items: flex-start; gap: 10px; }
+.upd-kind { flex: none; width: 64px; padding: 2px 0; border-radius: 4px; text-align: center; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.upd-kind.new { background: var(--brand-soft); color: var(--brand); }
+.upd-kind.improved { background: color-mix(in srgb, var(--info) 18%, var(--card)); color: var(--info); }
+.upd-kind.fixed { background: color-mix(in srgb, var(--due) 18%, var(--card)); color: var(--due); }
+.upd-backup-list { margin: 4px 0 0; padding: 0; list-style: none; }
+.upd-backup-list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); }
+.upd-backup-name { font-size: 13px; font-weight: 600; }
+.upd-backup-list .linkish { font-size: 12px; }
+.upd-folder { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.upd-empty { padding-top: 8px; border-top: 1px solid var(--line); }
+.upd-prefs h3 { margin-bottom: 4px; }
+.upd-pref { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: 12px; min-height: 0; padding: 10px 0;
+  border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; text-align: left; font-weight: 400; }
+.upd-pref-title { display: block; font-size: 13px; font-weight: 600; }
+.upd-switch { position: relative; flex: none; width: 38px; height: 22px; border-radius: 11px; background: color-mix(in srgb, var(--muted) 45%, var(--line)); transition: background .15s; }
+.upd-switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 25%); transition: transform .15s; }
+.upd-pref[aria-checked="true"] .upd-switch { background: var(--brand); }
+.upd-pref[aria-checked="true"] .upd-switch::after { transform: translateX(16px); }
+.upd-pref:disabled { opacity: 1; }
+.upd-pref:disabled .upd-switch { opacity: .45; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+@media (prefers-reduced-motion: reduce) { .upd-tile .spin { animation-duration: 3.6s; } }
+@media (max-width: 720px) {
+  .upd-main { padding: 18px 16px; }
+  .upd-row { flex-wrap: wrap; gap: 14px; }
+  .upd-tile { width: 52px; height: 52px; border-radius: 13px; }
+  .upd-tile svg { width: 32px; height: 32px; }
+  .upd-text { flex-basis: calc(100% - 66px); }
+  .upd-title { font-size: 19px; }
+  .upd-actions { width: 100%; flex-direction: row; align-items: center; justify-content: space-between; }
+  .upd-actions:not(:has(.upd-primary)) { justify-content: flex-start; }
+  .upd-primary { flex: 1; max-width: 220px; }
+  .upd-foot { gap: 4px 18px; }
+  .upd-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 10px; }
+  .upd-grid { grid-template-columns: 1fr; }
+}
+

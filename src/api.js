@@ -705,4 +705,4 @@ function importBackup(db, input) {
   return { ok: true, format_version: Number(input.format_version) || 1, counts, warnings };
 }
 
-module.exports = { createApi, today, exportBackup, importBackup, BACKUP_FORMAT_VERSION };
+module.exports = { createApi, today, exportBackup, importBackup, BACKUP_FORMAT_VERSION, BACKUP_SETTINGS };

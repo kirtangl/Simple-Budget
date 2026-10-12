@@ -302,7 +302,7 @@
 
   function showLogin(defaultPassword) {
     // Forget the budget, so Back after logging out can't show it again.
-    state.data = null; state.trends = null; state.updates = null; state.advanced = null;
+    state.data = null; state.trends = null; state.updates = null; state.advanced = null; state.backups = null;
     // A form left open (e.g. the login ran out mid-save) would sit over the login page.
     if ($modal.open) closeForm();
     $nav.hidden = true;
@@ -2361,8 +2361,8 @@
     const body = { income: settingsIncome, accounts: settingsAccounts, payees: settingsPayees, categories: settingsCategories, cycle: settingsCycle, appearance: themeCard, security: settingsSecurity, updates: settingsUpdates, advanced: settingsAdvanced }[tab]();
     return html`
       <div class="page-head"><h1>Settings</h1></div>
-      <nav class="subtabs settings-tabs">${SETTINGS_GROUPS.map((keys, i) => html`${i ? html`<span class="st-sep" aria-hidden="true"></span>` : ''}<div class="st-group st-${keys.length}">
-        ${keys.map((k) => html`<a href="#/settings/${k}" class="${k === tab ? 'active' : ''} ${k === 'advanced' ? 'st-advanced' : ''}">${SETTINGS_TABS.find(([x]) => x === k)[1]}</a>`)}</div>`)}</nav>
+      <nav class="sec-tabs settings-tabs" aria-label="Settings">${SETTINGS_GROUPS.map((keys, i) => html`${i ? html`<span class="st-sep" aria-hidden="true"></span>` : ''}<div class="st-group st-${keys.length}">
+        ${keys.map((k) => html`<a href="#/settings/${k}" ${k === tab ? raw('aria-current="page"') : ''} class="${k === tab ? 'active' : ''} ${k === 'advanced' ? 'st-advanced' : ''}">${SETTINGS_TABS.find(([x]) => x === k)[1]}${k === 'updates' ? html`<span class="st-dot" ${state.updates && state.updates.available ? '' : raw('hidden')}></span>` : ''}</a>`)}</div>`)}</nav>
       ${body}`;
   }
 
@@ -2718,6 +2718,7 @@
     const item = document.getElementById('menu-update');
     item.hidden = !on;
     if (on) item.textContent = `Update to v${u.latest.version}`;
+    for (const dot of document.querySelectorAll('.st-dot')) dot.hidden = !on;
   }
 
   // Just enough Markdown for release notes: headings, bullets, bold and code.
@@ -2736,83 +2737,245 @@
     return raw(out || '<p class="muted">No release notes.</p>');
   }
 
+  // Release notes written for the household: "New: …", "Improved: …" and "Fixed: …"
+  // lines, or bullets under "### New" (or Added), "### Improved" (or Changed) and "### Fixed".
+  const NOTE_KINDS = { new: 'new', added: 'new', improved: 'improved', changed: 'improved', fixed: 'fixed', fixes: 'fixed', security: 'fixed' };
+  function noteItems(text) {
+    const items = []; let section = null;
+    for (const line of String(text || '').split(/\r?\n/)) {
+      const head = /^#{1,6}\s+(.*)$/.exec(line);
+      if (head) { section = NOTE_KINDS[head[1].toLowerCase().replace(/[^a-z]/g, '')] || null; continue; }
+      const tagged = /^\s*(?:[-*]\s+)?(new|improved|fixed)\s*:\s*(.+)$/i.exec(line);
+      if (tagged) { items.push({ kind: tagged[1].toLowerCase(), text: tagged[2] }); continue; }
+      const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+      if (bullet && section) items.push({ kind: section, text: bullet[1] });
+    }
+    return items;
+  }
+  const noteInline = (t) => raw(html`${t}`.s.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>'));
+
+  // "Today, 7:42 pm", "Yesterday, …" or "Thu 1 Oct, …".
+  function updWhen(iso) {
+    const d = new Date(iso);
+    const day = localDate(d);
+    const today = localDate(new Date());
+    const label = day === today ? 'Today' : day === addDaysIso(today, -1) ? 'Yesterday' : fmtDate(day, day.slice(0, 4) !== today.slice(0, 4));
+    return `${label}, ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  }
+  const fileSize = (b) => (b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+  // The logo's ring, drawn in the current colour.
+  const ringSvg = (cls = '') => raw(`<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6.5" fill="none" stroke="currentColor" stroke-width="3.6" pathLength="100" stroke-dasharray="44 6 25 6 13 6" transform="rotate(-90 12 12)"/></svg>`);
+
   function settingsUpdates() {
     const u = state.updates;
     if (!u) return html`<div class="card"><p class="muted">Couldn't load update details.</p></div>`;
-    const label = { test: 'Test', beta: 'Beta' }[u.channel];
-    const when = (iso) => { const d = new Date(iso); return `${fmtDate(localDate(d), true)}, ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`; };
-    const l = u.latest;
+    const main = Boolean(state.me && state.me.main);
     return html`
-      <div class="card">
-        <div class="card-head"><div><h2>Updates</h2>
-          <p class="muted small" style="margin:0">Checks GitHub for new versions every few hours. ${trackText(u)}</p></div>
-          <button data-action="check-updates">Check now</button></div>
-        <div class="upd-status">
-          <div><div class="upd-lbl">This copy</div><div class="upd-val">v${u.current}${label ? html` <span class="build-tag" data-channel="${u.channel}">${label}</span>` : ''}</div></div>
-          <div><div class="upd-lbl">Latest on GitHub</div><div class="upd-val">${l ? `v${l.version}` : '—'}${l && l.prerelease ? html` <span class="build-tag" data-channel="beta">Beta</span>` : ''}</div></div>
-          <div><div class="upd-lbl">Last checked</div><div class="upd-val small">${u.checkedAt ? when(u.checkedAt) : 'Not yet'}</div></div>
+      ${updMainCard(u, main)}
+      <div class="upd-grid">
+        ${updNotesCard(u)}
+        <div class="upd-side">${updBackupsCard(main)}${updPrefsCard(u, main)}</div>
+      </div>`;
+  }
+
+  // The one card at the top, which changes with what's happening.
+  function updMainCard(u, main) {
+    const l = u.latest;
+    const i = state.updateInstall;
+    const failed = state.updateFailed;
+    const tag = { test: 'Test', beta: 'Beta' }[u.channel];
+    let s;
+    if (i) {
+      s = { mode: 'busy', eyebrow: "Updating · Don't close this tab", title: `Installing v${i.version}…`,
+        sub: i.slow ? 'This is taking longer than usual. The new version may still be downloading. If nothing changes, check both containers are running (sudo docker compose ps).'
+          : 'You can keep this tab open. It reloads by itself when the app is back.' };
+    } else if (failed) {
+      s = { mode: 'bad', eyebrow: 'Update failed', title: `Couldn't install v${failed.version}`, sub: html`Nothing was changed. Your data is safe.<br><span class="upd-err">${failed.error}</span>`,
+        primary: main && u.available && u.can_install ? ['install-update', 'Try again'] : null,
+        secondary: state.backups && state.backups.backups.length ? ['upd-to-backups', 'Restore backup'] : ['upd-dismiss-failed', 'Dismiss'] };
+    } else if (u.available) {
+      const behind = u.behind > 1 ? ` · ${u.behind} versions behind` : ' · 1 version behind';
+      s = { mode: 'new', eyebrow: `Update available${behind}`, title: `Simple Budget v${l.version} is ready`, secondary: ['check-updates', 'Check again'] };
+      if (u.can_install && u.building) {
+        s.title = `Simple Budget v${l.version} is on its way`;
+        s.sub = "It's still being built on GitHub, which takes a few minutes after it's published. This page checks again by itself.";
+        updWatchBuild();
+      } else if (u.can_install) {
+        s.sub = main ? "About 1–2 minutes. Your data is backed up first, and the page reloads by itself when it's done."
+          : 'Ask whoever has the main login to install it. It takes about 1–2 minutes.';
+        if (main) s.primary = ['install-update', 'Update now'];
+      } else if (u.track === 'pinned') {
+        s.sub = html`This copy is kept on v${u.image_tag} by <code>IMAGE_TAG</code> in .env. Change it to <code>latest</code> and run <code>sudo docker compose up -d</code> to follow new releases.`;
+      } else {
+        s.sub = "This copy is updated from the terminal. In its folder on the server, run the two commands below. Your data stays as it is.";
+        s.primary = ['copy-update-cmd', 'Copy commands'];
+        s.extra = html`<pre class="upd-cmd">git pull
+sudo docker compose up -d --build</pre>`;
+      }
+    } else if (u.just_updated) {
+      s = { mode: 'done', eyebrow: 'Updated', title: `Welcome to v${u.current}`,
+        sub: u.just_updated.backup ? 'Everything went smoothly. Your backup is listed under Backups if you ever need it.' : 'Everything went smoothly.',
+        primary: ['upd-see-new', "See what's new"], secondary: ['upd-dismiss', 'Dismiss'] };
+    } else if (u.error) {
+      s = { mode: 'warn', eyebrow: "Couldn't check", title: "Couldn't reach GitHub", sub: u.error, secondary: ['check-updates', 'Try again'] };
+    } else if (!u.checkedAt) {
+      s = { mode: 'ok', eyebrow: 'Not checked yet', title: `You're on v${u.current}`, sub: 'Automatic checks are off. Check now and then for new versions.', secondary: ['check-updates', 'Check now'] };
+    } else if (!l) {
+      s = { mode: 'ok', eyebrow: 'Up to date', title: 'No releases on GitHub yet', sub: `Simple Budget v${u.current}.`, secondary: ['check-updates', 'Check now'] };
+    } else {
+      const installed = u.installed_at ? ` · installed ${fmtDate(localDate(new Date(u.installed_at)), true)}` : '';
+      s = { mode: 'ok', eyebrow: 'Up to date', title: "You're on the latest version",
+        sub: `Simple Budget v${u.current}${installed}. ${u.auto_check ? "We'll let you know when there's something new." : 'Automatic checks are off, so check now and then.'}`,
+        secondary: ['check-updates', 'Check now'] };
+    }
+    const icon = s.mode === 'done' ? html`<span class="upd-tick">✓</span>` : s.mode === 'bad' || s.mode === 'warn' ? html`<span class="upd-tick">!</span>` : ringSvg(s.mode === 'busy' ? 'spin' : '');
+    const channel = u.track === 'pinned' ? `Pinned to v${u.image_tag}` : u.track === 'beta' ? 'Beta' : 'Stable';
+    return html`<section class="card upd-main" data-mode="${s.mode}" ${i ? raw('aria-live="polite"') : ''}>
+      ${ringSvg('upd-bg-ring')}
+      <div class="upd-row">
+        <div class="upd-tile">${icon}</div>
+        <div class="upd-text">
+          <div class="upd-eyebrow">${s.eyebrow}</div>
+          <h2 class="upd-title">${s.title}</h2>
+          <p class="upd-sub">${s.sub}</p>
         </div>
-        ${u.error ? html`<p class="upd-msg bad">${u.error}</p>`
-          : u.available ? html`<p class="upd-msg new">Version ${l.version} is available.</p>`
-          : l ? html`<p class="upd-msg ok">✓ You're on the latest version.</p>` : html`<p class="upd-msg">No releases on GitHub yet.</p>`}
+        ${s.primary || s.secondary ? html`<div class="upd-actions">
+          ${s.primary ? html`<button class="primary upd-primary" data-action="${s.primary[0]}">${s.primary[1]}</button>` : ''}
+          ${s.secondary ? html`<button class="linkish" data-action="${s.secondary[0]}">${s.secondary[1]}</button>` : ''}
+        </div>` : ''}
       </div>
-      ${l ? html`<div class="card">
-        <div class="card-head"><div><h2>${l.name}</h2>
-          <p class="muted small" style="margin:0">${l.published_at ? `Released ${fmtDate(localDate(new Date(l.published_at)), true)}` : ''}</p></div>
-          <a class="btn" href="${l.url}" target="_blank" rel="noopener">View on GitHub</a></div>
-        <div class="upd-notes">${releaseNotes(l.notes)}</div>
-      </div>` : ''}
-      ${state.updateInstall ? installingCard(state.updateInstall)
-        : u.available && u.can_install ? html`<div class="card upd-install">
-        <div class="card-head"><div><h2>Update to v${l.version}</h2>
-          <p class="muted small" style="margin:0">Installs the new version and restarts the app. A copy of your data is saved on the server first.
-            It usually takes a minute or two; this page reloads by itself when it's done.</p></div>
-          ${state.me && state.me.main ? html`<button class="primary" data-action="install-update">Update now</button>` : ''}</div>
-        ${state.me && state.me.main ? '' : html`<p class="muted small">Only the main login can install updates.</p>`}
-      </div>`
-        : u.available && u.track === 'pinned' ? html`<div class="card">
-        <h2>This copy stays on v${u.image_tag}</h2>
-        <p class="muted small"><code>IMAGE_TAG=${u.image_tag}</code> in this copy's <code>.env</code> keeps it on that version, so Update now is off.
-          To follow new releases again, change it to <code>latest</code> (or <code>beta</code> for pre-releases too), then run <code>sudo docker compose up -d</code> in its folder.</p>
-      </div>`
-        : u.available ? html`<div class="card">
-        <h2>How to update</h2>
-        <p class="muted small">Your data stays as it is. Download a backup first under General if you'd like to be extra safe. Then, in this copy's folder on the server:</p>
-        <pre class="upd-cmd">git pull
-sudo docker compose up -d --build</pre>
-        <div class="row"><button data-action="copy-update-cmd">Copy commands</button></div>
-      </div>` : ''}`;
+      ${s.extra || ''}
+      ${i ? updSteps(i) : ''}
+      <div class="upd-foot">
+        <span>This copy <b class="mono">v${u.current}</b>${tag ? html` <span class="build-tag" data-channel="${u.channel}">${tag}</span>` : ''}</span>
+        <span>Latest <b class="mono">${l ? `v${l.version}` : '—'}</b></span>
+        <span>Channel <b>${channel}</b> · <button class="linkish" data-action="upd-to-prefs">change</button></span>
+        <span>Checked <b>${u.checkedAt ? updWhen(u.checkedAt) : 'not yet'}</b> · ${u.auto_check ? 'every 6 hours' : 'automatic checks off'}</span>
+      </div>
+    </section>`;
   }
 
-  // Which releases this copy is offered, which (with the updater) follows IMAGE_TAG in .env.
-  function trackText(u) {
-    if (u.track === 'pinned') return html`This copy is kept on v${u.image_tag} by <code>IMAGE_TAG</code> in .env.`;
-    const what = u.track === 'beta' ? 'Offers full releases and betas' : 'Offers full releases only';
-    return u.image_tag ? html`${what}, set by <code>IMAGE_TAG=${u.image_tag}</code> in .env.` : html`${what}.`;
+  // While a new version's image is still being built, look again every minute.
+  function updWatchBuild() {
+    if (state.buildTimer) return;
+    state.buildTimer = setTimeout(async () => {
+      state.buildTimer = null;
+      if (!state.updates || !state.updates.building || state.updateInstall) return;
+      await loadUpdates(true);
+      if (location.hash.startsWith('#/settings/updates')) render();
+    }, 60 * 1000);
   }
 
-  function installingCard(i) {
-    return html`<div class="card upd-install">
-      <h2>${i.slow ? 'Still updating…' : html`<span class="spinner" aria-hidden="true"></span> Updating to v${i.version}…`}</h2>
-      ${i.backup ? html`<p class="small">Your data was saved first as <code>backups/${i.backup}</code> in the app's data folder.</p>` : ''}
-      ${i.slow ? html`<p class="small">This is taking longer than usual. The new version may still be downloading.
-          If nothing changes, check on the server that both containers are running (<code>sudo docker compose ps</code>),
-          or update from the terminal with <code>git pull</code> and <code>sudo docker compose up -d --build</code>.</p>`
-        : html`<p class="muted small">Downloading the new version and restarting the app. This page reloads by itself when it's back.</p>`}
-    </div>`;
+  // The four steps of an update. The server says when the backup is done; the rest
+  // is seen from here: it stops answering while it restarts, then answers on the new version.
+  function updSteps(i) {
+    const steps = [
+      ['Backing up', i.backup ? html`<span class="mono">${i.backup}</span>` : 'Saving a copy of your data'],
+      ['Downloading', `v${i.version} from GitHub`],
+      ['Restarting', 'Usually 20–40 seconds'],
+      ['Checking', 'Making sure your data opens'],
+    ];
+    return html`<ol class="upd-steps">${steps.map(([label, sub], n) => {
+      const st = n + 1 < i.step ? 'done' : n + 1 === i.step ? 'active' : 'wait';
+      return html`<li class="${st}"><span class="upd-bar"></span>
+        <span class="upd-step-lbl">${st === 'done' ? '✓' : st === 'active' ? '●' : '○'} ${label}</span>
+        <span class="upd-step-sub">${sub}</span></li>`;
+    })}</ol>`;
   }
 
-  // After "Update now": wait for the app to come back on the new version, then reload.
+  function updNotesCard(u) {
+    const all = u.releases || [];
+    const latest = all[0];
+    const mine = all.find((r) => r.version === u.current);
+    const show = u.available ? [latest, mine].filter(Boolean) : all.slice(0, 2);
+    const repo = latest ? latest.url.replace(/\/releases\/.*$/, '/releases') : null;
+    const kindLabel = { new: 'New', improved: 'Improved', fixed: 'Fixed' };
+    return html`<section class="card upd-notes-card" id="upd-notes">
+      <div class="upd-card-head"><div><h3>What's new</h3>
+        <p class="upd-card-sub">${u.available ? "What you'll get, plus what's in your current version" : 'Recent releases'}</p></div>
+        ${repo ? html`<a href="${repo}" target="_blank" rel="noopener">Full notes on GitHub ↗</a>` : ''}</div>
+      ${show.length ? show.map((r) => {
+        const items = noteItems(r.notes);
+        const badge = r.version === u.current ? html`<span class="upd-badge">Installed</span>`
+          : u.available && r === latest ? html`<span class="upd-badge new">Not installed</span>` : '';
+        return html`<div class="upd-release ${r.version === u.current ? 'mine' : ''}">
+          <div class="upd-release-head"><a class="mono" href="${r.url}" target="_blank" rel="noopener">v${r.version}</a>
+            ${r.published_at ? html`<span class="upd-date">${fmtDate(localDate(new Date(r.published_at)), true)}</span>` : ''}
+            ${r.prerelease ? html`<span class="build-tag" data-channel="beta">Beta</span>` : ''}${badge}</div>
+          ${items.length ? html`<ul class="upd-items">${items.map((it) => html`<li><span class="upd-kind ${it.kind}">${kindLabel[it.kind]}</span><span>${noteInline(it.text)}</span></li>`)}</ul>`
+            : html`<div class="upd-notes">${releaseNotes(r.notes)}</div>`}
+        </div>`;
+      }) : html`<p class="muted small">${u.checkedAt ? 'No releases on GitHub yet.' : 'Check for updates to see the latest release notes.'}</p>`}
+    </section>`;
+  }
+
+  function updBackupsCard(main) {
+    const b = state.backups;
+    const label = (x) => (x.kind === 'manual' ? 'Manual backup' : x.kind === 'restore' ? 'Before a restore' : `Before v${x.version}`);
+    return html`<section class="card upd-backups" id="upd-backups">
+      <div class="upd-card-head"><div><h3>Backups</h3>
+        <p class="upd-card-sub">Made automatically before every update. Kept for the last 5.</p></div>
+        ${b && b.available ? html`<button class="linkish" data-action="backup-now">Back up now</button>` : ''}</div>
+      ${!b ? html`<p class="muted small">Couldn't load the backups.</p>`
+        : !b.available ? html`<p class="muted small">This copy doesn't keep backups on the server. Download one under <a href="#/settings/cycle">General</a> instead.</p>`
+        : b.backups.length ? html`<ul class="upd-backup-list">${b.backups.map((x) => html`<li>
+            <div><div class="upd-backup-name">${label(x)}</div><div class="upd-card-sub">${updWhen(x.created_at)} · ${fileSize(x.size)}</div></div>
+            ${main ? html`<button class="linkish" data-action="backup-restore" data-name="${x.name}" data-when="${fmtDate(localDate(new Date(x.created_at)), true)} at ${new Date(x.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}">Restore</button>` : ''}
+          </li>`)}</ul>`
+        : html`<p class="muted small upd-empty">No backups yet. One is made before every update.</p>`}
+      ${b && b.available ? html`<div class="upd-folder mono">${b.folder}</div>` : ''}
+    </section>`;
+  }
+
+  function updPrefsCard(u, main) {
+    const betaNote = u.track === 'pinned' ? `This copy is pinned to v${u.image_tag}`
+      : u.beta_locked ? `Set by IMAGE_TAG in .env (${u.image_tag})` : 'Get new features early. May be less stable';
+    const row = (key, on, title, sub, disabled) => html`<button type="button" class="upd-pref" role="switch" aria-checked="${on ? 'true' : 'false'}"
+        data-action="upd-pref" data-key="${key}" ${disabled ? raw('disabled') : ''}>
+        <span><span class="upd-pref-title">${title}</span><span class="upd-card-sub">${sub}</span></span>
+        <span class="upd-switch" aria-hidden="true"></span></button>`;
+    return html`<section class="card upd-prefs" id="upd-prefs">
+      <h3>Preferences</h3>
+      ${row('auto_check', u.auto_check, 'Check for updates automatically', 'Every 6 hours, from GitHub', !main)}
+      ${row('beta', u.beta, 'Include beta versions', betaNote, !main || u.beta_locked)}
+      ${main ? '' : html`<p class="upd-card-sub" style="margin:8px 0 0">Only the main login can change these.</p>`}
+    </section>`;
+  }
+
+  // After "Update now": watch the app go down and come back on the new version, then reload.
   async function waitForUpdate() {
     const i = state.updateInstall;
-    const deadline = Date.now() + 5 * 60 * 1000;
+    const started = Date.now();
+    const set = (changes) => { Object.assign(i, changes); if (state.updateInstall === i) render(); };
     while (state.updateInstall === i) {
-      await new Promise((r) => { setTimeout(r, 3000); });
+      await new Promise((r) => { setTimeout(r, 2000); });
+      let v = null;
       try {
         const res = await fetch('api/version', { cache: 'no-store' });
-        if (res.ok && (await res.json()).version === i.version) { location.reload(); return; }
+        if (res.ok) v = (await res.json()).version;
       } catch { /* restarting */ }
-      if (!i.slow && Date.now() > deadline) { i.slow = true; render(); }
+      // Any change of version counts: a release built from a branch can report a slightly different one.
+      if (v && v !== i.from) {
+        set({ step: 4, version: v });
+        // Make sure the data opens on the new version before showing it.
+        try { await api('GET', '/updates'); } catch { /* the reload shows any problem */ }
+        location.reload();
+        return;
+      }
+      if (v === null && i.step < 3) set({ step: 3 });
+      else if (v && i.step === 3) {
+        // It came back, but on the old version.
+        state.updateInstall = null;
+        state.updateFailed = { version: i.version, error: `The app restarted on v${v}. The new version may not have downloaded. Check the updater with sudo docker compose logs updater.` };
+        render();
+        return;
+      } else if (i.step === 2 && Date.now() - started > 4 * 60 * 1000) {
+        // The app never went down: the updater didn't find anything to install.
+        state.updateInstall = null;
+        state.updateFailed = { version: i.version, error: "The updater didn't restart the app, so it may not have found the new version yet. Try again in a minute. If it happens again, check the updater with sudo docker compose logs updater." };
+        render();
+        return;
+      } else if (!i.slow && Date.now() - started > 5 * 60 * 1000) set({ slow: true });
     }
   }
 
@@ -3253,20 +3416,65 @@ sudo docker compose up -d --build</pre>
     },
     'menu-theme': () => { closeMenu(); location.hash = '#/settings/appearance'; },
     'menu-settings': () => { closeMenu(); location.hash = '#/settings'; },
-    logout: async () => { closeMenu(); await api('POST', '/logout'); state.data = null; state.advanced = null; state.advancedUnlocked = false; state.me = null; state.logins = null; state.themeDraft = null; window.applyAccountColour(null); location.hash = '#/overview'; showLogin(); },
+    logout: async () => { closeMenu(); await api('POST', '/logout'); state.data = null; state.advanced = null; state.backups = null; state.advancedUnlocked = false; state.me = null; state.logins = null; state.themeDraft = null; window.applyAccountColour(null); location.hash = '#/overview'; showLogin(); },
     'menu-security': () => { closeMenu(); location.hash = '#/settings/security'; },
     'menu-updates': () => { closeMenu(); location.hash = '#/settings/updates'; },
     'adv-unlock': (el) => { state.advancedUnlocked = el.checked; render(); },
-    'install-update': async (el) => {
+    'install-update': async () => {
       const v = state.updates.latest.version;
-      if (!confirm(`Update to version ${v} now? The app restarts, so anyone using it will see it reload.`)) return;
-      el.disabled = true; el.textContent = 'Starting…';
+      if (!state.updateFailed && !confirm(`Update to version ${v} now? The app restarts, so anyone using it will see it reload.`)) return;
+      state.updateFailed = null;
+      const i = { version: v, from: state.updates.current, step: 1 };
+      state.updateInstall = i;
+      await render();
       try {
         const r = await api('POST', '/updates/install');
-        state.updateInstall = { version: r.version, backup: r.backup };
-      } catch (err) { el.disabled = false; el.textContent = 'Update now'; throw err; }
+        Object.assign(i, { version: r.version, backup: r.backup, step: 2 });
+      } catch (err) {
+        state.updateInstall = null;
+        state.updateFailed = { version: v, error: err.message };
+        await render();
+        return;
+      }
       await render();
       waitForUpdate();
+    },
+    'upd-dismiss': async () => { state.updates = await api('POST', '/updates/dismiss'); render(); },
+    'upd-dismiss-failed': () => { state.updateFailed = null; render(); },
+    // The notes are often already on screen, so the new version's are lit up as well as scrolled to.
+    'upd-see-new': () => {
+      const el = document.querySelector('.upd-release.mine') || document.getElementById('upd-notes');
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.remove('flash');
+      void el.offsetWidth; // restart the highlight if pressed again
+      el.classList.add('flash');
+    },
+    'upd-to-prefs': () => document.getElementById('upd-prefs')?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+    'upd-to-backups': () => document.getElementById('upd-backups')?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+    'upd-pref': async (el) => {
+      const key = el.dataset.key;
+      el.disabled = true;
+      try {
+        state.updates = await api('PUT', '/updates/prefs', { [key]: el.getAttribute('aria-checked') !== 'true' });
+      } finally { el.disabled = false; }
+      showUpdateBadge();
+      render();
+    },
+    'backup-now': async (el) => {
+      el.disabled = true; el.textContent = 'Backing up…';
+      try { state.backups = await api('POST', '/backups'); } finally { el.disabled = false; el.textContent = 'Back up now'; }
+      render();
+      toast('Backup made');
+    },
+    'backup-restore': async (el) => {
+      if (!confirm(`Restore your data to how it was on ${el.dataset.when}? Changes since then will be lost. Your current data is backed up first.\n\nLogins and passwords stay as they are now.`)) return;
+      el.disabled = true; el.textContent = 'Restoring…';
+      try { state.backups = await api('POST', '/backups/restore', { name: el.dataset.name }); } catch (err) { el.disabled = false; el.textContent = 'Restore'; throw err; }
+      state.updateFailed = null;
+      await reload();
+      render();
+      toast('Backup restored');
     },
     'check-updates': async (el) => {
       el.disabled = true; el.textContent = 'Checking…';
@@ -3512,6 +3720,7 @@ sudo docker compose up -d --build</pre>
       else if (page === 'overview' && sub === 'analytics') out = await renderAnalytics();
       else if (page === 'settings') {
         if (sub === 'updates' && !state.updates) await loadUpdates();
+        if (sub === 'updates' && !state.backups) state.backups = await api('GET', '/backups').catch(() => null);
         if (sub === 'advanced' && !state.advanced) state.advanced = await api('GET', '/advanced');
         if ((sub === 'security' || sub === 'logins') && !state.logins) state.logins = await api('GET', '/logins');
         out = renderSettings(sub);
@@ -3521,9 +3730,6 @@ sudo docker compose up -d --build</pre>
         $app.innerHTML = out.s;
         makeKeyboardReachable($app);
         scrollBillsToToday();
-        // On a narrow screen, keep the open settings tab in view in its sideways-scrolling row.
-        const sub = $app.querySelector('.subtabs a.active');
-        if (sub) { const row = sub.closest('.subtabs'); const r = row.getBoundingClientRect(); const a = sub.getBoundingClientRect(); row.scrollLeft += a.left - r.left - (r.width - a.width) / 2; }
         if ($app.querySelector('#calc-form')) runCalc();
         if (state.focusTab) { state.focusTab = false; $app.querySelector('[role=tab][aria-selected=true]')?.focus(); }
       }

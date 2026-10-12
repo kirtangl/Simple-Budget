@@ -8,7 +8,10 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY src ./src
 COPY public ./public
 
-ENV NODE_ENV=production \
+# Set by the release workflow to the release's version, e.g. 0.8.0-beta.1.
+ARG APP_VERSION=
+ENV APP_VERSION=$APP_VERSION \
+    NODE_ENV=production \
     PORT=3000 \
     DB_FILE=/app/data/budget.db \
     NODE_OPTIONS=--disable-warning=ExperimentalWarning

@@ -42,13 +42,15 @@ function compareVersions(a, b) {
   return 0;
 }
 
+// `prefs()` gives { autoCheck, beta }, the household's choices in Settings →
+// Updates (beta is null when not chosen). `info()` adds to what the page is sent.
 // `settings()` gives { channel, repo, token }, read on every check so they can
 // change while the app runs (Settings → Advanced). Fixed values work too.
 // `updater()` gives { url, token, imageTag } for the updater container
 // (Watchtower) that installs new versions; with no url, updates are installed
 // by hand. imageTag is the IMAGE_TAG the copy runs, which decides what the
 // updater can install, so it also decides which releases are offered.
-function createUpdates({ version, channel, repo, token, settings, updater = () => ({}), fetchImpl = globalThis.fetch }) {
+function createUpdates({ version, channel, repo, token, settings, updater = () => ({}), prefs = () => ({}), info = () => ({}), fetchImpl = globalThis.fetch }) {
   const current = settings || (() => ({ channel, repo, token }));
   let installing = null; // { version, started_at } once an install has been asked for
 
@@ -61,11 +63,37 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
       if (tag === 'beta') return 'beta';
       return tag === 'latest' ? 'releases' : 'pinned';
     }
-    // Updated by hand, so any release can be installed: the build tag decides.
+    // Updated by hand, so any release can be installed: "Include beta versions"
+    // decides, or the build tag when it hasn't been chosen.
+    const { beta } = prefs();
+    if (beta === true || beta === false) return beta ? 'beta' : 'releases';
     const { channel: c } = current();
     return c === 'beta' || c === 'test' ? 'beta' : 'releases';
   }
-  let state = { checkedAt: null, latest: null, error: null };
+  const EMPTY = { checkedAt: null, latest: null, releases: [], error: null, imageReady: null };
+
+  // Has the release's image been published yet? It's built a minute or two after
+  // the release, and until then the updater finds nothing new and does nothing.
+  // true or false, or null when the registry can't be asked (then don't hold anything up).
+  async function imageReady(repo, ver) {
+    const image = String(repo).toLowerCase();
+    try {
+      const t = await fetchImpl(`https://ghcr.io/token?scope=repository:${image}:pull`, { signal: AbortSignal.timeout(10_000) });
+      if (!t.ok) return null;
+      const { token: pull } = await t.json();
+      const res = await fetchImpl(`https://ghcr.io/v2/${image}/manifests/${encodeURIComponent(ver)}`, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(10_000),
+        headers: {
+          Accept: 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json',
+          ...(pull ? { Authorization: `Bearer ${pull}` } : {}),
+        },
+      });
+      if (res.status === 404) return false;
+      return res.ok ? true : null;
+    } catch { return null; }
+  }
+  let state = EMPTY;
   let running = null;
 
   async function check() {
@@ -90,16 +118,26 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
         const wantPre = track() === 'beta';
         const usable = releases.filter((r) => !r.draft && (wantPre || !r.prerelease) && parseVersion(r.tag_name));
         usable.sort((a, b) => compareVersions(b.tag_name, a.tag_name));
-        const top = usable[0];
+        const tidy = (r) => ({
+          version: r.tag_name.replace(/^v/, ''), name: r.name || r.tag_name, notes: r.body || '',
+          url: /^https:\/\/github\.com\//.test(r.html_url || '') ? r.html_url : `https://github.com/${repo}/releases`,
+          published_at: r.published_at, prerelease: Boolean(r.prerelease),
+        });
+        const list = usable.slice(0, 10).map(tidy);
+        // The installed version's notes too, even if it's a beta no longer offered.
+        const mine = releases.find((r) => !r.draft && parseVersion(r.tag_name) && compareVersions(r.tag_name, version) === 0);
+        if (mine && !list.some((r) => r.version === tidy(mine).version)) list.push(tidy(mine));
         state = {
           checkedAt: new Date().toISOString(),
           error: null,
-          latest: top ? {
-            version: top.tag_name.replace(/^v/, ''), name: top.name || top.tag_name, notes: top.body || '',
-            url: /^https:\/\/github\.com\//.test(top.html_url || '') ? top.html_url : `https://github.com/${repo}/releases`,
-            published_at: top.published_at, prerelease: Boolean(top.prerelease),
-          } : null,
+          latest: list[0] || null,
+          releases: list,
+          behind: usable.filter((r) => compareVersions(r.tag_name, version) > 0).length,
+          imageReady: null,
         };
+        if (updater().url && state.latest && compareVersions(state.latest.version, version) > 0) {
+          state.imageReady = await imageReady(repo, state.latest.version);
+        }
       } catch (err) {
         const timedOut = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
         state = { ...state, checkedAt: new Date().toISOString(), error: timedOut ? 'GitHub took too long to answer. Try again later.' : (err.message || 'Could not reach GitHub.') };
@@ -112,13 +150,22 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
   }
 
   const view = () => ({
+    ...info(),
     current: version,
     channel: current().channel,
     checkedAt: state.checkedAt,
     error: state.error,
     latest: state.latest,
+    releases: state.releases,
+    behind: state.behind || 0,
+    auto_check: prefs().autoCheck !== false,
+    // With the updater, IMAGE_TAG decides (it's what gets pulled), so the switch can't.
+    beta: track() === 'beta',
+    beta_locked: Boolean(updater().url),
     available: Boolean(state.latest && compareVersions(state.latest.version, version) > 0),
     can_install: Boolean(updater().url) && track() !== 'pinned',
+    // Published on GitHub, but its image is still being built.
+    building: state.imageReady === false,
     track: track(),
     image_tag: updater().url ? String(updater().imageTag || 'latest') : null,
     installing,
@@ -132,6 +179,11 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
     if (!url) throw new UpdateError(400, "This copy can't update itself. Update it from the terminal instead.");
     if (track() === 'pinned') throw new UpdateError(400, `This copy is kept on ${updater().imageTag} by IMAGE_TAG in .env. Change it to latest (or beta) to update.`);
     if (!view().available) throw new UpdateError(400, "You're already on the latest version.");
+    if (state.imageReady === false) {
+      await check();
+      if (state.imageReady === false) throw new UpdateError(409, `v${state.latest.version} is still being built on GitHub. Try again in a few minutes.`);
+      if (!view().available) throw new UpdateError(400, "You're already on the latest version.");
+    }
     const target = state.latest.version;
     const saved = backup ? backup(target) : null;
     let res;
@@ -156,14 +208,15 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
     view,
     install,
     // Forget the last result, e.g. after the repository or token changes.
-    reset() { state = { checkedAt: null, latest: null, error: null }; },
-    // Check soon after starting, then every few hours.
+    reset() { state = EMPTY; },
+    // Check soon after starting, then every few hours, unless that's turned off.
     start() {
-      setTimeout(check, 5000).unref();
-      setInterval(check, CHECK_EVERY_MS).unref();
+      const auto = () => { if (prefs().autoCheck !== false) check(); };
+      setTimeout(auto, 5000).unref();
+      setInterval(auto, CHECK_EVERY_MS).unref();
     },
     async get(req, res) {
-      if (!state.checkedAt) await check();
+      if (!state.checkedAt && prefs().autoCheck !== false) await check();
       res.json(view());
     },
     async checkNow(req, res) {

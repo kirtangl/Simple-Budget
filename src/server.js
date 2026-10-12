@@ -7,9 +7,15 @@ const express = require('express');
 const { openDatabase, getSetting, setSetting } = require('./db');
 const { createAuth } = require('./auth');
 const { createApi } = require('./api');
-const { createUpdates, UpdateError } = require('./updates');
+const { createUpdates, UpdateError, compareVersions } = require('./updates');
+const { createBackups, BackupError } = require('./backups');
 const { createConfig, ConfigError, splitHosts } = require('./config');
-const { version: VERSION } = require('../package.json');
+const { version: PACKAGE_VERSION } = require('../package.json');
+const { parseVersion } = require('./updates');
+
+// A release image is stamped with its release's version (APP_VERSION, set when
+// it's built), so a pre-release like 0.8.0-beta.1 knows it's that, not 0.8.0.
+const VERSION = parseVersion(process.env.APP_VERSION) ? String(process.env.APP_VERSION).trim().replace(/^v/, '') : PACKAGE_VERSION;
 
 // Which build this is, shown in the app: "test" (e.g. a test copy), "beta"
 // (a pre-release version like 0.6.0-beta.1), or "" for a release.
@@ -47,17 +53,18 @@ const SECURITY_HEADERS = {
   'Referrer-Policy': 'same-origin',
 };
 
-// A copy of the database in <data>/backups, made before an update. Keeps the newest five.
-function backupDatabase(db, dataDir, label) {
-  const dir = path.join(dataDir, 'backups');
-  fs.mkdirSync(dir, { recursive: true });
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace('Z', '');
-  const name = `budget-before-v${String(label).replace(/[^\w.-]/g, '')}-${stamp}.db`;
-  db.exec(`VACUUM INTO '${path.join(dir, name).replace(/'/g, "''")}'`);
-  const old = fs.readdirSync(dir).filter((f) => /^budget-before-.*\.db$/.test(f))
-    .map((f) => ({ f, t: fs.statSync(path.join(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t).slice(5);
-  for (const { f } of old) fs.rmSync(path.join(dir, f), { force: true });
-  return name;
+// Notes which version is running, and when it was installed. The first start on a
+// newer version shows "Welcome to v…" in Settings → Updates until it's dismissed.
+function recordVersion(db, backups) {
+  const was = getSetting(db, 'installed_version');
+  if (was === VERSION) return;
+  const now = new Date().toISOString();
+  let updated = Boolean(was) && compareVersions(VERSION, was) > 0;
+  // Before v0.8.0 the version wasn't kept: a backup made for this version in the last hour means it was just installed.
+  if (!was) updated = backups.list().some((b) => b.kind === 'update' && b.version === VERSION && Date.now() - Date.parse(b.created_at) < 60 * 60 * 1000);
+  setSetting(db, 'installed_version', VERSION);
+  setSetting(db, 'installed_at', now);
+  if (updated) setSetting(db, 'just_updated', JSON.stringify({ from: was || null, to: VERSION, at: now }));
 }
 
 function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
@@ -69,11 +76,25 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
   }
 
   const config = createConfig(db);
+  const backups = createBackups({ db, dataDir });
+  recordVersion(db, backups);
   const auth = createAuth({ db, secret, secureCookies: () => secureCookies || config.secureCookies() });
   const updates = createUpdates({
     version: VERSION, fetchImpl,
     settings: () => ({ channel: appChannel(config.channel()), repo: config.updateRepo(), token: config.githubToken() }),
     updater: () => ({ url: process.env.UPDATER_URL || '', token: process.env.UPDATER_TOKEN || '', imageTag: process.env.IMAGE_TAG || 'latest' }),
+    prefs: () => {
+      const beta = getSetting(db, 'updates_beta');
+      return { autoCheck: getSetting(db, 'updates_auto_check') !== '0', beta: beta === '1' ? true : beta === '0' ? false : null };
+    },
+    info: () => {
+      let just = null;
+      try { just = JSON.parse(getSetting(db, 'just_updated') || 'null'); } catch { /* ignore a bad value */ }
+      // Shown for a week at most, and only on the version it welcomes.
+      if (!just || just.to !== VERSION || !(Date.now() - Date.parse(just.at) < 7 * 24 * 60 * 60 * 1000)) just = null;
+      const backup = just && backups.list().find((b) => b.kind === 'update' && b.version === VERSION);
+      return { installed_at: getSetting(db, 'installed_at') || null, just_updated: just && { ...just, backup: backup ? backup.name : null } };
+    },
   });
   const app = express();
   app.disable('x-powered-by');
@@ -101,12 +122,61 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
   app.post('/api/updates/install', auth.require, async (req, res, next) => {
     if (req.login.id !== 0) return res.status(403).json({ error: 'Only the main login can install updates.' });
     try {
-      res.json(await updates.install({ backup: dataDir ? (v) => backupDatabase(db, dataDir, v) : null }));
+      res.json(await updates.install({ backup: dataDir ? (v) => backups.create('update', v) : null }));
     } catch (err) {
       if (err instanceof UpdateError) return res.status(err.status).json({ error: err.message });
       next(err);
     }
   });
+  app.post('/api/updates/dismiss', auth.require, (req, res) => {
+    db.prepare("DELETE FROM settings WHERE key = 'just_updated'").run();
+    res.json(updates.view());
+  });
+  // Settings → Updates → Preferences. Main login only, like installing.
+  app.put('/api/updates/prefs', auth.require, async (req, res) => {
+    if (req.login.id !== 0) return res.status(403).json({ error: 'Only the main login can change these.' });
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    if ('beta' in body) {
+      if (typeof body.beta !== 'boolean') return res.status(400).json({ error: 'beta should be true or false.' });
+      if (process.env.UPDATER_URL) return res.status(400).json({ error: 'This copy follows IMAGE_TAG in .env. Set it to beta (or latest) there.' });
+      setSetting(db, 'updates_beta', body.beta ? '1' : '0');
+      updates.reset();
+    }
+    if ('auto_check' in body) {
+      if (typeof body.auto_check !== 'boolean') return res.status(400).json({ error: 'auto_check should be true or false.' });
+      setSetting(db, 'updates_auto_check', body.auto_check ? '1' : '0');
+    }
+    if (!updates.view().checkedAt && updates.view().auto_check) await updates.check();
+    res.json(updates.view());
+  });
+
+  // Backups of the whole database, kept on the server. Anyone can make one; only the main login can restore.
+  const backupError = (fn) => async (req, res, next) => {
+    try { await fn(req, res); } catch (err) {
+      if (err instanceof BackupError) return res.status(err.status).json({ error: err.message });
+      next(err);
+    }
+  };
+  // data/backups inside the app's folder (as in Docker), or the full path elsewhere.
+  const shortPath = (p) => {
+    const rel = path.relative(path.join(__dirname, '..'), p);
+    return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : p;
+  };
+  const backupsView = () => ({
+    available: Boolean(dataDir),
+    folder: dataDir ? `${shortPath(backups.dir)}/` : null,
+    backups: backups.list(),
+  });
+  app.get('/api/backups', auth.require, (req, res) => res.json(backupsView()));
+  app.post('/api/backups', auth.require, backupError((req, res) => {
+    const name = backups.create('manual');
+    res.json({ ...backupsView(), created: name });
+  }));
+  app.post('/api/backups/restore', auth.require, backupError((req, res) => {
+    if (req.login.id !== 0) return res.status(403).json({ error: 'Only the main login can restore a backup.' });
+    const r = backups.restore(req.body && req.body.name);
+    res.json({ ...backupsView(), ...r });
+  }));
   app.get('/api/me', auth.require, auth.me);
   app.put('/api/me/theme', auth.require, auth.saveTheme);
   app.get('/api/logins', auth.require, auth.listLogins);
