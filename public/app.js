@@ -2883,7 +2883,7 @@ sudo docker compose up -d --build</pre>`;
         const items = noteItems(r.notes);
         const badge = r.version === u.current ? html`<span class="upd-badge">Installed</span>`
           : u.available && r === latest ? html`<span class="upd-badge new">Not installed</span>` : '';
-        return html`<div class="upd-release">
+        return html`<div class="upd-release ${r.version === u.current ? 'mine' : ''}">
           <div class="upd-release-head"><a class="mono" href="${r.url}" target="_blank" rel="noopener">v${r.version}</a>
             ${r.published_at ? html`<span class="upd-date">${fmtDate(localDate(new Date(r.published_at)), true)}</span>` : ''}
             ${r.prerelease ? html`<span class="build-tag" data-channel="beta">Beta</span>` : ''}${badge}</div>
@@ -3420,7 +3420,15 @@ sudo docker compose up -d --build</pre>`;
     },
     'upd-dismiss': async () => { state.updates = await api('POST', '/updates/dismiss'); render(); },
     'upd-dismiss-failed': () => { state.updateFailed = null; render(); },
-    'upd-see-new': () => document.getElementById('upd-notes')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    // The notes are often already on screen, so the new version's are lit up as well as scrolled to.
+    'upd-see-new': () => {
+      const el = document.querySelector('.upd-release.mine') || document.getElementById('upd-notes');
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.remove('flash');
+      void el.offsetWidth; // restart the highlight if pressed again
+      el.classList.add('flash');
+    },
     'upd-to-prefs': () => document.getElementById('upd-prefs')?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
     'upd-to-backups': () => document.getElementById('upd-backups')?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
     'upd-pref': async (el) => {
