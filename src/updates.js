@@ -44,11 +44,27 @@ function compareVersions(a, b) {
 
 // `settings()` gives { channel, repo, token }, read on every check so they can
 // change while the app runs (Settings → Advanced). Fixed values work too.
-// `updater()` gives { url, token } for the updater container (Watchtower) that
-// installs new versions; with no url, updates are installed by hand.
+// `updater()` gives { url, token, imageTag } for the updater container
+// (Watchtower) that installs new versions; with no url, updates are installed
+// by hand. imageTag is the IMAGE_TAG the copy runs, which decides what the
+// updater can install, so it also decides which releases are offered.
 function createUpdates({ version, channel, repo, token, settings, updater = () => ({}), fetchImpl = globalThis.fetch }) {
   const current = settings || (() => ({ channel, repo, token }));
   let installing = null; // { version, started_at } once an install has been asked for
+
+  // Which releases this copy follows: "releases" (full releases), "beta" (pre-releases
+  // too), or "pinned" (IMAGE_TAG is a fixed version, so Update now can't move it).
+  function track() {
+    const { url, imageTag } = updater();
+    if (url) {
+      const tag = String(imageTag || 'latest').trim().toLowerCase();
+      if (tag === 'beta') return 'beta';
+      return tag === 'latest' ? 'releases' : 'pinned';
+    }
+    // Updated by hand, so any release can be installed: the build tag decides.
+    const { channel: c } = current();
+    return c === 'beta' || c === 'test' ? 'beta' : 'releases';
+  }
   let state = { checkedAt: null, latest: null, error: null };
   let running = null;
 
@@ -71,7 +87,7 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
         }
         if (!res.ok) throw new Error(`GitHub answered ${res.status}. Try again later.`);
         const releases = await res.json();
-        const wantPre = channel === 'beta' || channel === 'test';
+        const wantPre = track() === 'beta';
         const usable = releases.filter((r) => !r.draft && (wantPre || !r.prerelease) && parseVersion(r.tag_name));
         usable.sort((a, b) => compareVersions(b.tag_name, a.tag_name));
         const top = usable[0];
@@ -102,7 +118,9 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
     error: state.error,
     latest: state.latest,
     available: Boolean(state.latest && compareVersions(state.latest.version, version) > 0),
-    can_install: Boolean(updater().url),
+    can_install: Boolean(updater().url) && track() !== 'pinned',
+    track: track(),
+    image_tag: updater().url ? String(updater().imageTag || 'latest') : null,
     installing,
   });
 
@@ -112,6 +130,7 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
   async function install({ backup } = {}) {
     const { url, token: updaterToken } = updater();
     if (!url) throw new UpdateError(400, "This copy can't update itself. Update it from the terminal instead.");
+    if (track() === 'pinned') throw new UpdateError(400, `This copy is kept on ${updater().imageTag} by IMAGE_TAG in .env. Change it to latest (or beta) to update.`);
     if (!view().available) throw new UpdateError(400, "You're already on the latest version.");
     const target = state.latest.version;
     const saved = backup ? backup(target) : null;

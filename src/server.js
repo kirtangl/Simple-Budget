@@ -73,7 +73,7 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
   const updates = createUpdates({
     version: VERSION, fetchImpl,
     settings: () => ({ channel: appChannel(config.channel()), repo: config.updateRepo(), token: config.githubToken() }),
-    updater: () => ({ url: process.env.UPDATER_URL || '', token: process.env.UPDATER_TOKEN || '' }),
+    updater: () => ({ url: process.env.UPDATER_URL || '', token: process.env.UPDATER_TOKEN || '', imageTag: process.env.IMAGE_TAG || 'latest' }),
   });
   const app = express();
   app.disable('x-powered-by');
@@ -125,6 +125,7 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
     github_token_set: Boolean(config.githubToken()),
     locked: config.locked(),
     can_edit: req.login.id === 0,
+    image_tag: process.env.UPDATER_URL ? (process.env.IMAGE_TAG || 'latest') : null,
     host: String(req.headers.host || ''), host_is_home: homeHost(req.headers.host), https: isHttps(req),
     version: VERSION, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, database: process.env.DB_FILE ? 'custom' : 'data/budget.db',
   });

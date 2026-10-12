@@ -2745,7 +2745,7 @@
     return html`
       <div class="card">
         <div class="card-head"><div><h2>Updates</h2>
-          <p class="muted small" style="margin:0">Checks GitHub for new versions every few hours${label ? ', including beta releases on this copy' : ''}.</p></div>
+          <p class="muted small" style="margin:0">Checks GitHub for new versions every few hours. ${trackText(u)}</p></div>
           <button data-action="check-updates">Check now</button></div>
         <div class="upd-status">
           <div><div class="upd-lbl">This copy</div><div class="upd-val">v${u.current}${label ? html` <span class="build-tag" data-channel="${u.channel}">${label}</span>` : ''}</div></div>
@@ -2770,6 +2770,11 @@
           ${state.me && state.me.main ? html`<button class="primary" data-action="install-update">Update now</button>` : ''}</div>
         ${state.me && state.me.main ? '' : html`<p class="muted small">Only the main login can install updates.</p>`}
       </div>`
+        : u.available && u.track === 'pinned' ? html`<div class="card">
+        <h2>This copy stays on v${u.image_tag}</h2>
+        <p class="muted small"><code>IMAGE_TAG=${u.image_tag}</code> in this copy's <code>.env</code> keeps it on that version, so Update now is off.
+          To follow new releases again, change it to <code>latest</code> (or <code>beta</code> for pre-releases too), then run <code>sudo docker compose up -d</code> in its folder.</p>
+      </div>`
         : u.available ? html`<div class="card">
         <h2>How to update</h2>
         <p class="muted small">Your data stays as it is. Download a backup first under General if you'd like to be extra safe. Then, in this copy's folder on the server:</p>
@@ -2777,6 +2782,13 @@
 sudo docker compose up -d --build</pre>
         <div class="row"><button data-action="copy-update-cmd">Copy commands</button></div>
       </div>` : ''}`;
+  }
+
+  // Which releases this copy is offered, which (with the updater) follows IMAGE_TAG in .env.
+  function trackText(u) {
+    if (u.track === 'pinned') return html`This copy is kept on v${u.image_tag} by <code>IMAGE_TAG</code> in .env.`;
+    const what = u.track === 'beta' ? 'Offers full releases and betas' : 'Offers full releases only';
+    return u.image_tag ? html`${what}, set by <code>IMAGE_TAG=${u.image_tag}</code> in .env.` : html`${what}.`;
   }
 
   function installingCard(i) {
@@ -2865,7 +2877,9 @@ sudo docker compose up -d --build</pre>
         <div class="field"><label for="adv-channel">Build tag${envTag('app_channel', 'APP_CHANNEL')}</label>
           <select id="adv-channel" name="app_channel" ${off('app_channel')}>
             ${[['', 'None (a normal copy)'], ['test', 'Test'], ['beta', 'Beta']].map(([k, label]) => html`<option value="${k}" ${k === v.app_channel ? raw('selected') : ''}>${label}</option>`)}</select>
-          <div class="hint">Puts a Test or Beta tag in the header and page title, and checks for beta releases too.</div></div>
+          <div class="hint">Puts a Test or Beta tag in the header and page title.
+            ${a.image_tag ? html`Which versions are offered and installed is set by <code>IMAGE_TAG</code> in .env (this copy: <b>${a.image_tag}</b>; use <code>beta</code> for pre-releases).`
+              : 'Test and Beta copies are also offered beta releases.'}</div></div>
         <div class="field"><label for="adv-repo">Check for updates from${envTag('update_repo', 'UPDATE_REPO')}</label>
           <input id="adv-repo" name="update_repo" value="${v.update_repo}" placeholder="kirtangl/Simple-Budget" autocomplete="off" ${off('update_repo')}>
           <div class="hint">The GitHub repository, as owner/name. Only change it for your own fork.</div></div>

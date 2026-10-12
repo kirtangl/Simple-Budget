@@ -24,6 +24,8 @@ services:
       # How the app asks the updater (below) to install a new version.
       UPDATER_URL: http://updater:8080
       UPDATER_TOKEN: ${UPDATER_TOKEN:-simple-budget-updater}
+      # So the app only offers versions the updater can install (see image above).
+      IMAGE_TAG: ${IMAGE_TAG:-latest}
     labels:
       # Only this copy's updater may update it.
       com.centurylinklabs.watchtower.enable: "true"

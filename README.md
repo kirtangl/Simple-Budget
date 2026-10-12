@@ -111,7 +111,9 @@ Each release is built into an image at `ghcr.io/kirtangl/simple-budget` by a Git
 |---|---|
 | `latest` (default) | Full releases |
 | `beta` | Every release, including pre-releases like `0.8.0-beta.1` |
-| `0.7.0` | Stays on that version (to go back after a bad update: set it, then `sudo docker compose up -d`) |
+| `0.7.0` | Stays on that version (to go back after a bad update: set it, then `sudo docker compose up -d`). Update now is off. |
+
+The app only offers what `IMAGE_TAG` can install, so a `latest` copy is never offered a beta. Settings → Updates says which one a copy follows. After changing `IMAGE_TAG`, run `sudo docker compose up -d` in the copy's folder.
 
 **From the terminal** (or if you'd rather not run the updater): `git pull`, then `sudo docker compose pull && sudo docker compose up -d`. To build from the code instead, `sudo docker compose up -d --build`.
 
@@ -134,7 +136,18 @@ echo "IMAGE_TAG=beta" >> .env
 docker compose up -d
 ```
 
-The test copy runs at `http://<your-server>:3001` with its own data, and `APP_CHANNEL=test` puts a **Test** tag in its header and page title. The version is shown in the menu (top right). A pre-release version such as `0.6.0-beta.1` shows a **Beta** tag. To try live data in it, download a backup from the live app and restore it into the test one. `IMAGE_TAG=beta` makes it follow pre-releases too, and keeps it from sharing an image with the live copy. To try a branch, `git checkout <branch> && git pull`, then `sudo docker compose up -d --build`; **Update now** later puts it back on the newest release.
+The test copy runs at `http://<your-server>:3001` with its own data. To try live data in it, download a backup from the live app and restore it into the test one.
+
+The two test settings do different jobs:
+
+| Setting | What it does | Where |
+|---|---|---|
+| `APP_CHANNEL=test` | The **Test** tag in the header and page title, so you can tell the copies apart. Only a label. | `.env`, or Build tag in Settings → Advanced if it isn't in `.env` |
+| `IMAGE_TAG=beta` | Which versions it's offered and installs: pre-releases too. Also keeps it from sharing an image with the live copy. | `.env` only (Docker reads it before the app starts) |
+
+To try a branch, `git checkout <branch> && git pull`, then `sudo docker compose up -d --build`; **Update now** later puts it back on the newest release.
+
+To turn a test copy into a normal one, remove the `APP_CHANNEL` and `IMAGE_TAG` lines from its `.env` (keep `CONTAINER_NAME` and `HOST_PORT` while the live copy runs alongside), then `sudo docker compose up -d`.
 
 ### Using it away from home
 
