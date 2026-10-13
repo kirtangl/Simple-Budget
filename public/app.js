@@ -2014,6 +2014,10 @@
     const path = (pts) => pts.map(([i, v], k) => `${k ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('');
     const line = path(plan);
     const area = `${line}L${x(plan.at(-1)[0]).toFixed(1)},${H}L${x(plan[0][0]).toFixed(1)},${H}Z`;
+    // Dotted lines where the repayment, balance or rate was changed (not where it was first recorded).
+    const seen = new Set();
+    const marks = (l.history || []).filter((r) => { const first = !seen.has(r.field); seen.add(r.field); return !first; })
+      .map((r) => ({ r, i: monthIdx(r.on_date) + (Number(r.on_date.slice(8)) - 1) / 30 })).filter(({ i }) => i >= startI && i <= endI);
     const y0 = Math.floor(startI / 12); const y1 = Math.ceil(endI / 12);
     const step = Math.max(1, Math.round((y1 - y0) / 5));
     const years = [];
@@ -2026,12 +2030,43 @@
         <path d="${line}" fill="none" stroke="#2ec4b6" stroke-width="2.5" vector-effect="non-scaling-stroke"></path>
         ${extra.length > 1 ? html`<path d="${path(extra)}" fill="none" stroke="#3fb950" stroke-width="2.5" vector-effect="non-scaling-stroke"></path>` : ''}
         <line x1="${x(todayI)}" x2="${x(todayI)}" y1="0" y2="${H}" stroke="#5b6778" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"></line>
+        ${marks.map(({ r, i }) => html`<line class="ld-mark" x1="${x(i).toFixed(1)}" x2="${x(i).toFixed(1)}" y1="0" y2="${H}" stroke="var(--firm)" stroke-width="1.5" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"><title>${fmtDate(r.on_date, true)}: ${LOAN_FIELDS[r.field]} ${loanHistoryValue(r)}</title></line>`)}
         <line class="ld-cursor" x1="0" x2="0" y1="0" y2="${H}" stroke="currentColor" stroke-width="1" opacity="0" vector-effect="non-scaling-stroke"></line>
       </svg>
       <span class="ld-today" style="left:${(x(todayI) / W) * 100}%">Today</span>
       <div class="ld-tip" hidden></div>
       <div class="ld-years">${years.map((yr) => html`<span style="left:${(x(yr * 12) / W) * 100}%">${yr}</span>`)}</div>
     </div>`;
+  }
+
+  const LOAN_FIELDS = { repayment_cents: 'Repayment', balance_cents: 'Balance', interest_rate: 'Interest rate' };
+  const loanHistoryValue = (r) => (r.field === 'interest_rate' ? `${Number(r.value)}%` : r.field === 'repayment_cents' ? `${money(r.value)}${r.frequency ? ` / ${FREQ_UNIT[r.frequency]}` : ''}` : money(r.value));
+
+  // Every change to a loan's repayment, statement balance and rate, newest first.
+  function loanHistoryPopup(l) {
+    const rows = [...(l.history || [])].reverse();
+    const prevOf = (r) => { const k = l.history.indexOf(r); return l.history.slice(0, k).reverse().find((q) => q.field === r.field); };
+    const change = (r) => {
+      const p = prevOf(r);
+      if (!p) return html`<span class="muted">First recorded</span>`;
+      const d = Number(r.value) - Number(p.value);
+      if (!d) return html`<span class="muted">${r.frequency !== p.frequency ? 'New schedule' : 'No change'}</span>`;
+      const txt = r.field === 'interest_rate' ? `${Math.abs(Math.round(d * 100) / 100)}%` : money(Math.abs(d));
+      // A higher repayment or a lower balance or rate is good news.
+      const good = r.field === 'repayment_cents' ? d > 0 : d < 0;
+      return html`<span class="ph-diff ${good ? 'better' : 'worse'}">${d > 0 ? '+' : '−'}${txt}</span>`;
+    };
+    openForm({
+      title: `${l.name} history`,
+      body: html`
+        <p class="muted small" style="margin-top:0">Each time the repayment, statement balance or rate was changed. Balances use their statement date. The loan chart marks these with dotted lines.</p>
+        ${rows.length ? html`<div class="lh-table" role="table">
+          <div class="lh-tr lh-th" role="row"><span>Date</span><span>What</span><span class="r">Amount</span><span class="r">Change</span></div>
+          ${rows.map((r) => html`<div class="lh-tr" role="row"><span>${fmtDate(r.on_date, true)}</span><span>${LOAN_FIELDS[r.field]}</span>
+            <span class="r num">${loanHistoryValue(r)}</span><span class="r">${change(r)}</span></div>`)}</div>`
+          : html`<p class="empty">Nothing recorded yet. Changes show here from now on.</p>`}
+        <div class="row" style="justify-content:flex-start;margin-top:12px"><button type="button" data-action="loan-details" data-id="${l.id}">‹ Back to ${l.name}</button></div>`,
+    });
   }
 
   // Hover, or tap, for a month's repayments, interest and balance. The tooltip flips left past 60% of the width.
@@ -2181,8 +2216,8 @@
         <div class="ld-pad ld-bar">${loanBar(l)}</div>
 
         ${t && t.points.length > 1 ? html`<div class="ld-pad ld-sec">
-          <h3>Balance over time</h3>
-          <div class="ld-keys"><span><i class="k-plan"></i>Your plan</span>${l.bank ? html`<span><i class="k-bank"></i>Bank schedule</span>` : ''}<span class="ld-key-extra" hidden><i class="k-extra"></i>With extra</span></div>
+          <div class="ld-sec-head"><h3>Balance over time</h3>${l.history && l.history.length ? html`<button type="button" class="linkish small" data-action="loan-history">History</button>` : ''}</div>
+          <div class="ld-keys"><span><i class="k-plan"></i>Your plan</span>${l.bank ? html`<span><i class="k-bank"></i>Bank schedule</span>` : ''}${(l.history || []).length > new Set((l.history || []).map((r) => r.field)).size ? html`<span><i class="k-mark"></i>Changed</span>` : ''}<span class="ld-key-extra" hidden><i class="k-extra"></i>With extra</span></div>
           <div class="ld-chart-wrap">${loanChart(l, null)}</div>
         </div>` : ''}
 
@@ -3506,6 +3541,7 @@ sudo docker compose up -d --build</pre>`;
     'new-goal': (el) => goalForm(el.dataset.kind),
     'goal-list': (el) => goalListPopup(el.dataset.kind),
     'goal-who': (el) => setGoalWho(el.dataset.who),
+    'loan-history': () => { if (openLoan) loanHistoryPopup(openLoan); },
     'review-update': (el) => { const e = findById(state.data.expenses, el); if (e) reviewForm(e); },
     'review-snooze': (el) => { const e = findById(state.data.expenses, el); if (e) return reviewLater(e, 'snooze'); },
     'review-skip': (el) => { const e = findById(state.data.expenses, el); if (e) return reviewLater(e, 'skip'); },

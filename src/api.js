@@ -422,7 +422,7 @@ function createApi(db) {
     const interestFy = timeline ? timeline.points.filter((p) => p.month >= fy && p.month < now.slice(0, 7)).reduce((t, p) => t + p.interest_cents, 0) : null;
     res.json({ ...l, ...est, timeline,
       bank: bank ? { points: bankPoints, interest_cents: bank.interest_cents, payoff_date: bank.paid_off ? bank.date : null } : null,
-      interest_fy_cents: interestFy });
+      interest_fy_cents: interestFy, history: historyOf(db, 'loan', l.id) });
   });
 
   router.get('/loan-calculator', (req, res) => {

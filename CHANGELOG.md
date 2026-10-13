@@ -2,6 +2,15 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v0.9.0 (13 October 2026)
+
+### New
+- See what's saved in goals for each account, in green: on the Overview deposits, on the Goals page, and on the Budget → Savings tab with the goals listed under each account.
+- Goals and repayments remember who added them, shown as their name in their colour, or Shared. Switch between **Mine** and **Everyone's** on the Goals page, or with the small person button on the Overview.
+- Price reviews: give a bill a review date, like an insurance renewal. Once it passes, the Overview asks if the price has changed, with **Update price**, **Remind me in 7 days** and **Skip until next year**.
+- Price history: every change to a bill's amount is kept from now on, and shown as a chart when you open the bill.
+- Loan history: changes to a loan's repayment, statement balance and rate are marked on its chart with dotted lines, and listed under **History**.
+
 ## v0.8.1 (12 October 2026)
 
 ### New
