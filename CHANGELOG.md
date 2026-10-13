@@ -18,7 +18,7 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 - Adding a loan that started in the past with no balance asks whether to work the balance out from the minimum repayments (the amount borrowed plus interest, spread evenly over the term).
 
 ### Improved
-- Popups for a bill, loan or account have the same buttons in the same places: Update (blue), Edit (green) and Close (red) at the top, and again at the bottom with Close on the right. They stay dim until you point at them. The buttons on each Loans page card match.
+- Popups for a bill, loan or account have the same buttons in the same places: Update (blue), Edit (green) and Close (red) at the top, and again at the bottom with Close on the right. They stay dim until you point at them. The buttons on each Loans page card match. Every other popup and question has the red ✕ at the top too, so a long form opened by mistake is one tap to close.
 - On the Goals page, tap an item to edit it. Paid back shows in green, and Still owed and Still to go in red.
 
 ### Fixed

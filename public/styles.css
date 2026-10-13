@@ -1039,7 +1039,7 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
   .exp-ghead .g-right { font-size: 13px; }
 }
 #modal-form { position: relative; }
-.sheet-reset { position: absolute; top: 22px; right: 18px; font-size: 14px; font-weight: 600; text-decoration: none !important; }
+.sheet-reset { position: absolute; top: 26px; right: 64px; font-size: 14px; font-weight: 600; text-decoration: none !important; }
 .sheet-group { margin-bottom: 16px; }
 .sheet-label { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 8px; }
 .sheet-chips { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -1051,7 +1051,7 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 899px) { .exp-rows .b-payee { display: none; } }
 #modal-form:has(.sheet-reset)::before { content: ''; display: block; width: 40px; height: 4px; border-radius: 2px; margin: -6px auto 12px;
   background: color-mix(in srgb, var(--text) 25%, var(--card)); }
-#modal-form:has(.sheet-reset) .sheet-reset { top: 32px; }
+#modal-form:has(.sheet-reset) .sheet-reset { top: 36px; }
 
 /* ---------- Loans tab ---------- */
 .loan-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }

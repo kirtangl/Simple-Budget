@@ -205,13 +205,16 @@
 
   // Opens the shared form dialog. onSave receives the form element and
   // should throw an Error with a friendly message to keep the dialog open.
-  function openForm({ title, body, onSave, onDelete, saveLabel = 'Save', afterRender, noActions = false, cls = '' }) {
+  // Every popup gets the red ✕ at the top (ones with their own heading add it there). lead is a
+  // button for the left of the bottom row, like Back.
+  function openForm({ title, body, onSave, onDelete, saveLabel = 'Save', afterRender, noActions = false, cls = '', lead = null }) {
     $modal.className = cls;
     $modalForm.innerHTML = html`
-      ${title == null ? '' : html`<h2>${title}</h2>`}
+      ${title == null ? '' : popHead(title, {})}
       ${body}
       <p class="error" id="form-error"></p>
       <div class="dialog-actions" ${raw(noActions ? 'hidden' : '')}>
+        ${lead ? html`${lead}<span class="spacer"></span>` : ''}
         ${onDelete ? html`<button type="button" class="danger" data-modal="delete">Delete</button><span class="spacer"></span>` : ''}
         <button type="button" data-modal="cancel">${onSave ? 'Cancel' : 'Close'}</button>
         ${onSave ? html`<button type="submit" class="primary">${saveLabel}</button>` : ''}
@@ -262,17 +265,21 @@
     if (sel) $modalForm.querySelector(sel).hidden = !ev.target.checked;
   });
 
+  // The heading of a small question dialog, with the red ✕ (which answers nothing).
+  const promptHead = (title) => html`<div class="pop-head"><div class="pop-title"><h2>${title}</h2></div>
+    <div class="pop-btns"><button type="button" class="pop-btn x" data-p="" aria-label="Close">✕</button></div></div>`;
+
   // A small "type a name" dialog used for adding categories, payees, etc.
   function askText(title, label, value = '', { inputmode = '' } = {}) {
     return new Promise((resolve) => {
       $promptForm.innerHTML = html`
-        <h2>${title}</h2>
+        ${promptHead(title)}
         <div class="field"><label for="prompt-input">${label}</label><input id="prompt-input" name="value" value="${value}" autocomplete="off" ${inputmode ? raw(`inputmode="${inputmode}"`) : ''}></div>
         <div class="dialog-actions"><button type="button" data-p="cancel">Cancel</button><button type="submit" class="primary">OK</button></div>`.s;
       const input = $promptForm.querySelector('input');
       const done = (v) => { $promptForm.onsubmit = null; $promptForm.onclick = null; if ($prompt.open) $prompt.close(); resolve(v); };
       $promptForm.onsubmit = (e) => { e.preventDefault(); done(input.value.trim() || null); };
-      $promptForm.onclick = (e) => { if (e.target.dataset.p === 'cancel') done(null); };
+      $promptForm.onclick = (e) => { const p = e.target.closest('[data-p]')?.dataset.p; if (p === 'cancel' || p === '') done(null); };
       $prompt.oncancel = () => done(null);
       $prompt.showModal();
       input.focus();
@@ -284,11 +291,11 @@
   function askChoice({ title, text, choices }) {
     return new Promise((resolve) => {
       $promptForm.innerHTML = html`
-        <h2>${title}</h2>
+        ${promptHead(title)}
         <div class="choice-text">${text}</div>
         <div class="dialog-actions">${choices.map((c) => html`<button type="button" data-p="${c.value}" class="${c.danger ? 'danger' : c.primary ? 'primary' : ''}">${c.label}</button>`)}</div>`.s;
       const done = (v) => { $promptForm.onclick = null; if ($prompt.open) $prompt.close(); resolve(v); };
-      $promptForm.onclick = (e) => { const b = e.target.closest('[data-p]'); if (b) done(b.dataset.p); };
+      $promptForm.onclick = (e) => { const b = e.target.closest('[data-p]'); if (b) done(b.dataset.p || null); };
       $prompt.oncancel = () => done(null);
       $prompt.showModal();
     });
@@ -2234,8 +2241,8 @@
             <span class="r num">${loanHistoryValue(r)}</span><span class="r">${change(r)}</span>
             <span class="r">${l.history.filter((q) => q.field === r.field).length > 1 ? binBtn({ kind: 'loan', item: l.id }, r, `${LOAN_FIELDS[r.field]} ${fmtDate(r.on_date, true)}: ${loanHistoryValue(r)}`) : ''}</span></div>`)}</div>
           ${moreBtn(rows.length)}`
-          : html`<p class="empty">Nothing recorded yet. Changes show here from now on.</p>`}
-        <div class="row" style="justify-content:flex-start;margin-top:12px"><button type="button" data-action="loan-details" data-id="${l.id}">‹ Back to ${l.name}</button></div>`,
+          : html`<p class="empty">Nothing recorded yet. Changes show here from now on.</p>`}`,
+      lead: html`<button type="button" data-action="loan-details" data-id="${l.id}">‹ Back to ${l.name}</button>`,
     });
   }
 
