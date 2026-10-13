@@ -1071,7 +1071,7 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
 .lc-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 10px; border-radius: 12px; border: 1px solid var(--line); }
 .lc-chip .dot { width: 7px; height: 7px; }
 .lc-chip.soft { color: color-mix(in srgb, var(--text) 72%, var(--card)); }
-.lc-right { display: flex; align-items: flex-start; gap: 16px; text-align: right; flex: none; }
+.lc-right { display: flex; align-items: flex-start; gap: 24px; text-align: right; flex: none; }
 .lc-bal .num { font-size: 20px; font-weight: 700; }
 .lc-bal .muted { font-size: 12px; }
 .lc-edit { font-size: 13px; font-weight: 600; margin-top: 4px; }
@@ -1135,7 +1135,9 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 720px) {
   .loan-stats { grid-template-columns: 1fr; gap: 10px; }
   .lc-head { flex-direction: column; gap: 10px; }
-  .lc-right { width: 100%; justify-content: space-between; text-align: left; }
+  .lc-right { width: 100%; flex-direction: column; align-items: stretch; gap: 10px; text-align: left; }
+  .lc-right .lc-bal { order: -1; }
+  .lc-right .lc-btns { justify-content: flex-start; }
   .lc-strip:not(.calc-strip) { grid-template-columns: 1fr; }
   .calc-grid { grid-template-columns: 1fr; }
   .calc-strip { grid-template-columns: 1fr; }

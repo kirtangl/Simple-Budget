@@ -2079,9 +2079,9 @@
           </div>
         </div>
         <div class="lc-right">
-          ${bal != null ? html`<div class="lc-bal"><div class="num">${money(bal)}</div><div class="muted">left to pay</div></div>` : ''}
           <span class="lc-btns">${l.paid_off ? '' : popBtn('upd', { label: 'Update balance', action: 'update-balance', id: l.id })}
             ${popBtn('edit', { label: 'Edit', action: 'edit-loan', id: l.id })}${popBtn('del', { label: 'Delete', action: 'delete-loan', id: l.id })}</span>
+          ${bal != null ? html`<div class="lc-bal"><div class="num">${money(bal)}</div><div class="muted">left to pay</div></div>` : ''}
         </div>
       </div>
       <div class="lc-strip">
@@ -3732,6 +3732,7 @@ sudo docker compose up -d --build</pre>`;
       if (ok !== 'yes') return;
       await api('DELETE', `/history/${kind}/${item}/${id}`);
       await reload();
+      await render();
       toast('Removed');
       if (kind === 'loan') {
         openLoan = await api('GET', `/loans/${item}/details`);
@@ -3816,6 +3817,7 @@ sudo docker compose up -d --build</pre>`;
       if (ok !== 'yes') return;
       await api('DELETE', `/loans/${l.id}`);
       await reload();
+      await render();
       toast('Loan deleted');
     },
     'loan-details': async (el) => loanDetails(Number(el.dataset.id)),
