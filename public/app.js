@@ -418,7 +418,8 @@
     const accountsById = new Map(c.accounts.map((a) => [a.account_id, a]));
     const rows = state.data.accounts.map((a, i) => ({ a, r: accountsById.get(a.id), i })).filter((x) => x.r);
     // Accounts with nothing going in or out this cycle fold away.
-    const isUsed = ({ r }) => r.deposit_cents || r.bills_cents || r.savings_cents || r.held_cents;
+    const saved = goalSavings();
+    const isUsed = ({ a, r }) => r.deposit_cents || r.bills_cents || r.savings_cents || r.held_cents || saved.has(a.id);
     const used = rows.filter(isUsed);
     const unused = rows.filter((x) => !isUsed(x));
     // Plain wording, so no (i) is needed: what to transfer, what's still to come out, and what to keep in the account.
@@ -433,6 +434,7 @@
                   <span class="figure" title="This ${cycleWord()}'s bills from this account that haven't come out yet (savings not included)"><span class="label">Still to come out</span> <b class="num">${money(r.remaining_cents)}</b></span>
                   <span class="figure" title="${c.cycle.is_current ? 'About what should be in the account today' : `About what should be in the account on ${fmtDate(c.held_on, true)}, once that deposit is in`} so every bill ${HELD_LABELS[state.data.settings.held_basis].toLowerCase()} can be paid, with the deposits still to come. Savings not included."><span class="label">Keep in account</span> <b class="num">${money(r.held_cents)}</b></span>
                   ${r.deposit_cents !== r.rounded_cents ? html`<span class="figure muted">incl. ${state.data.settings.buffer_percent}% buffer</span>` : ''}
+                  ${saved.has(a.id) ? html`<span class="figure goal-saved" title="Saved so far in ${saved.get(a.id).goals.map((g) => g.name).join(', ')}"><span class="label">Goals</span> <b class="num">${money(saved.get(a.id).cents)} saved</b></span>` : ''}
                 </div>
                 ${r.spare_cents < 0 ? html`<div class="dep-warn">${r.savings_cents ? 'Bills + savings are' : 'Bills are'} ${money(need)}, ${money(-r.spare_cents)} more than this transfer</div>` : ''}
               </div>
@@ -640,6 +642,20 @@
   }
 
   // Goals and debts that need attention: overdue or due soonest first, then the rest by progress.
+  // Money already put aside in open savings goals, by the account it sits in (null: no account).
+  function goalSavings() {
+    const by = new Map();
+    for (const g of state.data.goals) {
+      if (g.kind !== 'goal' || g.done || !(g.current_cents > 0)) continue;
+      const key = g.account_id ?? null;
+      const x = by.get(key) || { cents: 0, goals: [] };
+      x.cents += g.current_cents;
+      x.goals.push(g);
+      by.set(key, x);
+    }
+    return by;
+  }
+
   function goalsSummary() {
     const open = state.data.goals.filter((g) => !g.done);
     if (!open.length) return '';
@@ -1190,7 +1206,28 @@
         <div class="exp-count">${count(list.length)} · about ${money(Math.round(total))} ${aCycle()}</div>
         ${groups.length ? table : html`<p class="empty">${all.length ? `No ${k.items} match.` : k.none}</p>`}
       </div>
-      ${groups.length ? cards : ''}`;
+      ${groups.length ? cards : ''}
+      ${kind === 'saving' ? savingsGoalsCard() : ''}`;
+  }
+
+  // Savings tab: the goals that have money in them, under the account they're saved in.
+  function savingsGoalsCard() {
+    const by = goalSavings();
+    if (!by.size) return '';
+    const order = [...state.data.accounts.map((a) => a.id), null].filter((id) => by.has(id));
+    return html`<section class="card sv-goals">
+      <div class="card-head"><div><h2>Goals with money saved</h2><div class="muted head-sub">By the account they're saved in · <a href="#/goals/saving-for">Open Goals</a></div></div></div>
+      ${order.map((id) => {
+        const a = id != null && account(id);
+        const x = by.get(id);
+        return html`<div class="sv-acct" style="--acct:${a ? accountColor(a.id) : 'var(--muted)'}">
+          <div class="sv-acct-head"><span class="dot"></span><b>${a ? a.name : 'No account'}</b><span class="sv-total num">${money(x.cents)} saved</span></div>
+          <ul class="sv-list">${x.goals.map((g) => html`<li><span class="grow">${g.name}</span>
+            ${g.target_cents ? html`<span class="sv-bar">${progress(g.current_cents, g.target_cents, 'goal', 'var(--paid)')}</span>` : ''}
+            <span class="num sv-amt">${money(g.current_cents)}${g.target_cents ? html`<span class="muted"> of ${money(g.target_cents)}</span>` : ''}</span></li>`)}</ul>
+        </div>`;
+      })}
+    </section>`;
   }
 
   function scheduleFields(e) {
@@ -1481,6 +1518,14 @@
         <div class="g-stat-sub ${dueNow.length ? 'soon' : ''}">${dueNow.length ? `plus ${money(dueNowTotal)} due now (${dueNow.map((g) => g.name).join(', ')})` : 'covers every dated item'}</div></div>
     </div>`;
 
+    // Saving for: what's saved in each account, so it can be checked against the bank.
+    const byAccount = debt ? new Map() : goalSavings();
+    const acctStrip = byAccount.size ? html`<div class="card g-accts"><span class="g-accts-lbl">Saved by account</span>
+      ${[...byAccount.entries()].map(([id, x]) => {
+        const a = id != null && account(id);
+        return html`<span class="g-acct-total" title="${x.goals.map((g) => `${g.name}: ${money(g.current_cents)}`).join('\n')}"><span class="dot" style="background:${a ? accountColor(a.id) : 'var(--muted)'}"></span>${a ? a.name : 'No account'} <b class="num">${money(x.cents)}</b></span>`;
+      })}</div>` : '';
+
     const groupCards = sections.map(({ name, list }) => {
       const color = groupColor(kind, name);
       const groupLeft = list.reduce((s, g) => s + goalLeft(g), 0);
@@ -1510,6 +1555,7 @@
 
     return html`
       ${items.length || done.length ? summary : ''}
+      ${acctStrip}
       ${items.length ? groupCards : html`<div class="card"><p class="empty">${done.length ? 'Everything here is done.' : `No ${k.title.toLowerCase()} yet.`}</p></div>`}
       ${completed}`;
   }
