@@ -359,3 +359,14 @@ test('minimum balance follows the standard schedule and reaches zero at the end'
   assert.equal(f.repayments, 2);
   assert.equal(f.balance_cents, Math.round(2000000 - (2000000 / 130) * 2));
 });
+
+test('the balance before a statement follows the repayments down to it', () => {
+  // The next due date is in the future, but repayments were made since the start.
+  const loan = { id: 1, name: 'Car', principal_cents: 2000000, interest_rate: 8, term_months: 60, repayment_frequency: 'monthly',
+    start_date: '2023-06-01', scheduled_date: '2026-10-20' };
+  const min = budget.minimumBalance(loan, '2026-10-13');
+  const t = budget.loanTimeline({ ...loan, balance_cents: min.balance_cents, balance_date: '2026-10-13' }, '2026-10-13');
+  const past = t.points.filter((p) => p.month < '2026-10');
+  for (let i = 1; i < past.length; i++) assert.ok(past[i].balance_cents < past[i - 1].balance_cents);
+  assert.ok(Math.abs(past.at(-1).balance_cents - min.balance_cents) < 50000); // meets the statement, no sudden drop
+});

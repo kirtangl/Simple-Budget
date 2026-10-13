@@ -1623,7 +1623,7 @@ dialog.loan-modal .error:empty { display: none; }
 .ph-list li.future { color: var(--firm); }
 .ph-diff.soon { color: var(--firm); }
 .ph-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 4px; }
-.ph-list { list-style: none; margin: 8px 0 0; padding: 0; max-height: 220px; overflow-y: auto; }
+.ph-list { list-style: none; margin: 8px 0 0; padding: 0; }
 .ph-list li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13px; }
 .ph-date { width: 110px; flex: none; color: var(--muted); }
 .ph-diff { margin-left: auto; font-size: 12px; font-weight: 600; }
@@ -1635,11 +1635,13 @@ dialog.loan-modal .error:empty { display: none; }
 .ld-keys .k-mark { width: 0; height: 12px; border-left: 2px dotted var(--firm); border-radius: 0; }
 .ld-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .lh-table { font-size: 13px; }
-.lh-tr { display: grid; grid-template-columns: 1.1fr 1fr 1.2fr .9fr; gap: 8px; padding: 7px 0; border-top: 1px solid var(--line); align-items: baseline; }
+.lh-tr { display: grid; grid-template-columns: 1.1fr 1fr 1.2fr .9fr 28px; gap: 8px; padding: 7px 0; border-top: 1px solid var(--line); align-items: baseline; }
 .lh-th { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); border-top: 0; }
 .lh-tr .r { text-align: right; }
 .lh-tr .ph-diff { margin: 0; }
-@media (max-width: 520px) { .lh-tr { grid-template-columns: 1fr 1fr; } .lh-tr > span:nth-child(3) { text-align: left; } .lh-th { display: none; } }
+@media (max-width: 520px) { .lh-tr { grid-template-columns: 1fr 1fr 28px; grid-template-areas: "d w b" "a c b"; }
+  .lh-tr > span:nth-child(1) { grid-area: d; } .lh-tr > span:nth-child(2) { grid-area: w; } .lh-tr > span:nth-child(3) { grid-area: a; }
+  .lh-tr > span:nth-child(4) { grid-area: c; } .lh-tr > span:nth-child(5) { grid-area: b; align-self: center; } .lh-tr > span:nth-child(3) { text-align: left; } .lh-th { display: none; } }
 
 /* Small popups: Update amount and Update balance, and the choice asked over a form. */
 .choice-text p { margin: 0 0 10px; line-height: 1.45; }
@@ -1660,7 +1662,7 @@ dialog.loan-modal .error:empty { display: none; }
   color: var(--text); background: var(--card); border: 1px solid var(--line); box-shadow: 0 6px 16px rgb(0 0 0 / 30%); }
 .ld-pt.tip-left:hover::after, .ld-pt.tip-left:focus::after { left: auto; right: 14px; }
 .ld-keys .k-pt { width: 9px; height: 9px; border-radius: 50%; background: var(--firm); }
-.lc-btns { display: inline-flex; gap: 14px; flex-wrap: wrap; justify-content: flex-end; }
+.lc-btns { display: inline-flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 
 /* Details popups share one set of buttons: Update (blue), Edit (green), Close (red). Dimmed until hovered. */
 .pop-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
@@ -1674,7 +1676,7 @@ dialog.loan-modal .error:empty { display: none; }
 .pop-btn:hover, .pop-btn:focus-visible { color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border-color: color-mix(in srgb, var(--c) 70%, transparent); }
 .pop-btn.upd { --c: var(--info); }
 .pop-btn.edit { --c: var(--paid); }
-.pop-btn.x, .pop-btn.close { --c: var(--danger); }
+.pop-btn.x, .pop-btn.close, .pop-btn.del { --c: var(--danger); }
 .pop-btn.x { width: 32px; padding: 0; font-size: 14px; }
 .pop-foot .pop-btn { height: 38px; padding: 0 16px; }
 .ld-head .pop-btns { margin-left: auto; }
@@ -1687,3 +1689,12 @@ dialog.loan-modal .error:empty { display: none; }
 /* Same box as the chart's drawing area (not the year labels under it), so points land on the line. */
 .ld-pts { position: absolute; left: 0; right: 0; top: 0; height: 180px; pointer-events: none; }
 .ld-pts .ld-pt { pointer-events: auto; }
+
+/* Removing a history entry, and the rest of a long list. */
+.ph-bin { min-height: 0; width: 26px; height: 26px; padding: 0; display: inline-grid; place-items: center; border: 1px solid transparent; border-radius: 6px;
+  background: transparent; color: var(--muted); box-shadow: none; cursor: pointer; opacity: .55; align-self: center; }
+.ph-bin:hover, .ph-bin:focus-visible { opacity: 1; color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
+.ph-list li .ph-bin { margin-left: -4px; }
+.lh-tr .ph-bin { justify-self: end; }
+.show-more { margin-top: 8px; font-size: 13px; }
+.ph-list li.more[hidden], .lh-tr.more[hidden] { display: none; }

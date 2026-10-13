@@ -535,8 +535,10 @@ function simulateLoan(loan, until, sample) {
   const b = budgetedRepayment(loan);
   const s = scheduledRepayment(loan);
   const firstPay = b.date || loan.start_date;
-  const asExpense = loanAsExpense(loan, firstPay || date);
-  const asScheduled = scheduleAsExpense(loan, s.date || loan.start_date || date);
+  // The due dates are an anchor for the rhythm: repayments were also made between the start and them.
+  const back = (row) => (loan.start_date && row.start_date && row.start_date > loan.start_date ? { ...row, start_date: loan.start_date } : row);
+  const asExpense = back(loanAsExpense(loan, firstPay || date));
+  const asScheduled = back(scheduleAsExpense(loan, s.date || loan.start_date || date));
   const daily = (Number(loan.interest_rate) || 0) / 100 / 365;
   const offset = Number(loan.offset_cents) || 0;
   const interestDay = Math.min(Math.max(Number(loan.interest_day) || Number((loan.start_date || date).slice(8)), 1), 31);
@@ -572,7 +574,7 @@ function simulateLoan(loan, until, sample) {
       accrued = 0;
     }
     const budgeted = !b.custom || !b.date || date >= b.date;
-    const isDue = budgeted ? due.has(date) && (!b.date || date >= b.date) : dueScheduled.has(date);
+    const isDue = budgeted ? due.has(date) : dueScheduled.has(date);
     if (isDue && (!loan.start_date || date > loan.start_date)) {
       const pay = Math.min(budgeted ? b.amount_cents : s.amount_cents, balance + accrued);
       balance -= pay;
@@ -621,7 +623,12 @@ function loanTimeline(loan, today) {
   // Part-months at the joins are carried into the next month.
   const h = loanHistory(loan);
   const before = h ? simulateLoan(h.fresh, h.to, add) : null;
-  if (before) carry = before.month_so_far;
+  if (before) {
+    carry = before.month_so_far;
+    // Bend the estimate so it meets the statement balance, rather than jumping to it.
+    const gap = h.statement_balance_cents - before.balance_cents;
+    points.forEach((p, i) => { p.balance_cents = Math.max(0, Math.round(p.balance_cents + (gap * (i + 1)) / (points.length + 1))); });
+  }
   const sofar = simulateLoan(loan, today, add);
   if (!sofar) return null;
   carry = carry ? { paid_cents: carry.paid_cents + sofar.month_so_far.paid_cents, interest_cents: carry.interest_cents + sofar.month_so_far.interest_cents } : sofar.month_so_far;

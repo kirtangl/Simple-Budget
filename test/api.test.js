@@ -807,6 +807,31 @@ test('a new price can start today, be backdated or wait for a future date', () =
   assert.equal((await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 0 })).status, 400);
 }));
 
+test('back-dated prices slot into the history, and a mistake can be removed', () => withServer({}, async (call) => {
+  const e = (await call('POST', '/expenses', { name: 'Phone', amount_cents: 5000, frequency: 'monthly' })).body;
+  await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 4500, from: '2025-01-01' }); // starting amount becomes "before then"
+  await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 5500 }); // today
+  let r = await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 4800, from: '2025-06-01' });
+  assert.equal(r.body.amount_cents, 5500); // a newer price is still the current one
+  let h = (await call('GET', `/history/expense/${e.id}`)).body;
+  assert.deepEqual(h.map((x) => [x.on_date, x.value]).slice(0, 3), [['2024-12-31', 5000], ['2025-01-01', 4500], ['2025-06-01', 4800]]);
+  assert.equal(h.at(-1).value, 5500);
+  // Removing the newest puts the bill back to the one before.
+  const del = await call('DELETE', `/history/expense/${e.id}/${h.at(-1).id}`);
+  assert.equal(del.status, 200);
+  assert.equal(del.body.length, 3);
+  assert.equal((await call('GET', `/expenses/${e.id}/details`)).body.amount_cents, 4800);
+  // Removing an older one leaves the current amount alone.
+  await call('DELETE', `/history/expense/${e.id}/${h[1].id}`);
+  assert.equal((await call('GET', `/expenses/${e.id}/details`)).body.amount_cents, 4800);
+  h = (await call('GET', `/history/expense/${e.id}`)).body;
+  await call('DELETE', `/history/expense/${e.id}/${h[0].id}`);
+  h = (await call('GET', `/history/expense/${e.id}`)).body;
+  assert.equal(h.length, 1);
+  assert.equal((await call('DELETE', `/history/expense/${e.id}/${h[0].id}`)).status, 400); // the only one left
+  assert.equal((await call('DELETE', `/history/loan/${e.id}/${h[0].id}`)).status, 404);
+}));
+
 test('a loan balance update keeps the estimate it replaced, and a past loan can be estimated', () => withServer({}, async (call) => {
   const loan = { name: 'Car', principal_cents: 3000000, interest_rate: 7, start_date: '2024-01-01', term_months: 60, repayment_frequency: 'monthly' };
   const est = (await call('POST', '/loans/estimate-balance', loan)).body;

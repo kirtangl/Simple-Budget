@@ -232,28 +232,41 @@ function logHistory(db, resource, before, after, { loginId = null, date: from = 
     }
     const date = onDate || from || today();
     const estimate = before && resource.history.before && resource.history.before[field] ? resource.history.before[field](before, after) : null;
-    // Backdating a change (not a dated statement) replaces what was recorded from that day on,
-    // keeping the old amount as the day before if nothing earlier was recorded.
-    if (!onDate && from) {
-      const later = db.prepare('SELECT count(*) AS n FROM amount_history WHERE kind = ? AND item_id = ? AND field = ? AND on_date >= ?').get(kind, after.id, field, date).n;
-      const earlier = db.prepare('SELECT count(*) AS n FROM amount_history WHERE kind = ? AND item_id = ? AND field = ? AND on_date < ?').get(kind, after.id, field, date).n;
-      if (later) {
-        db.prepare('DELETE FROM amount_history WHERE kind = ? AND item_id = ? AND field = ? AND on_date >= ?').run(kind, after.id, field, date);
-        const [old, oldFreq] = before ? pick(before) : [null, null];
-        if (!earlier && old != null) {
-          db.prepare('INSERT INTO amount_history (kind, item_id, field, on_date, value, frequency) VALUES (?, ?, ?, ?, ?, ?)').run(kind, after.id, field, budget.addDays(date, -1), old, oldFreq ?? null);
-        }
-      }
+    // A back-dated change to an item with only its starting amount: that amount becomes "before then".
+    if (!onDate && from && laterChange(db, kind, after.id, field, date) === 'start') {
+      db.prepare('UPDATE amount_history SET on_date = ? WHERE kind = ? AND item_id = ? AND field = ?').run(budget.addDays(date, -1), kind, after.id, field);
     }
-    const [last, before1] = db.prepare('SELECT * FROM amount_history WHERE kind = ? AND item_id = ? AND field = ? ORDER BY on_date DESC, id DESC LIMIT 2').all(kind, after.id, field);
-    // A second change on the same day replaces the first (a typo fixed), but the starting amount is always kept.
-    if (last && before1 && last.on_date === date) {
-      db.prepare('UPDATE amount_history SET value = ?, frequency = ?, login_id = ? WHERE id = ?').run(value, frequency ?? null, loginId, last.id);
-    } else if (!last || last.value !== value || last.frequency !== (frequency ?? null)) {
-      db.prepare('INSERT INTO amount_history (kind, item_id, field, on_date, value, frequency, login_id, before_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(kind, after.id, field, date, value, frequency ?? null, loginId, estimate ?? null);
-    }
+    addHistory(db, { kind, id: after.id, field, date, value, frequency, loginId, estimate });
   }
+}
+
+// One amount on a date, slotted in with the others (so a back-dated price sits in its place).
+// A second change on the same day replaces the first (a typo fixed), but the starting amount is
+// always kept, and an amount the same as the one already in force then isn't repeated.
+function addHistory(db, { kind, id, field, date, value, frequency = null, loginId = null, estimate = null }) {
+  const rows = db.prepare('SELECT * FROM amount_history WHERE kind = ? AND item_id = ? AND field = ? ORDER BY on_date, id').all(kind, id, field);
+  const upTo = rows.filter((r) => r.on_date <= date);
+  const prev = upTo[upTo.length - 1];
+  if (prev && prev.on_date === date && upTo.length > 1) {
+    db.prepare('UPDATE amount_history SET value = ?, frequency = ?, login_id = ? WHERE id = ?').run(value, frequency ?? null, loginId, prev.id);
+  } else if (!prev || prev.value !== value || prev.frequency !== (frequency ?? null)) {
+    db.prepare('INSERT INTO amount_history (kind, item_id, field, on_date, value, frequency, login_id, before_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(kind, id, field, date, value, frequency ?? null, loginId, estimate ?? null);
+  }
+}
+
+// Whether anything was recorded after `date`: 'none', 'start' (only the amount the item was
+// added with, nothing before it), or 'change' (a real later change).
+function laterChange(db, kind, id, field, date) {
+  const rows = db.prepare('SELECT on_date FROM amount_history WHERE kind = ? AND item_id = ? AND field = ?').all(kind, id, field);
+  const later = rows.filter((r) => r.on_date > date).length;
+  if (!later) return 'none';
+  return later === 1 && rows.length === 1 ? 'start' : 'change';
+}
+
+// The newest recorded amount for a field, which is what the item should hold.
+function latestHistory(db, kind, id, field) {
+  return db.prepare('SELECT * FROM amount_history WHERE kind = ? AND item_id = ? AND field = ? ORDER BY on_date DESC, id DESC LIMIT 1').get(kind, id, field);
 }
 
 // A loan's estimated balance on a date, from what was known before an update.
@@ -280,7 +293,7 @@ function applyPendingAmounts(db) {
 }
 
 function historyOf(db, kind, id) {
-  return db.prepare('SELECT field, on_date, value, frequency, login_id, before_value FROM amount_history WHERE kind = ? AND item_id = ? ORDER BY on_date, id').all(kind, id).map((r) => ({ ...r }));
+  return db.prepare('SELECT id, field, on_date, value, frequency, login_id, before_value FROM amount_history WHERE kind = ? AND item_id = ? ORDER BY on_date, id').all(kind, id).map((r) => ({ ...r }));
 }
 
 function today() {
@@ -452,8 +465,13 @@ function createApi(db) {
     const from = T.date(body.from) || today();
     const review = 'review_date' in body ? T.date(body.review_date) : e.review_date;
     const before = { ...e };
+    // A price from before one already recorded only fills in the history; the newer price stays.
+    const later = from <= today() && laterChange(db, 'expense', id, 'amount_cents', from) === 'change';
     transaction(db, () => {
-      if (from > today()) {
+      if (later) {
+        addHistory(db, { kind: 'expense', id, field: 'amount_cents', date: from, value: cents, frequency: e.frequency, loginId: req.login ? req.login.id : null });
+        if ('review_date' in body) db.prepare('UPDATE expenses SET review_date = ?, review_snooze = NULL WHERE id = ?').run(review, id);
+      } else if (from > today()) {
         db.prepare('UPDATE expenses SET pending_cents = ?, pending_from = ?, review_date = ?, review_snooze = NULL WHERE id = ?').run(cents, from, review, id);
       } else {
         const cols = e.yearly_cents != null ? 'yearly_cents = ?, amount_cents = ?' : 'amount_cents = ?';
@@ -480,9 +498,13 @@ function createApi(db) {
     const before = { ...l };
     // An older statement than the one already saved goes in the history only; the newer balance stays.
     const older = l.balance_cents != null && l.balance_date && data.balance_date < l.balance_date;
-    const saved = older ? { ...data, balance_cents: l.balance_cents, balance_date: l.balance_date } : data;
+    const saved = older ? { ...data, balance_cents: l.balance_cents, balance_date: l.balance_date } : { ...data };
+    // Likewise a rate or repayment from before a later recorded change.
+    const pastOnly = ['interest_rate', 'repayment_cents'].filter((f) => saved[f] != null && saved[f] !== l[f] && laterChange(db, 'loan', id, f, data.balance_date) === 'change');
+    for (const f of pastOnly) saved[f] = l[f];
     const cols = Object.keys(saved);
     transaction(db, () => {
+      for (const f of pastOnly) addHistory(db, { kind: 'loan', id, field: f, date: data.balance_date, value: data[f], frequency: f === 'repayment_cents' ? l.repayment_frequency : null, loginId: req.login ? req.login.id : null });
       db.prepare(`UPDATE loans SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).run(...cols.map((c) => saved[c]), id);
       const after = { ...db.prepare('SELECT * FROM loans WHERE id = ?').get(id) };
       logHistory(db, RESOURCES.loans, before, older ? { ...after, balance_cents: data.balance_cents, balance_date: data.balance_date } : after,
@@ -506,6 +528,30 @@ function createApi(db) {
     const kind = req.params.kind;
     if (!['expense', 'loan'].includes(kind)) return res.status(404).json({ error: 'Not found.' });
     res.json(historyOf(db, kind, Number(req.params.id)));
+  });
+
+  // Removing an amount added by mistake. Removing the newest one puts the item back to the one before.
+  router.delete('/history/:kind/:id/:entry', (req, res) => {
+    const kind = req.params.kind;
+    const table = { expense: 'expenses', loan: 'loans' }[kind];
+    if (!table) return res.status(404).json({ error: 'Not found.' });
+    const id = Number(req.params.id);
+    const row = db.prepare('SELECT * FROM amount_history WHERE id = ? AND kind = ? AND item_id = ?').get(Number(req.params.entry), kind, id);
+    const item = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
+    if (!row || !item) return res.status(404).json({ error: 'Not found.' });
+    const newest = latestHistory(db, kind, id, row.field);
+    const count = db.prepare('SELECT count(*) AS n FROM amount_history WHERE kind = ? AND item_id = ? AND field = ?').get(kind, id, row.field).n;
+    if (count < 2) throw new BadRequest("That's the only amount recorded, so it can't be removed.");
+    transaction(db, () => {
+      db.prepare('DELETE FROM amount_history WHERE id = ?').run(row.id);
+      if (newest.id !== row.id) return;
+      const now = latestHistory(db, kind, id, row.field);
+      const set = row.field === 'balance_cents' ? { balance_cents: now.value, balance_date: now.on_date }
+        : row.field === 'amount_cents' && item.yearly_cents != null ? { amount_cents: now.value, yearly_cents: now.value }
+          : { [row.field]: now.value };
+      db.prepare(`UPDATE ${table} SET ${Object.keys(set).map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...Object.values(set), id);
+    });
+    res.json(historyOf(db, kind, id));
   });
 
   router.get('/loans/:id/details', (req, res) => {

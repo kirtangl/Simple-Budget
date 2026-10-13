@@ -12,14 +12,18 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 - Loan history: changes to a loan's repayment and rate are marked on its chart with dotted lines, each balance you enter is a point you can hover or tap to see the estimate it replaced, and **History** lists them all.
 - **Update amount**: a small popup for a new price, from the price tag button on each expense or the bill's popup on the Overview. **Takes effect from** can be backdated, or set ahead so the price changes on that day.
 - **Update balance**: a small popup for a loan's statement balance, rate and repayment, beside Edit.
+- Back-dated prices slot into a bill's history in date order, so you can fill in what it used to cost. The newest price is still the one used.
+- Remove a history entry added by mistake with the bin beside it. Removing the newest one puts the bill or loan back to the one before. Long histories show the latest 5, with **Show more**.
+- Delete a loan from the Loans page, after an "Are you sure?".
 - Adding a loan that started in the past with no balance asks whether to work the balance out from the minimum repayments (the amount borrowed plus interest, spread evenly over the term).
 
 ### Improved
-- Popups for a bill, loan or account have the same buttons in the same places: Update (blue), Edit (green) and Close (red) at the top, and again at the bottom with Close on the right. They stay dim until you point at them.
+- Popups for a bill, loan or account have the same buttons in the same places: Update (blue), Edit (green) and Close (red) at the top, and again at the bottom with Close on the right. They stay dim until you point at them. The buttons on each Loans page card match.
 - On the Goals page, tap an item to edit it. Paid back shows in green, and Still owed and Still to go in red.
 
 ### Fixed
 - The payee name under each bill on the Overview lines up with the account name.
+- A loan's balance chart now comes down with the repayments from the start date, meeting the balance you entered, instead of climbing with interest and then dropping. Repayments before the next due date are counted too.
 
 ## v0.8.1 (12 October 2026)
 

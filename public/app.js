@@ -286,7 +286,7 @@
       $promptForm.innerHTML = html`
         <h2>${title}</h2>
         <div class="choice-text">${text}</div>
-        <div class="dialog-actions">${choices.map((c) => html`<button type="button" data-p="${c.value}" class="${c.primary ? 'primary' : ''}">${c.label}</button>`)}</div>`.s;
+        <div class="dialog-actions">${choices.map((c) => html`<button type="button" data-p="${c.value}" class="${c.danger ? 'danger' : c.primary ? 'primary' : ''}">${c.label}</button>`)}</div>`.s;
       const done = (v) => { $promptForm.onclick = null; if ($prompt.open) $prompt.close(); resolve(v); };
       $promptForm.onclick = (e) => { const b = e.target.closest('[data-p]'); if (b) done(b.dataset.p); };
       $prompt.oncancel = () => done(null);
@@ -690,7 +690,8 @@
   // A curved line of one amount over time, a point at each change (hover or tap for it), and the
   // changes listed underneath, newest first. A change set for a future date shows in orange.
   // rows: [{ on_date, value, frequency }] oldest first. future: { on_date, value, frequency } or null.
-  function historyChart(rows, { fmt = (r) => amountText(r.value, r.frequency), costUp = true, label = 'Amount over time', future = null } = {}) {
+  // remove: { kind, item } adds a bin to each entry, for one added by mistake.
+  function historyChart(rows, { fmt = (r) => amountText(r.value, r.frequency), costUp = true, label = 'Amount over time', future = null, remove = null } = {}) {
     if (!rows.length) return '';
     const today = state.data.settings.today;
     const day = (s) => toDate(s).getTime() / 86400000;
@@ -742,16 +743,20 @@
       <div class="ph-axis"><span>${fmtDate(rows[0].on_date, true)}</span><span>${fut ? fmtDate(fut.on_date, true) : 'Today'}</span></div>
       <ul class="ph-list">
         ${fut ? html`<li class="future"><span class="ph-date">${fmtDate(fut.on_date, true)}</span><span class="num">${fmt(fut)}</span>${diff(fut, rows.at(-1))}<span class="ph-diff soon">Coming up</span></li>` : ''}
-        ${changes.map(({ r, prev }) => html`<li><span class="ph-date">${fmtDate(r.on_date, true)}</span>
-        <span class="num">${fmt(r)}</span>${prev ? diff(r, prev) : html`<span class="ph-diff muted">${rows.length === 1 && !fut ? 'Changes will show here' : 'First recorded'}</span>`}</li>`)}</ul>
+        ${changes.map(({ r, prev }, k) => html`<li ${k + (fut ? 1 : 0) >= SHOW_FIRST ? raw('class="more" hidden') : ''}><span class="ph-date">${fmtDate(r.on_date, true)}</span>
+        <span class="num">${fmt(r)}</span>${prev ? diff(r, prev) : html`<span class="ph-diff muted">${rows.length === 1 && !fut ? 'Changes will show here' : 'First recorded'}</span>`}
+        ${remove && rows.length > 1 && r.id ? binBtn(remove, r, `${fmtDate(r.on_date, true)}: ${fmt(r)}`) : ''}</li>`)}</ul>
+      ${moreBtn(changes.length + (fut ? 1 : 0))}
     </div>`;
   }
+  const binBtn = (remove, r, what) => html`<button type="button" class="ph-bin" data-action="history-remove" data-kind="${remove.kind}" data-item="${remove.item}"
+    data-id="${r.id}" data-what="${what}" aria-label="Remove ${what}" title="Remove">${BIN_ICON}</button>`;
   // A bill's price history, with any change waiting for a future date.
   const priceHistory = (rows, e = null) => {
     const own = rows.filter((r) => r.field === 'amount_cents');
     const last = own.at(-1);
     const future = e && e.pending_from ? { on_date: e.pending_from, value: e.pending_cents, frequency: last ? last.frequency : e.frequency } : null;
-    return historyChart(own, { label: 'Price over time', future });
+    return historyChart(own, { label: 'Price over time', future, remove: e && e.id ? { kind: 'expense', item: e.id } : null });
   };
 
   // Fixed rates ending within 60 days (or just ended), so there's time to look at rates.
@@ -898,6 +903,10 @@
   }
   // A price tag with an arrow: "update the amount".
   const PRICE_ICON = raw('<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 1.5h5v5l-7 7-5-5z"/><circle cx="11" cy="4" r=".9" fill="currentColor" stroke="none"/><path d="M5 9.5l2.5-2.5M7.5 7v2.4M7.5 7H5.1"/></svg>');
+  const BIN_ICON = raw('<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v4.5M9.2 6.5v4.5"/></svg>');
+  // A list cut to its first five, with a button for the rest.
+  const SHOW_FIRST = 5;
+  const moreBtn = (n) => (n > SHOW_FIRST ? html`<button type="button" class="linkish show-more" data-action="show-more">Show ${n - SHOW_FIRST} more</button>` : '');
   const PERSON_ICON = raw('<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><circle cx="8" cy="5" r="3" fill="currentColor"/><path d="M2 15c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z" fill="currentColor"/></svg>');
   // The small Overview switch between your goals and everyone's.
   const whoIcon = () => (household() ? html`<button type="button" class="who-btn ${goalWho() === 'mine' ? 'on' : ''}" data-action="goal-who" data-who="${goalWho() === 'mine' ? 'all' : 'mine'}"
@@ -2071,8 +2080,8 @@
         </div>
         <div class="lc-right">
           ${bal != null ? html`<div class="lc-bal"><div class="num">${money(bal)}</div><div class="muted">left to pay</div></div>` : ''}
-          <span class="lc-btns">${l.paid_off ? '' : html`<button type="button" class="linkish lc-edit" data-action="update-balance" data-id="${l.id}">Update balance</button>`}
-            <button type="button" class="linkish lc-edit" data-action="edit-loan" data-id="${l.id}">Edit</button></span>
+          <span class="lc-btns">${l.paid_off ? '' : popBtn('upd', { label: 'Update balance', action: 'update-balance', id: l.id })}
+            ${popBtn('edit', { label: 'Edit', action: 'edit-loan', id: l.id })}${popBtn('del', { label: 'Delete', action: 'delete-loan', id: l.id })}</span>
         </div>
       </div>
       <div class="lc-strip">
@@ -2210,9 +2219,11 @@
       body: html`
         <p class="muted small" style="margin-top:0">Each time the repayment, statement balance or rate was changed. Balances use their statement date. The loan chart marks these with dotted lines.</p>
         ${rows.length ? html`<div class="lh-table" role="table">
-          <div class="lh-tr lh-th" role="row"><span>Date</span><span>What</span><span class="r">Amount</span><span class="r">Change</span></div>
-          ${rows.map((r) => html`<div class="lh-tr" role="row"><span>${fmtDate(r.on_date, true)}</span><span>${LOAN_FIELDS[r.field]}</span>
-            <span class="r num">${loanHistoryValue(r)}</span><span class="r">${change(r)}</span></div>`)}</div>`
+          <div class="lh-tr lh-th" role="row"><span>Date</span><span>What</span><span class="r">Amount</span><span class="r">Change</span><span></span></div>
+          ${rows.map((r, k) => html`<div class="lh-tr ${k >= SHOW_FIRST ? 'more' : ''}" role="row" ${k >= SHOW_FIRST ? raw('hidden') : ''}><span>${fmtDate(r.on_date, true)}</span><span>${LOAN_FIELDS[r.field]}</span>
+            <span class="r num">${loanHistoryValue(r)}</span><span class="r">${change(r)}</span>
+            <span class="r">${l.history.filter((q) => q.field === r.field).length > 1 ? binBtn({ kind: 'loan', item: l.id }, r, `${LOAN_FIELDS[r.field]} ${fmtDate(r.on_date, true)}: ${loanHistoryValue(r)}`) : ''}</span></div>`)}</div>
+          ${moreBtn(rows.length)}`
           : html`<p class="empty">Nothing recorded yet. Changes show here from now on.</p>`}
         <div class="row" style="justify-content:flex-start;margin-top:12px"><button type="button" data-action="loan-details" data-id="${l.id}">‹ Back to ${l.name}</button></div>`,
     });
@@ -3713,6 +3724,28 @@ sudo docker compose up -d --build</pre>`;
     'goal-list': (el) => goalListPopup(el.dataset.kind),
     'goal-who': (el) => setGoalWho(el.dataset.who),
     'loan-history': () => { if (openLoan) loanHistoryPopup(openLoan); },
+    'show-more': (el) => { el.parentElement.querySelectorAll('.more[hidden]').forEach((m) => { m.hidden = false; }); el.remove(); },
+    'history-remove': async (el) => {
+      const { kind, item, id, what } = el.dataset;
+      const ok = await askChoice({ title: 'Remove this entry?', text: html`<p><b>${what}</b></p><p>It comes out of the history. If it's the newest one, the ${kind === 'loan' ? 'loan goes' : 'bill goes'} back to the one before it.</p>`,
+        choices: [{ label: 'Cancel', value: 'no' }, { label: 'Remove', value: 'yes', danger: true }] });
+      if (ok !== 'yes') return;
+      await api('DELETE', `/history/${kind}/${item}/${id}`);
+      await reload();
+      toast('Removed');
+      if (kind === 'loan') {
+        openLoan = await api('GET', `/loans/${item}/details`);
+        loanHistoryPopup(openLoan);
+        return;
+      }
+      // Redraw the price history where it is (the bill popup or the edit form), and the amount if it went back.
+      const e = await api('GET', `/expenses/${item}/details`);
+      const box = el.closest('.ph');
+      if (box) box.outerHTML = priceHistory(e.history, e).s;
+      const form = document.querySelector('#modal form');
+      const amt = form && form.elements.amount;
+      if (amt && !amt.closest('[hidden]')) amt.value = (e.amount_cents / 100).toFixed(2);
+    },
     'review-update': (el) => { const e = findById(state.data.expenses, el); if (e) amountForm(e, { review: true }); },
     'update-amount': (el) => { const e = findById(state.data.expenses, el); if (e) amountForm(e); },
     'update-balance': (el) => { const l = openLoan && openLoan.id === Number(el.dataset.id) ? openLoan : findById(state.data.loans, el); if (l) balanceForm(l); },
@@ -3775,6 +3808,16 @@ sudo docker compose up -d --build</pre>`;
     'new-income': () => incomeForm(),
     'new-loan': () => loanForm(),
     'edit-loan': (el) => { const l = findById(state.data.loans, el); if (l) loanForm(l); },
+    'delete-loan': async (el) => {
+      const l = findById(state.data.loans, el);
+      if (!l) return;
+      const ok = await askChoice({ title: `Delete ${l.name}?`, text: html`<p>Are you sure? The loan, its repayments in the budget and its history are removed. This can't be undone.</p>`,
+        choices: [{ label: 'Cancel', value: 'no' }, { label: 'Delete', value: 'yes', danger: true }] });
+      if (ok !== 'yes') return;
+      await api('DELETE', `/loans/${l.id}`);
+      await reload();
+      toast('Loan deleted');
+    },
     'loan-details': async (el) => loanDetails(Number(el.dataset.id)),
     'update-balances': () => updateBalances(),
     'toggle-calc': () => { try { localStorage.setItem('calc-open', calcOpen() ? '0' : '1'); } catch { /* not remembered */ } render(); },
