@@ -9,7 +9,16 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 - Goals and repayments remember who added them, shown as their name in their colour, or Shared. Switch between **Mine** and **Everyone's** on the Goals page, or with the small person button on the Overview.
 - Price reviews: give a bill a review date, like an insurance renewal. Once it passes, the Overview asks if the price has changed, with **Update price**, **Remind me in 7 days** and **Skip until next year**.
 - Price history: every change to a bill's amount is kept from now on, and shown as a chart when you open the bill.
-- Loan history: changes to a loan's repayment, statement balance and rate are marked on its chart with dotted lines, and listed under **History**.
+- Loan history: changes to a loan's repayment and rate are marked on its chart with dotted lines, each balance you enter is a point you can hover or tap to see the estimate it replaced, and **History** lists them all.
+- **Update amount**: a small popup for a new price, from the price tag button on each expense or the bill's popup on the Overview. **Takes effect from** can be backdated, or set ahead so the price changes on that day.
+- **Update balance**: a small popup for a loan's statement balance, rate and repayment, beside Edit.
+- Adding a loan that started in the past with no balance asks whether to work the balance out from the minimum repayments.
+
+### Improved
+- On the Goals page, tap an item to edit it. Paid back shows in green, and Still owed and Still to go in red.
+
+### Fixed
+- The payee name under each bill on the Overview lines up with the account name.
 
 ## v0.8.1 (12 October 2026)
 

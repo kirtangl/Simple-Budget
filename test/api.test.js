@@ -793,3 +793,31 @@ test('expense amounts and loan figures are logged as they change', () => withSer
   await call('DELETE', `/expenses/${e.id}`);
   assert.deepEqual((await call('GET', `/history/expense/${e.id}`)).body, []);
 }));
+
+test('a new price can start today, be backdated or wait for a future date', () => withServer({}, async (call) => {
+  const e = (await call('POST', '/expenses', { name: 'Home insurance', amount_cents: 150000, frequency: 'yearly', review_date: '2026-01-01' })).body;
+  let r = await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 160000, from: '2025-07-01', review_date: '2099-07-01' });
+  assert.equal(r.body.amount_cents, 160000);
+  assert.equal(r.body.review_date, '2099-07-01');
+  let h = (await call('GET', `/history/expense/${e.id}`)).body;
+  assert.deepEqual(h.map((x) => [x.on_date, x.value]).at(-1), ['2025-07-01', 160000]);
+  r = await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 175000, from: '2099-01-01' });
+  assert.equal(r.body.amount_cents, 160000); // not yet
+  assert.deepEqual([r.body.pending_cents, r.body.pending_from], [175000, '2099-01-01']);
+  assert.equal((await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 0 })).status, 400);
+}));
+
+test('a loan balance update keeps the estimate it replaced, and a past loan can be estimated', () => withServer({}, async (call) => {
+  const loan = { name: 'Car', principal_cents: 3000000, interest_rate: 7, start_date: '2024-01-01', term_months: 60, repayment_frequency: 'monthly' };
+  const est = (await call('POST', '/loans/estimate-balance', loan)).body;
+  assert.ok(est.balance_cents > 0 && est.balance_cents < 3000000);
+  const l = (await call('POST', '/loans', loan)).body;
+  const r = await call('POST', `/loans/${l.id}/balance`, { balance_cents: 2000000, balance_date: '2025-06-30', interest_rate: 6.5 });
+  assert.equal(r.status, 200);
+  const h = (await call('GET', `/history/loan/${l.id}`)).body;
+  const bal = h.find((x) => x.field === 'balance_cents');
+  assert.equal(bal.on_date, '2025-06-30');
+  assert.ok(bal.before_value > 2000000); // the estimate from the start date
+  assert.deepEqual(h.filter((x) => x.field === 'interest_rate').map((x) => [x.on_date, x.value]).at(-1), ['2025-06-30', 6.5]);
+  assert.equal((await call('POST', `/loans/${l.id}/balance`, { balance_cents: 1, balance_date: '2999-01-01' })).status, 400);
+}));

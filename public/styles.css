@@ -680,7 +680,8 @@ button.info:hover { color: var(--brand); border-color: var(--brand); }
   background: color-mix(in srgb, var(--line) 45%, transparent); display: grid; gap: 4px; }
 
 /* Overview: account name with its colour dot under each bill */
-.acct-tag { display: inline-flex; align-items: center; gap: 5px; }
+.acct-tag { display: inline-flex; align-items: center; gap: 5px; vertical-align: top; }
+.bill .meta:has(.acct-tag) { display: flex; align-items: center; flex-wrap: wrap; column-gap: 4px; }
 .acct-tag .dot { width: 8px; height: 8px; }
 .toolbar.compact { margin: -4px 0 8px; gap: 6px; }
 .toolbar.compact select { min-width: 120px; padding-top: 6px; padding-bottom: 6px; min-height: 0; font-size: .85rem; }
@@ -1153,7 +1154,8 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
 .g-stat-lbl { font-size: 12px; font-weight: 600; color: var(--muted); }
 .g-stat-val { font-size: 22px; font-weight: 700; margin-top: 4px; }
 .g-stat-val.saved { color: var(--paid); }
-.g-stat-val.paid-back { color: #ff7b72; }
+.g-stat-val.paid-back { color: var(--paid); }
+.g-stat-val.owed { color: var(--danger); }
 .g-stat-val.track { color: color-mix(in srgb, #79c0ff 70%, var(--info)); }
 .g-stat-sub { font-size: 12px; margin-top: 2px; color: color-mix(in srgb, var(--text) 72%, var(--card)); }
 .g-stat-sub.soon { color: #e0a040; }
@@ -1182,7 +1184,7 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
 .g-group-left { margin-left: auto; font-size: 12px; color: color-mix(in srgb, var(--text) 72%, var(--card)); }
 .g-items { list-style: none; margin: 0 16px 12px; padding: 0 0 0 14px; border-left: 3px solid var(--line); }
 .g-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 20px; align-items: start; padding: 12px 0; border-top: 1px solid var(--line); }
-.g-main { min-width: 0; }
+.g-main { min-width: 0; cursor: pointer; }
 .g-name { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
 .g-note { font-size: 13px; font-weight: 400; color: var(--muted); }
 .g-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
@@ -1627,3 +1629,24 @@ dialog.loan-modal .error:empty { display: none; }
 .lh-tr .r { text-align: right; }
 .lh-tr .ph-diff { margin: 0; }
 @media (max-width: 520px) { .lh-tr { grid-template-columns: 1fr 1fr; } .lh-tr > span:nth-child(3) { text-align: left; } .lh-th { display: none; } }
+
+/* Small popups: Update amount and Update balance, and the choice asked over a form. */
+.choice-text p { margin: 0 0 10px; line-height: 1.45; }
+.chip.pending { background: color-mix(in srgb, var(--info) 16%, transparent); color: var(--info); }
+.upd-amt { display: inline-flex; align-items: center; justify-content: center; position: relative; width: 26px; height: 26px; min-height: 0; padding: 0; margin-right: 8px;
+  vertical-align: middle; border: 1px solid var(--line); border-radius: 7px; background: none; box-shadow: none; color: var(--muted); cursor: pointer; }
+.upd-amt:hover, .upd-amt:focus-visible { color: var(--brand); border-color: var(--brand); }
+.upd-amt[data-tip]:hover::after, .upd-amt[data-tip]:focus-visible::after { content: attr(data-tip); position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 5;
+  white-space: nowrap; padding: 4px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--text); background: var(--card); border: 1px solid var(--line); box-shadow: 0 4px 12px rgb(0 0 0 / 25%); }
+.exp-td .r:has(.upd-amt) { white-space: nowrap; }
+.ld-head-btns .ld-upd { min-height: 0; padding: 5px 12px; font-size: 13px; }
+
+/* Loan chart: a point where the balance was updated, with the estimate it replaced on hover or tap. */
+.ld-pt { position: absolute; width: 12px; height: 12px; min-height: 0; padding: 0; margin: -6px 0 0 -6px; border-radius: 50%; z-index: 2;
+  border: 2px solid var(--card); background: var(--firm); box-shadow: 0 0 0 1px var(--firm); cursor: pointer; }
+.ld-pt:hover::after, .ld-pt:focus::after { content: attr(data-tip); position: absolute; left: 14px; top: 50%; transform: translateY(-50%); z-index: 6;
+  white-space: pre; padding: 6px 10px; border-radius: 8px; font-size: 12px; line-height: 1.5; text-align: left; font-weight: 500;
+  color: var(--text); background: var(--card); border: 1px solid var(--line); box-shadow: 0 6px 16px rgb(0 0 0 / 30%); }
+.ld-pt.tip-left:hover::after, .ld-pt.tip-left:focus::after { left: auto; right: 14px; }
+.ld-keys .k-pt { width: 9px; height: 9px; border-radius: 50%; background: var(--firm); }
+.lc-btns { display: inline-flex; gap: 14px; flex-wrap: wrap; justify-content: flex-end; }

@@ -226,6 +226,13 @@ const MIGRATIONS = [
   INSERT INTO amount_history (kind, item_id, field, on_date, value)
     SELECT 'loan', id, 'interest_rate', date('now', 'localtime'), interest_rate FROM loans WHERE interest_rate IS NOT NULL;
   `,
+  // 15: a price change set for a future date waits in pending_* until then, and a
+  // balance update keeps what the estimate was just before it (before_value).
+  `
+  ALTER TABLE expenses ADD COLUMN pending_cents INTEGER;
+  ALTER TABLE expenses ADD COLUMN pending_from TEXT;
+  ALTER TABLE amount_history ADD COLUMN before_value NUMERIC;
+  `,
 ];
 
 function openDatabase(file) {
