@@ -197,6 +197,10 @@ const MIGRATIONS = [
   `
   ALTER TABLE logins ADD COLUMN colour TEXT;
   `,
+  // 13: who a goal or debt belongs to (a login id; 0 is the main login). Empty means shared.
+  `
+  ALTER TABLE goals ADD COLUMN owner_id INTEGER;
+  `,
 ];
 
 function openDatabase(file) {

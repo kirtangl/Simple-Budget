@@ -576,7 +576,7 @@
   function openGoals(kind) {
     const today = state.data.settings.today;
     const rank = (g) => (g.target_date ? (g.target_date < today ? 0 : 1) : 2);
-    return state.data.goals.filter((g) => !g.done && g.kind === kind)
+    return state.data.goals.filter((g) => !g.done && g.kind === kind && shownGoal(g))
       .sort((a, b) => rank(a) - rank(b) || (a.target_date || '').localeCompare(b.target_date || '')
         || (b.target_cents ? b.current_cents / b.target_cents : 0) - (a.target_cents ? a.current_cents / a.target_cents : 0));
   }
@@ -635,17 +635,16 @@
     }
     return html`<li class="clickable goal-sum${button ? ' with-btn' : ''}" data-action="edit-goal" data-id="${g.id}">
       <div class="grow">
-        <div class="dep-top"><span class="title">${g.name}</span>
+        <div class="dep-top"><span class="title">${g.name}${household() ? html` ${ownerTag(g)}` : ''}</span>
           <span class="dep-amt">${g.target_cents ? html`<b class="num">${money(left)}</b> <span class="muted">to go</span>` : html`<b class="num">${money(g.current_cents)}</b> <span class="muted">${debt ? 'paid' : 'saved'}</span>`}</span></div>
         <div class="goal-when">${when}</div>${body}
       </div>${button ? html`<button type="button" data-action="edit-goal" data-id="${g.id}">Edit</button>` : ''}</li>`;
   }
 
-  // Goals and debts that need attention: overdue or due soonest first, then the rest by progress.
   // Money already put aside in open savings goals, by the account it sits in (null: no account).
-  function goalSavings() {
+  function goalSavings(goals = state.data.goals) {
     const by = new Map();
-    for (const g of state.data.goals) {
+    for (const g of goals) {
       if (g.kind !== 'goal' || g.done || !(g.current_cents > 0)) continue;
       const key = g.account_id ?? null;
       const x = by.get(key) || { cents: 0, goals: [] };
@@ -656,16 +655,43 @@
     return by;
   }
 
+  // Who a goal belongs to. Only shown once the household has more than one login.
+  const household = () => (state.logins || []).length > 1;
+  const ownerOf = (g) => (g.owner_id == null ? null : (state.logins || []).find((l) => l.id === g.owner_id) || null);
+  const whoKey = () => `goal-who-${state.me ? state.me.id : ''}`;
+  // 'mine' shows your own goals and shared ones; anything else shows everyone's.
+  const goalWho = () => {
+    if (!household()) return 'all';
+    if (state.goalWho == null) { try { state.goalWho = localStorage.getItem(whoKey()) || 'all'; } catch { state.goalWho = 'all'; } }
+    return state.goalWho;
+  };
+  const shownGoal = (g) => goalWho() !== 'mine' || g.owner_id == null || g.owner_id === state.me.id;
+  function setGoalWho(who) {
+    state.goalWho = who;
+    try { localStorage.setItem(whoKey(), who); } catch { /* this device only, then */ }
+    render();
+  }
+  function ownerTag(g) {
+    if (!household()) return '';
+    const l = ownerOf(g);
+    return l ? html`<span class="g-owner" style="--who:${l.colour || 'var(--brand)'}">${l.name}</span>` : html`<span class="g-owner shared">Shared</span>`;
+  }
+  const PERSON_ICON = raw('<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><circle cx="8" cy="5" r="3" fill="currentColor"/><path d="M2 15c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z" fill="currentColor"/></svg>');
+  // The small Overview switch between your goals and everyone's.
+  const whoIcon = () => (household() ? html`<button type="button" class="who-btn ${goalWho() === 'mine' ? 'on' : ''}" data-action="goal-who" data-who="${goalWho() === 'mine' ? 'all' : 'mine'}"
+    aria-pressed="${goalWho() === 'mine' ? 'true' : 'false'}" title="${goalWho() === 'mine' ? "Showing yours and shared ones. Tap to show everyone's" : 'Showing everyone\'s. Tap to show just yours'}">${PERSON_ICON}<span>${goalWho() === 'mine' ? 'Mine' : 'All'}</span></button>` : '');
+
+  // Goals and debts that need attention: overdue or due soonest first, then the rest by progress.
   function goalsSummary() {
-    const open = state.data.goals.filter((g) => !g.done);
-    if (!open.length) return '';
+    if (!state.data.goals.some((g) => !g.done)) return '';
+    const open = state.data.goals.filter((g) => !g.done && shownGoal(g));
     const pick = (kind) => openGoals(kind).slice(0, 3);
     const section = (kind, title) => {
       const list = pick(kind);
       const total = open.filter((g) => g.kind === kind).length;
       return html`
         <section class="card soft-${kind}">
-          <div class="card-head"><h2>${title}</h2><button type="button" class="linkish small" data-action="goal-list" data-kind="${kind}">See all${total > list.length ? ` (${total})` : ''}</button></div>
+          <div class="card-head"><h2>${title}</h2><span class="head-tools">${whoIcon()}<button type="button" class="linkish small" data-action="goal-list" data-kind="${kind}">See all${total > list.length ? ` (${total})` : ''}</button></span></div>
           ${list.length ? html`<ul class="list">${list.map((g) => goalRow(g))}</ul>` : html`<p class="empty">Nothing open.</p>`}
         </section>`;
     };
@@ -1461,7 +1487,7 @@
       <li class="g-item" data-goal="${g.id}">
         <div class="g-main">
           <div class="g-name">${g.name}${g.notes ? html`<span class="g-note"> · ${g.notes}</span>` : ''}</div>
-          <div class="g-chips">${goalStatusChip(g)}
+          <div class="g-chips">${ownerTag(g)}${goalStatusChip(g)}
             ${acct ? html`<span class="g-acct"><span class="dot" style="background:${accountColor(acct.id)}"></span>${acct.name}</span>` : ''}
             ${debt && g.start_date ? html`<span class="g-started">Started ${fmtDate(g.start_date, true)}</span>` : ''}</div>
           <div class="g-progress">
@@ -1493,7 +1519,8 @@
   function renderGoals(kind) {
     const k = KIND[kind];
     const debt = kind === 'debt';
-    const all = state.data.goals.filter((g) => g.kind === kind);
+    const everyone = state.data.goals.filter((g) => g.kind === kind);
+    const all = everyone.filter(shownGoal);
     const items = all.filter((g) => !g.done);
     const done = all.filter((g) => g.done);
     const groups = new Map();
@@ -1519,7 +1546,7 @@
     </div>`;
 
     // Saving for: what's saved in each account, so it can be checked against the bank.
-    const byAccount = debt ? new Map() : goalSavings();
+    const byAccount = debt ? new Map() : goalSavings(items);
     const acctStrip = byAccount.size ? html`<div class="card g-accts"><span class="g-accts-lbl">Saved by account</span>
       ${[...byAccount.entries()].map(([id, x]) => {
         const a = id != null && account(id);
@@ -1553,7 +1580,14 @@
           <button type="button" class="linkish" data-action="toggle-goal" data-id="${g.id}">Undo</button></li>`)}</ul>` : ''}
       </section>` : '';
 
+    const hidden = everyone.filter((g) => !g.done).length - items.length;
+    const whoBar = household() ? html`<div class="g-who"><span class="mini-seg" role="group" aria-label="Whose ${k.title.toLowerCase()}">
+        <button type="button" class="${goalWho() === 'mine' ? 'on' : ''}" data-action="goal-who" data-who="mine" aria-pressed="${goalWho() === 'mine' ? 'true' : 'false'}">${PERSON_ICON} Mine</button>
+        <button type="button" class="${goalWho() !== 'mine' ? 'on' : ''}" data-action="goal-who" data-who="all" aria-pressed="${goalWho() !== 'mine' ? 'true' : 'false'}">Everyone's</button></span>
+      ${hidden ? html`<span class="muted small">Hiding ${hidden} of ${[...new Set(everyone.filter((g) => !shownGoal(g)).map((g) => (ownerOf(g) || {}).name))].join(' and ')}'s</span>` : ''}</div>` : '';
+
     return html`
+      ${whoBar}
       ${items.length || done.length ? summary : ''}
       ${acctStrip}
       ${items.length ? groupCards : html`<div class="card"><p class="empty">${done.length ? 'Everything here is done.' : `No ${k.title.toLowerCase()} yet.`}</p></div>`}
@@ -1665,6 +1699,8 @@
           : html`
           <div class="field full"><label for="g-date">Aim for (optional)</label><input id="g-date" type="date" name="target_date" value="${g.target_date || ''}">
             <div class="hint">The date you'd like to reach this goal.</div></div>`}
+          ${household() ? html`<div class="field full"><label for="g-owner">Whose is it?</label><select id="g-owner" name="owner_id">
+            <option value="">Shared</option>${state.logins.map((l) => html`<option value="${l.id}" ${(g.id ? g.owner_id === l.id : l.you) ? raw('selected') : ''}>${l.name}${l.you ? ' (you)' : ''}</option>`)}</select></div>` : ''}
           <div class="field full"><label for="g-notes">Notes</label><textarea id="g-notes" name="notes" rows="2">${g.notes || ''}</textarea></div>
           <div class="field full"><label class="check"><input type="checkbox" name="done" ${g.done ? raw('checked') : ''}> Done</label></div>
         </div>`,
@@ -1685,6 +1721,7 @@
           target_date: val(form, 'target_date') || null,
         };
         if (kind === 'goal') body.account_id = idVal(form, 'account_id');
+        if (form.elements.owner_id) body.owner_id = form.elements.owner_id.value === '' ? null : Number(form.elements.owner_id.value);
         if (kind === 'debt') {
           body.start_date = val(form, 'start_date') || null;
           body.target_firm = form.elements.target_firm.checked;
@@ -3352,6 +3389,7 @@ sudo docker compose up -d --build</pre>`;
     'edit-expense': (el) => { const e = findById(state.data.expenses, el); if (e) expenseForm(e); },
     'new-goal': (el) => goalForm(el.dataset.kind),
     'goal-list': (el) => goalListPopup(el.dataset.kind),
+    'goal-who': (el) => setGoalWho(el.dataset.who),
     'edit-goal': (el) => { const g = findById(state.data.goals, el); if (g) goalForm(g.kind, g); },
     'ld-working': (el) => {
       const box = el.closest('.ld').querySelector('.ld-working');
@@ -3875,7 +3913,8 @@ sudo docker compose up -d --build</pre>`;
       await reload();
       // Who's logged in: their name in the menu, and their theme.
       state.me = await api('GET', '/me');
-      state.logins = null;
+      state.goalWho = null;
+      state.logins = await api('GET', '/logins').catch(() => null);
       applyTheme(state.me.theme, state.me.custom_theme);
       showMe();
       render();

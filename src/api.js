@@ -144,8 +144,10 @@ const RESOURCES = {
   goals: {
     fields: { kind: T.enumOf('goal', 'debt'), group_name: T.text, name: T.text, target_cents: T.positiveCents,
       current_cents: T.positiveCents, notes: T.text, done: T.bool, sort_order: T.int,
-      start_date: T.date, target_date: T.date, target_firm: T.bool, account_id: T.int },
+      start_date: T.date, target_date: T.date, target_firm: T.bool, account_id: T.int, owner_id: T.int },
     required: ['kind', 'name'],
+    // A new goal belongs to whoever added it, unless the form says otherwise.
+    owned: true,
     order: 'done, group_name COLLATE NOCASE, sort_order, name COLLATE NOCASE',
   },
   loans: {
@@ -469,6 +471,7 @@ function createApi(db) {
 
     router.post(`/${name}`, (req, res) => {
       const data = clean(resource, req.body, { partial: false });
+      if (resource.owned && !(req.body && 'owner_id' in req.body) && req.login) data.owner_id = req.login.id;
       checkUnique(data);
       const cols = Object.keys(data);
       const sql = `INSERT INTO ${name} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`;

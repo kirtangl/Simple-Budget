@@ -755,3 +755,20 @@ test('updates: wait a day, how often to check, and how many backups to keep', as
     });
   } finally { fs.rmSync(dataDir, { recursive: true, force: true }); }
 });
+
+test('goals belong to whoever added them, can be shared, and become shared when a login goes', () => withServer({}, async (call) => {
+  const sam = (await call('POST', '/logins', { name: 'Sam', password: 'sams-pw-1' })).body;
+  const mine = (await call('POST', '/goals', { kind: 'goal', name: 'Bike' })).body;
+  assert.equal(mine.owner_id, 0); // the main login added it
+  const shared = (await call('POST', '/goals', { kind: 'goal', name: 'Holiday', owner_id: null })).body;
+  assert.equal(shared.owner_id, null);
+  await call('POST', '/logout');
+  await call('POST', '/login', { password: 'sams-pw-1' });
+  const sams = (await call('POST', '/goals', { kind: 'debt', name: 'Phone' })).body;
+  assert.equal(sams.owner_id, sam.id);
+  assert.equal((await call('PATCH', `/goals/${mine.id}`, { name: 'Road bike' })).body.owner_id, 0); // editing keeps the owner
+  await call('POST', '/logout');
+  await call('POST', '/login', { password: 'household-pw' });
+  assert.equal((await call('DELETE', `/logins/${sam.id}`)).status, 200);
+  assert.equal((await call('GET', '/goals')).body.find((g) => g.id === sams.id).owner_id, null);
+}));
