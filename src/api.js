@@ -567,11 +567,19 @@ function createApi(db) {
       ? budget.simulateLoan({ ...l, balance_cents: est.estimated_balance_cents, balance_date: now, budget_cents: null, budget_frequency: null, budget_date: null }, null,
         (date, balance) => bankPoints.push([budget.addDays(date, -1).slice(0, 7), Math.round(Math.max(0, balance))]))
       : null;
+    // The plan: the loan from its start at the current repayments, ignoring any statement balances.
+    // The actual path (through the balances entered) is drawn against it.
+    const planPoints = [];
+    const plan = l.start_date && l.principal_cents > 0 && l.balance_date
+      ? budget.simulateLoan({ ...l, balance_cents: null, balance_date: null }, null,
+        (date, balance) => planPoints.push([budget.addDays(date, -1).slice(0, 7), Math.round(Math.max(0, balance))]))
+      : null;
     // Interest charged since 1 July (whole months so far).
     const fy = budget.yearStart(now, 'financial').slice(0, 7);
     const interestFy = timeline ? timeline.points.filter((p) => p.month >= fy && p.month < now.slice(0, 7)).reduce((t, p) => t + p.interest_cents, 0) : null;
     res.json({ ...l, ...est, timeline,
       bank: bank ? { points: bankPoints, interest_cents: bank.interest_cents, payoff_date: bank.paid_off ? bank.date : null } : null,
+      plan: plan ? { points: planPoints, payoff_date: plan.paid_off ? plan.date : null } : null,
       interest_fy_cents: interestFy, history: historyOf(db, 'loan', l.id) });
   });
 

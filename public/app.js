@@ -2134,14 +2134,22 @@
     if (!t || t.points.length < 2) return '';
     const today = state.data.settings.today;
     const todayI = monthIdx(today) + (Number(today.slice(8)) - 1) / 30;
-    const plan = t.points.map((p) => [monthIdx(p.month), p.balance_cents]);
+    const at = (d) => monthIdx(d) + (Number(d.slice(8)) - 1) / 30;
+    // With a statement balance, the plan runs from the start ignoring it, and the actual path goes
+    // through each balance entered, then on at today's repayments.
+    const planned = l.plan && l.plan.points.length > 1;
+    const plan = (planned ? l.plan.points : t.points.map((p) => [p.month, p.balance_cents])).map(([m, v]) => [monthIdx(m), v]);
     const startI = l.start_date ? monthIdx(l.start_date) : plan[0][0] - 1;
     if (l.start_date && l.principal_cents) plan.unshift([startI, l.principal_cents]);
+    const updates = (l.history || []).filter((r) => r.field === 'balance_cents').map((r) => [at(r.on_date), Number(r.value)]).sort((a, b) => a[0] - b[0]);
+    const lastI = updates.length ? updates.at(-1)[0] : null;
+    const actual = planned && updates.length ? [[startI, l.principal_cents], ...updates,
+      ...t.points.map((p) => [monthIdx(p.month), p.balance_cents]).filter(([i]) => i > lastI)] : [];
     const bal = l.estimated_balance_cents || 0;
     const bank = l.bank ? [[todayI, bal], ...l.bank.points.map(([m, v]) => [monthIdx(m), v])] : [];
     const extra = extraPoints ? [[todayI, bal], ...extraPoints.map((v, k) => [monthIdx(today) + k + 1, v])] : [];
-    const endI = Math.max(l.end_date ? monthIdx(l.end_date) : 0, plan.at(-1)[0], bank.length ? bank.at(-1)[0] : 0);
-    const top = Math.max(l.principal_cents || 0, ...plan.map((p) => p[1]), 1);
+    const endI = Math.max(l.end_date ? monthIdx(l.end_date) : 0, plan.at(-1)[0], bank.length ? bank.at(-1)[0] : 0, actual.length ? actual.at(-1)[0] : 0);
+    const top = Math.max(l.principal_cents || 0, ...plan.map((p) => p[1]), ...actual.map((p) => p[1]), 1);
     const W = 560; const H = 180;
     const x = (i) => ((i - startI) / (endI - startI || 1)) * W;
     const y = (v) => 6 + (1 - v / top) * (H - 6);
@@ -2162,13 +2170,14 @@
         <path d="${area}" fill="#2ec4b6" opacity=".12"></path>
         ${bank.length > 1 ? html`<path d="${path(bank)}" fill="none" stroke="#8b98a8" stroke-width="1.5" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"></path>` : ''}
         <path d="${line}" fill="none" stroke="#2ec4b6" stroke-width="2.5" vector-effect="non-scaling-stroke"></path>
+        ${actual.length > 1 ? html`<path class="ld-actual" d="${path(actual)}" fill="none" stroke="var(--firm)" stroke-width="2.5" vector-effect="non-scaling-stroke"></path>` : ''}
         ${extra.length > 1 ? html`<path d="${path(extra)}" fill="none" stroke="#3fb950" stroke-width="2.5" vector-effect="non-scaling-stroke"></path>` : ''}
         <line x1="${x(todayI)}" x2="${x(todayI)}" y1="0" y2="${H}" stroke="#5b6778" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"></line>
         ${marks.map(({ r, i }) => html`<line class="ld-mark" x1="${x(i).toFixed(1)}" x2="${x(i).toFixed(1)}" y1="0" y2="${H}" stroke="var(--firm)" stroke-width="1.5" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"><title>${fmtDate(r.on_date, true)}: ${LOAN_FIELDS[r.field]} ${loanHistoryValue(r)}</title></line>`)}
         <line class="ld-cursor" x1="0" x2="0" y1="0" y2="${H}" stroke="currentColor" stroke-width="1" opacity="0" vector-effect="non-scaling-stroke"></line>
       </svg>
       <span class="ld-today" style="left:${(x(todayI) / W) * 100}%">Today</span>
-      <div class="ld-pts">${balancePoints(l, x, y, startI, endI, W, H, plan)}</div>
+      <div class="ld-pts">${balancePoints(l, x, y, startI, endI, W, H, actual.length ? null : plan)}</div>
       <div class="ld-tip" hidden></div>
       <div class="ld-years">${years.map((yr) => html`<span style="left:${(x(yr * 12) / W) * 100}%">${yr}</span>`)}</div>
     </div>`;
@@ -2183,6 +2192,7 @@
       const [i0, v0] = plan[k - 1]; const [i1, v1] = plan[k];
       return v0 + ((v1 - v0) * (i - i0)) / (i1 - i0 || 1);
     };
+    // On the actual line (plan null), a dot sits at the balance itself.
     return (l.history || []).filter((r) => r.field === 'balance_cents').map((r) => {
       const i = monthIdx(r.on_date) + (Number(r.on_date.slice(8)) - 1) / 30;
       if (i < startI || i > endI) return '';
@@ -2193,7 +2203,7 @@
         `Set to: ${money(r.value)}`,
         diff != null ? `Difference: ${diff > 0 ? '+' : diff < 0 ? '−' : ''}${money(Math.abs(Math.round(diff)))}` : null].filter(Boolean).join('\n');
       const right = x(i) / W > 0.6;
-      return html`<button type="button" class="ld-pt ${right ? 'tip-left' : ''}" style="left:${(x(i) / W) * 100}%;top:${(y(lineAt(i)) / H) * 100}%" data-tip="${tip}" aria-label="${tip.replace(/\n/g, '. ')}"></button>`;
+      return html`<button type="button" class="ld-pt ${right ? 'tip-left' : ''}" style="left:${(x(i) / W) * 100}%;top:${(y(plan ? lineAt(i) : Number(r.value)) / H) * 100}%" data-tip="${tip}" aria-label="${tip.replace(/\n/g, '. ')}"></button>`;
     });
   }
 
@@ -2380,7 +2390,7 @@
 
         ${t && t.points.length > 1 ? html`<div class="ld-pad ld-sec">
           <div class="ld-sec-head"><h3>Balance over time</h3>${l.history && l.history.length ? html`<button type="button" class="linkish small" data-action="loan-history">History</button>` : ''}</div>
-          <div class="ld-keys"><span><i class="k-plan"></i>Your plan</span>${l.bank ? html`<span><i class="k-bank"></i>Bank schedule</span>` : ''}${(l.history || []).some((r) => r.field === 'balance_cents') ? html`<span><i class="k-pt"></i>Balance updated</span>` : ''}${(() => { const seenF = new Set(); return (l.history || []).some((r) => { const again = seenF.has(r.field); seenF.add(r.field); return again && r.field !== 'balance_cents'; }); })() ? html`<span><i class="k-mark"></i>Rate or repayment changed</span>` : ''}<span class="ld-key-extra" hidden><i class="k-extra"></i>With extra</span></div>
+          <div class="ld-keys"><span><i class="k-plan"></i>Your plan</span>${l.bank ? html`<span><i class="k-bank"></i>Bank schedule</span>` : ''}${(l.history || []).some((r) => r.field === 'balance_cents') ? html`<span><i class="k-pt ${l.plan ? 'k-actual' : ''}"></i>${l.plan ? 'Actual (balance updates)' : 'Balance updated'}</span>` : ''}${(() => { const seenF = new Set(); return (l.history || []).some((r) => { const again = seenF.has(r.field); seenF.add(r.field); return again && r.field !== 'balance_cents'; }); })() ? html`<span><i class="k-mark"></i>Rate or repayment changed</span>` : ''}<span class="ld-key-extra" hidden><i class="k-extra"></i>With extra</span></div>
           <div class="ld-chart-wrap">${loanChart(l, null)}</div>
         </div>` : ''}
 

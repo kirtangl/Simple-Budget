@@ -9,7 +9,7 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 - Goals and repayments remember who added them, shown as their name in their colour, or Shared. Switch between **Mine** and **Everyone's** on the Goals page, or with the small person button on the Overview.
 - Price reviews: give a bill a review date, like an insurance renewal. Once it passes, the Overview asks if the price has changed, with **Update price**, **Remind me in 7 days** and **Skip until next year**.
 - Price history: every change to a bill's amount is kept from now on, and shown as a curved chart when you open the bill. Tap a point for its date and amount. A price set for a future date shows in orange.
-- Loan history: changes to a loan's repayment and rate are marked on its chart with dotted lines, each balance you enter is a point you can hover or tap to see the estimate it replaced, and **History** lists them all.
+- Loan history: changes to a loan's repayment and rate are marked on its chart with dotted lines, and **History** lists them all. Each balance you enter is a point on an orange **Actual** line, drawn against your plan and carried on to pay-off at your current repayments. Hover or tap a point to see the estimate it replaced.
 - **Update amount**: a small popup for a new price, from the price tag button on each expense or the bill's popup on the Overview. **Takes effect from** can be backdated, or set ahead so the price changes on that day.
 - **Update balance**: a small popup for a loan's statement balance, rate and repayment, beside Edit.
 - Back-dated prices slot into a bill's history in date order, so you can fill in what it used to cost. The newest price is still the one used.

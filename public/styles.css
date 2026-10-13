@@ -1700,3 +1700,6 @@ dialog.loan-modal .error:empty { display: none; }
 .lh-tr .ph-bin { justify-self: end; }
 .show-more { margin-top: 8px; font-size: 13px; }
 .ph-list li.more[hidden], .lh-tr.more[hidden] { display: none; }
+/* The actual path's key: its orange line with a dot. */
+.ld-keys .k-pt.k-actual { width: 18px; border-radius: 0; background: linear-gradient(var(--firm), var(--firm)) center / 18px 2.5px no-repeat,
+  radial-gradient(circle, var(--firm) 4px, transparent 4.5px) center / 9px 9px no-repeat; }
