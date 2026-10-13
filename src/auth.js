@@ -347,6 +347,8 @@ function createAuth({ db, secret, secureCookies }) {
       if (id === MAIN) return res.status(400).json({ error: "The main login can't be removed." });
       if (id === req.login.id) return res.status(400).json({ error: "You can't remove the login you're using." });
       const { changes } = db.prepare('DELETE FROM logins WHERE id = ?').run(id);
+      // Their goals become shared, so a future login given the same id doesn't inherit them.
+      if (changes) db.prepare('UPDATE goals SET owner_id = NULL WHERE owner_id = ?').run(id);
       if (!changes) return res.status(404).json({ error: 'Not found.' });
       res.json({ ok: true });
     },

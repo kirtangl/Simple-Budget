@@ -346,3 +346,27 @@ test('an offset balance cuts the interest from the statement on, not before it',
   assert.ok(saved > 280000 && saved < 320000, String(saved));
   assert.ok(offset.payoff_date < plain.payoff_date);
 });
+
+test('minimum balance follows the standard schedule and reaches zero at the end', () => {
+  const loan = { principal_cents: 2000000, interest_rate: 8, start_date: '2024-02-01', term_months: 60, repayment_frequency: 'monthly' };
+  const r = budget.minimumBalance(loan, '2026-10-13'); // 32 repayments made
+  assert.equal(r.repayments, 32);
+  assert.equal(r.repayment_cents, 40553);
+  assert.equal(r.balance_cents, 1032670); // checked by stepping month by month
+  assert.equal(budget.minimumBalance(loan, '2029-02-01').balance_cents, 0);
+  assert.equal(budget.minimumBalance({ ...loan, term_months: null }, '2026-01-01'), null);
+  const f = budget.minimumBalance({ ...loan, repayment_frequency: 'fortnightly', interest_rate: 0 }, '2024-03-01'); // 2 fortnights in
+  assert.equal(f.repayments, 2);
+  assert.equal(f.balance_cents, Math.round(2000000 - (2000000 / 130) * 2));
+});
+
+test('the balance before a statement follows the repayments down to it', () => {
+  // The next due date is in the future, but repayments were made since the start.
+  const loan = { id: 1, name: 'Car', principal_cents: 2000000, interest_rate: 8, term_months: 60, repayment_frequency: 'monthly',
+    start_date: '2023-06-01', scheduled_date: '2026-10-20' };
+  const min = budget.minimumBalance(loan, '2026-10-13');
+  const t = budget.loanTimeline({ ...loan, balance_cents: min.balance_cents, balance_date: '2026-10-13' }, '2026-10-13');
+  const past = t.points.filter((p) => p.month < '2026-10');
+  for (let i = 1; i < past.length; i++) assert.ok(past[i].balance_cents < past[i - 1].balance_cents);
+  assert.ok(Math.abs(past.at(-1).balance_cents - min.balance_cents) < 50000); // meets the statement, no sudden drop
+});

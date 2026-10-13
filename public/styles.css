@@ -680,7 +680,8 @@ button.info:hover { color: var(--brand); border-color: var(--brand); }
   background: color-mix(in srgb, var(--line) 45%, transparent); display: grid; gap: 4px; }
 
 /* Overview: account name with its colour dot under each bill */
-.acct-tag { display: inline-flex; align-items: center; gap: 5px; }
+.acct-tag { display: inline-flex; align-items: center; gap: 5px; vertical-align: top; }
+.bill .meta:has(.acct-tag) { display: flex; align-items: center; flex-wrap: wrap; column-gap: 4px; }
 .acct-tag .dot { width: 8px; height: 8px; }
 .toolbar.compact { margin: -4px 0 8px; gap: 6px; }
 .toolbar.compact select { min-width: 120px; padding-top: 6px; padding-bottom: 6px; min-height: 0; font-size: .85rem; }
@@ -1038,7 +1039,7 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
   .exp-ghead .g-right { font-size: 13px; }
 }
 #modal-form { position: relative; }
-.sheet-reset { position: absolute; top: 22px; right: 18px; font-size: 14px; font-weight: 600; text-decoration: none !important; }
+.sheet-reset { position: absolute; top: 26px; right: 64px; font-size: 14px; font-weight: 600; text-decoration: none !important; }
 .sheet-group { margin-bottom: 16px; }
 .sheet-label { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 8px; }
 .sheet-chips { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -1050,7 +1051,7 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 899px) { .exp-rows .b-payee { display: none; } }
 #modal-form:has(.sheet-reset)::before { content: ''; display: block; width: 40px; height: 4px; border-radius: 2px; margin: -6px auto 12px;
   background: color-mix(in srgb, var(--text) 25%, var(--card)); }
-#modal-form:has(.sheet-reset) .sheet-reset { top: 32px; }
+#modal-form:has(.sheet-reset) .sheet-reset { top: 36px; }
 
 /* ---------- Loans tab ---------- */
 .loan-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
@@ -1070,7 +1071,7 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
 .lc-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 10px; border-radius: 12px; border: 1px solid var(--line); }
 .lc-chip .dot { width: 7px; height: 7px; }
 .lc-chip.soft { color: color-mix(in srgb, var(--text) 72%, var(--card)); }
-.lc-right { display: flex; align-items: flex-start; gap: 16px; text-align: right; flex: none; }
+.lc-right { display: flex; align-items: flex-start; gap: 24px; text-align: right; flex: none; }
 .lc-bal .num { font-size: 20px; font-weight: 700; }
 .lc-bal .muted { font-size: 12px; }
 .lc-edit { font-size: 13px; font-weight: 600; margin-top: 4px; }
@@ -1134,7 +1135,9 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 720px) {
   .loan-stats { grid-template-columns: 1fr; gap: 10px; }
   .lc-head { flex-direction: column; gap: 10px; }
-  .lc-right { width: 100%; justify-content: space-between; text-align: left; }
+  .lc-right { width: 100%; flex-direction: column; align-items: stretch; gap: 10px; text-align: left; }
+  .lc-right .lc-bal { order: -1; }
+  .lc-right .lc-btns { justify-content: flex-start; }
   .lc-strip:not(.calc-strip) { grid-template-columns: 1fr; }
   .calc-grid { grid-template-columns: 1fr; }
   .calc-strip { grid-template-columns: 1fr; }
@@ -1153,11 +1156,28 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
 .g-stat-lbl { font-size: 12px; font-weight: 600; color: var(--muted); }
 .g-stat-val { font-size: 22px; font-weight: 700; margin-top: 4px; }
 .g-stat-val.saved { color: var(--paid); }
-.g-stat-val.paid-back { color: #ff7b72; }
+.g-stat-val.paid-back { color: var(--paid); }
+.g-stat-val.owed { color: var(--danger); }
 .g-stat-val.track { color: color-mix(in srgb, #79c0ff 70%, var(--info)); }
 .g-stat-sub { font-size: 12px; margin-top: 2px; color: color-mix(in srgb, var(--text) 72%, var(--card)); }
 .g-stat-sub.soon { color: #e0a040; }
 .g-stats + .card, .g-group + .card { margin-top: 16px; }
+.g-accts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding: 12px 16px; margin-bottom: 16px; }
+.g-accts-lbl { font-size: 12px; font-weight: 600; color: var(--muted); }
+.g-acct-total { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.g-acct-total b, .goal-saved b, .sv-total { color: var(--paid); }
+.sv-goals { margin-top: 16px; }
+.sv-acct { border-left: 3px solid var(--acct); padding: 4px 0 4px 12px; margin-top: 12px; }
+.sv-acct-head { display: flex; align-items: center; gap: 8px; }
+.sv-acct-head .dot { background: var(--acct); }
+.sv-total { margin-left: auto; font-weight: 700; }
+.sv-list { list-style: none; margin: 6px 0 0; padding: 0; }
+.sv-list li { display: flex; align-items: center; gap: 12px; padding: 5px 0; font-size: 13px; border-top: 1px solid var(--line); }
+.sv-list .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.sv-bar { width: 90px; flex: none; }
+.sv-amt { min-width: 130px; text-align: right; }
+.sv-bar .bar { margin: 0; }
+@media (max-width: 600px) { .sv-bar { display: none; } .sv-amt { min-width: 0; } }
 .g-group { padding: 0; }
 .g-group-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; }
 .g-group-head h2 { font-size: 15px; font-weight: 700; }
@@ -1166,7 +1186,7 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
 .g-group-left { margin-left: auto; font-size: 12px; color: color-mix(in srgb, var(--text) 72%, var(--card)); }
 .g-items { list-style: none; margin: 0 16px 12px; padding: 0 0 0 14px; border-left: 3px solid var(--line); }
 .g-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 20px; align-items: start; padding: 12px 0; border-top: 1px solid var(--line); }
-.g-main { min-width: 0; }
+.g-main { min-width: 0; cursor: pointer; }
 .g-name { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
 .g-note { font-size: 13px; font-weight: 400; color: var(--muted); }
 .g-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
@@ -1571,3 +1591,115 @@ dialog.loan-modal .error:empty { display: none; }
   .upd-grid { grid-template-columns: 1fr; }
 }
 
+
+/* Goal owners: the name in the login's colour, and the Mine / Everyone's switch. */
+.g-owner { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; vertical-align: 1px;
+  color: color-mix(in srgb, var(--who) 70%, var(--text)); background: color-mix(in srgb, var(--who) 18%, transparent); }
+.g-owner.shared { --who: var(--muted); color: var(--muted); }
+.g-who { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 12px; }
+.g-who .mini-seg button { display: inline-flex; align-items: center; gap: 5px; }
+.head-tools { display: inline-flex; align-items: center; gap: 10px; flex: none; }
+.who-btn { display: inline-flex; align-items: center; gap: 4px; min-height: 0; padding: 3px 8px; border: 1px solid var(--line); border-radius: 999px;
+  background: none; box-shadow: none; font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.who-btn.on { background: var(--brand-soft); color: var(--brand); border-color: transparent; }
+
+/* Price reviews: the Overview reminder and its three choices. */
+.review-banner { border-color: color-mix(in srgb, var(--info) 45%, var(--line)); }
+.review-banner .note-tag { background: var(--info); }
+.review-banner .grow { min-width: 0; }
+.review-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.review-actions button { min-height: 0; padding: 6px 12px; font-size: 13px; }
+
+/* Price and loan history: a step chart with the changes listed under it. */
+.ph-title { font-size: 14px; font-weight: 700; margin: 16px 0 8px; }
+.ph-box { position: relative; }
+.ph-chart { display: block; width: 100%; height: 110px; background: color-mix(in srgb, var(--brand) 5%, transparent); border-radius: 8px; }
+.ph-pts { position: absolute; inset: 0; pointer-events: none; }
+.ph-pt { position: absolute; width: 10px; height: 10px; min-height: 0; padding: 0; margin: -5px 0 0 -5px; border-radius: 50%; pointer-events: auto; cursor: pointer;
+  border: 2px solid var(--card); background: var(--brand); box-shadow: 0 0 0 1px var(--brand); }
+.ph-pt.future { background: var(--firm); box-shadow: 0 0 0 1px var(--firm); }
+.ph-pt:hover::after, .ph-pt:focus::after { content: attr(data-tip); position: absolute; left: 12px; bottom: 10px; z-index: 6; white-space: pre; padding: 5px 9px; border-radius: 8px;
+  font-size: 12px; line-height: 1.45; font-weight: 500; color: var(--text); background: var(--card); border: 1px solid var(--line); box-shadow: 0 6px 16px rgb(0 0 0 / 30%); }
+.ph-pt.tip-left:hover::after, .ph-pt.tip-left:focus::after { left: auto; right: 12px; }
+.ph-today { position: absolute; top: 3px; margin-left: 5px; font-size: 11px; color: var(--muted); pointer-events: none; }
+.ph-list li.future { color: var(--firm); }
+.ph-diff.soon { color: var(--firm); }
+.ph-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 4px; }
+.ph-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.ph-list li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.ph-date { width: 110px; flex: none; color: var(--muted); }
+.ph-diff { margin-left: auto; font-size: 12px; font-weight: 600; }
+.ph-diff.worse { color: var(--danger); }
+.ph-diff.better { color: var(--paid); }
+.ph-diff.muted { font-weight: 400; }
+
+/* Loan history: dotted change markers on the chart, and the History table. */
+.ld-keys .k-mark { width: 0; height: 12px; border-left: 2px dotted var(--firm); border-radius: 0; }
+.ld-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.lh-table { font-size: 13px; }
+.lh-tr { display: grid; grid-template-columns: 1.1fr 1fr 1.2fr .9fr 28px; gap: 8px; padding: 7px 0; border-top: 1px solid var(--line); align-items: baseline; }
+.lh-th { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); border-top: 0; }
+.lh-tr .r { text-align: right; }
+.lh-tr .ph-diff { margin: 0; }
+@media (max-width: 520px) { .lh-tr { grid-template-columns: 1fr 1fr 28px; grid-template-areas: "d w b" "a c b"; }
+  .lh-tr > span:nth-child(1) { grid-area: d; } .lh-tr > span:nth-child(2) { grid-area: w; } .lh-tr > span:nth-child(3) { grid-area: a; }
+  .lh-tr > span:nth-child(4) { grid-area: c; } .lh-tr > span:nth-child(5) { grid-area: b; align-self: center; } .lh-tr > span:nth-child(3) { text-align: left; } .lh-th { display: none; } }
+
+/* Small popups: Update amount and Update balance, and the choice asked over a form. */
+.choice-text p { margin: 0 0 10px; line-height: 1.45; }
+.chip.pending { background: color-mix(in srgb, var(--info) 16%, transparent); color: var(--info); }
+.upd-amt { display: inline-flex; align-items: center; justify-content: center; position: relative; width: 26px; height: 26px; min-height: 0; padding: 0; margin-right: 8px;
+  vertical-align: middle; border: 1px solid var(--line); border-radius: 7px; background: none; box-shadow: none; color: var(--muted); cursor: pointer; }
+.upd-amt:hover, .upd-amt:focus-visible { color: var(--brand); border-color: var(--brand); }
+.upd-amt[data-tip]:hover::after, .upd-amt[data-tip]:focus-visible::after { content: attr(data-tip); position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 5;
+  white-space: nowrap; padding: 4px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--text); background: var(--card); border: 1px solid var(--line); box-shadow: 0 4px 12px rgb(0 0 0 / 25%); }
+.exp-td .r:has(.upd-amt) { white-space: nowrap; }
+.ld-head-btns .ld-upd { min-height: 0; padding: 5px 12px; font-size: 13px; }
+
+/* Loan chart: a point where the balance was updated, with the estimate it replaced on hover or tap. */
+.ld-pt { position: absolute; width: 12px; height: 12px; min-height: 0; padding: 0; margin: -6px 0 0 -6px; border-radius: 50%; z-index: 2;
+  border: 2px solid var(--card); background: var(--firm); box-shadow: 0 0 0 1px var(--firm); cursor: pointer; }
+.ld-pt:hover::after, .ld-pt:focus::after { content: attr(data-tip); position: absolute; left: 14px; top: 50%; transform: translateY(-50%); z-index: 6;
+  white-space: pre; padding: 6px 10px; border-radius: 8px; font-size: 12px; line-height: 1.5; text-align: left; font-weight: 500;
+  color: var(--text); background: var(--card); border: 1px solid var(--line); box-shadow: 0 6px 16px rgb(0 0 0 / 30%); }
+.ld-pt.tip-left:hover::after, .ld-pt.tip-left:focus::after { left: auto; right: 14px; }
+.ld-keys .k-pt { width: 9px; height: 9px; border-radius: 50%; background: var(--firm); }
+.lc-btns { display: inline-flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+
+/* Details popups share one set of buttons: Update (blue), Edit (green), Close (red). Dimmed until hovered. */
+.pop-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.pop-title { min-width: 0; }
+.pop-title h2 { margin: 4px 0 0; overflow-wrap: anywhere; }
+.pop-btns, .pop-foot { display: flex; align-items: center; gap: 8px; flex: none; }
+.pop-foot { justify-content: flex-end; flex-wrap: wrap; margin-top: 16px; }
+.pop-btn { --c: var(--muted); min-height: 0; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 13px; font-weight: 600; box-shadow: none; cursor: pointer;
+  color: color-mix(in srgb, var(--c) 70%, var(--muted)); background: transparent; border: 1px solid color-mix(in srgb, var(--c) 35%, var(--line));
+  transition: color .15s, background .15s, border-color .15s; }
+.pop-btn:hover, .pop-btn:focus-visible { color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border-color: color-mix(in srgb, var(--c) 70%, transparent); }
+.pop-btn.upd { --c: var(--info); }
+.pop-btn.edit { --c: var(--paid); }
+.pop-btn.x, .pop-btn.close, .pop-btn.del { --c: var(--danger); }
+.pop-btn.x { width: 32px; padding: 0; font-size: 14px; }
+.pop-foot .pop-btn { height: 38px; padding: 0 16px; }
+.ld-head .pop-btns { margin-left: auto; }
+.ld-btns .pop-foot { margin: 0; width: 100%; }
+@media (max-width: 720px) {
+  /* Phones: just the ✕ up top; all three sit along the bottom. */
+  .pop-btns .pop-btn.upd, .pop-btns .pop-btn.edit { display: none; }
+  .pop-foot .pop-btn { flex: 1 1 auto; height: 44px; padding: 0 8px; white-space: nowrap; }
+}
+/* Same box as the chart's drawing area (not the year labels under it), so points land on the line. */
+.ld-pts { position: absolute; left: 0; right: 0; top: 0; height: 180px; pointer-events: none; }
+.ld-pts .ld-pt { pointer-events: auto; }
+
+/* Removing a history entry, and the rest of a long list. */
+.ph-bin { min-height: 0; width: 26px; height: 26px; padding: 0; display: inline-grid; place-items: center; border: 1px solid transparent; border-radius: 6px;
+  background: transparent; color: var(--muted); box-shadow: none; cursor: pointer; opacity: .55; align-self: center; }
+.ph-bin:hover, .ph-bin:focus-visible { opacity: 1; color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
+.ph-list li .ph-bin { margin-left: -4px; }
+.lh-tr .ph-bin { justify-self: end; }
+.show-more { margin-top: 8px; font-size: 13px; }
+.ph-list li.more[hidden], .lh-tr.more[hidden] { display: none; }
+/* The actual path's key: its orange line with a dot. */
+.ld-keys .k-pt.k-actual { width: 18px; border-radius: 0; background: linear-gradient(var(--firm), var(--firm)) center / 18px 2.5px no-repeat,
+  radial-gradient(circle, var(--firm) 4px, transparent 4.5px) center / 9px 9px no-repeat; }

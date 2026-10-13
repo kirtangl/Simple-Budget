@@ -80,6 +80,7 @@ const T = {
 };
 
 const LABELS = {
+  review_date: 'Review date', review_snooze: 'Reminder date',
   name: 'Name', amount_cents: 'Amount', frequency: 'Frequency', after_tax_cents: 'After tax amount',
   category_id: 'Category', kind: 'Type', bsb: 'BSB', account_number: 'Account number',
   start_date: 'Start date', target_date: 'Target date', interest_rate: 'Interest rate', term_months: 'Term (months)',
@@ -124,7 +125,10 @@ const RESOURCES = {
       reference: T.text, notes: T.text, active: T.bool,
       kind: T.enumOf('expense', 'saving'), goal_cents: T.positiveCents,
       yearly_cents: T.positiveCents, show_as_expense: T.bool, start_date: T.date, end_date: T.date,
+      review_date: T.date, review_snooze: T.date, pending_cents: T.positiveCents, pending_from: T.date,
     },
+    // Every change to the amount is kept, for the price history chart.
+    history: { kind: 'expense', fields: { amount_cents: (r) => [r.amount_cents, r.frequency] } },
     required: ['name', 'amount_cents', 'frequency'],
     order: 'name COLLATE NOCASE',
     // A saving with a yearly target is stored as a yearly amount, so anything
@@ -144,8 +148,10 @@ const RESOURCES = {
   goals: {
     fields: { kind: T.enumOf('goal', 'debt'), group_name: T.text, name: T.text, target_cents: T.positiveCents,
       current_cents: T.positiveCents, notes: T.text, done: T.bool, sort_order: T.int,
-      start_date: T.date, target_date: T.date, target_firm: T.bool, account_id: T.int },
+      start_date: T.date, target_date: T.date, target_firm: T.bool, account_id: T.int, owner_id: T.int },
     required: ['kind', 'name'],
+    // A new goal belongs to whoever added it, unless the form says otherwise.
+    owned: true,
     order: 'done, group_name COLLATE NOCASE, sort_order, name COLLATE NOCASE',
   },
   loans: {
@@ -157,6 +163,14 @@ const RESOURCES = {
       budget_frequency: T.enumOf(...Object.keys(budget.LOAN_FREQUENCIES)), budget_cents: T.positiveCents, budget_date: T.date,
       rate_type: T.enumOf('variable', 'fixed'), fixed_until: T.date, offset_cents: T.positiveCents, monthly_fee_cents: T.positiveCents, break_fees: T.text },
     required: ['name'],
+    // Repayments, statement balances and rates over time. A balance is logged on its statement date.
+    history: { kind: 'loan', fields: {
+      repayment_cents: (r) => [r.repayment_cents, r.repayment_frequency],
+      balance_cents: (r) => [r.balance_cents, null, r.balance_date],
+      interest_rate: (r) => [r.interest_rate, null],
+    },
+    // What the estimate said on the statement date, just before the new balance replaced it.
+    before: { balance_cents: (old, row) => estimatedBalance(old, row.balance_date || today()) } },
     order: 'paid_off, name COLLATE NOCASE',
     unique: { label: 'A loan' },
   },
@@ -202,6 +216,84 @@ function clean(resource, body, { partial }) {
     if (out[key] === null) delete out[key];
   }
   return out;
+}
+
+// Notes what changed in a row's tracked amounts. Setting the same amount again adds nothing.
+// `date` is when the change takes effect, for fields without a date of their own (default today).
+function logHistory(db, resource, before, after, { loginId = null, date: from = null } = {}) {
+  if (!resource.history) return;
+  const { kind, fields } = resource.history;
+  for (const [field, pick] of Object.entries(fields)) {
+    const [value, frequency, onDate] = pick(after);
+    if (value === null || value === undefined) continue;
+    if (before) {
+      const [old, oldFreq, oldDate] = pick(before);
+      if (old === value && oldFreq === frequency && oldDate === onDate) continue;
+    }
+    const date = onDate || from || today();
+    const estimate = before && resource.history.before && resource.history.before[field] ? resource.history.before[field](before, after) : null;
+    // A back-dated change to an item with only its starting amount: that amount becomes "before then".
+    if (!onDate && from && laterChange(db, kind, after.id, field, date) === 'start') {
+      db.prepare('UPDATE amount_history SET on_date = ? WHERE kind = ? AND item_id = ? AND field = ?').run(budget.addDays(date, -1), kind, after.id, field);
+    }
+    addHistory(db, { kind, id: after.id, field, date, value, frequency, loginId, estimate });
+  }
+}
+
+// One amount on a date, slotted in with the others (so a back-dated price sits in its place).
+// A second change on the same day replaces the first (a typo fixed), but the starting amount is
+// always kept, and an amount the same as the one already in force then isn't repeated.
+function addHistory(db, { kind, id, field, date, value, frequency = null, loginId = null, estimate = null }) {
+  const rows = db.prepare('SELECT * FROM amount_history WHERE kind = ? AND item_id = ? AND field = ? ORDER BY on_date, id').all(kind, id, field);
+  const upTo = rows.filter((r) => r.on_date <= date);
+  const prev = upTo[upTo.length - 1];
+  if (prev && prev.on_date === date && upTo.length > 1) {
+    db.prepare('UPDATE amount_history SET value = ?, frequency = ?, login_id = ? WHERE id = ?').run(value, frequency ?? null, loginId, prev.id);
+  } else if (!prev || prev.value !== value || prev.frequency !== (frequency ?? null)) {
+    db.prepare('INSERT INTO amount_history (kind, item_id, field, on_date, value, frequency, login_id, before_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(kind, id, field, date, value, frequency ?? null, loginId, estimate ?? null);
+  }
+}
+
+// Whether anything was recorded after `date`: 'none', 'start' (only the amount the item was
+// added with, nothing before it), or 'change' (a real later change).
+function laterChange(db, kind, id, field, date) {
+  const rows = db.prepare('SELECT on_date FROM amount_history WHERE kind = ? AND item_id = ? AND field = ?').all(kind, id, field);
+  const later = rows.filter((r) => r.on_date > date).length;
+  if (!later) return 'none';
+  return later === 1 && rows.length === 1 ? 'start' : 'change';
+}
+
+// The newest recorded amount for a field, which is what the item should hold.
+function latestHistory(db, kind, id, field) {
+  return db.prepare('SELECT * FROM amount_history WHERE kind = ? AND item_id = ? AND field = ? ORDER BY on_date DESC, id DESC LIMIT 1').get(kind, id, field);
+}
+
+// A loan's estimated balance on a date, from what was known before an update.
+function estimatedBalance(loan, date) {
+  try {
+    // A date before the last statement is estimated from the start instead.
+    const from = loan.balance_date && date < loan.balance_date ? { ...loan, balance_cents: null, balance_date: null } : loan;
+    const r = budget.simulateLoan(from, date);
+    return r ? r.balance_cents : null;
+  } catch { return null; }
+}
+
+// Future price changes come into effect once their day arrives.
+function applyPendingAmounts(db) {
+  const due = db.prepare('SELECT * FROM expenses WHERE pending_from IS NOT NULL AND pending_from <= ?').all(today());
+  for (const row of due) {
+    const before = { ...row };
+    const change = row.yearly_cents != null ? { yearly_cents: row.pending_cents, amount_cents: row.pending_cents } : { amount_cents: row.pending_cents };
+    transaction(db, () => {
+      db.prepare(`UPDATE expenses SET ${Object.keys(change).map((k) => `${k} = ?`).join(', ')}, pending_cents = NULL, pending_from = NULL WHERE id = ?`).run(...Object.values(change), row.id);
+      logHistory(db, RESOURCES.expenses, before, { ...db.prepare('SELECT * FROM expenses WHERE id = ?').get(row.id) }, { date: row.pending_from });
+    });
+  }
+}
+
+function historyOf(db, kind, id) {
+  return db.prepare('SELECT id, field, on_date, value, frequency, login_id, before_value FROM amount_history WHERE kind = ? AND item_id = ? ORDER BY on_date, id').all(kind, id).map((r) => ({ ...r }));
 }
 
 function today() {
@@ -258,6 +350,9 @@ function createApi(db) {
     const anchor = payAnchor(db);
     return [...list('expenses'), ...list('loans').map((l) => budget.loanAsExpense(l, anchor))];
   }
+
+  // A price change dated today or earlier takes over before anything is worked out.
+  router.use((req, res, next) => { applyPendingAmounts(db); next(); });
 
   // Everything the app needs to draw its lists, in one request.
   router.get('/data', (req, res) => {
@@ -355,7 +450,108 @@ function createApi(db) {
     const cy = budget.yearStart(now, 'calendar');
     res.json({ ...e, next_date: budget.nextDate(e, now, opts.anchor), spread: budget.spreadsEachCycle(e, opts.payCycle),
       paid_fytd: { from: fy, ...budget.paidBetween(e, fy, now, opts) },
-      paid_ytd: { from: cy, ...budget.paidBetween(e, cy, now, opts) } });
+      paid_ytd: { from: cy, ...budget.paidBetween(e, cy, now, opts) }, history: historyOf(db, 'expense', e.id) });
+  });
+
+  // A new price for a bill, from a date: { amount_cents, from, review_date }. A date after
+  // today waits until then; today or earlier changes it now, logged on that date.
+  router.post('/expenses/:id/amount', (req, res) => {
+    const id = Number(req.params.id);
+    const e = db.prepare('SELECT * FROM expenses WHERE id = ?').get(id);
+    if (!e) return res.status(404).json({ error: 'Not found.' });
+    const body = req.body || {};
+    const cents = T.positiveCents(body.amount_cents);
+    if (!cents) throw new BadRequest('Enter the new amount.');
+    const from = T.date(body.from) || today();
+    const review = 'review_date' in body ? T.date(body.review_date) : e.review_date;
+    const before = { ...e };
+    // A price from before one already recorded only fills in the history; the newer price stays.
+    const later = from <= today() && laterChange(db, 'expense', id, 'amount_cents', from) === 'change';
+    transaction(db, () => {
+      if (later) {
+        addHistory(db, { kind: 'expense', id, field: 'amount_cents', date: from, value: cents, frequency: e.frequency, loginId: req.login ? req.login.id : null });
+        if ('review_date' in body) db.prepare('UPDATE expenses SET review_date = ?, review_snooze = NULL WHERE id = ?').run(review, id);
+      } else if (from > today()) {
+        db.prepare('UPDATE expenses SET pending_cents = ?, pending_from = ?, review_date = ?, review_snooze = NULL WHERE id = ?').run(cents, from, review, id);
+      } else {
+        const cols = e.yearly_cents != null ? 'yearly_cents = ?, amount_cents = ?' : 'amount_cents = ?';
+        db.prepare(`UPDATE expenses SET ${cols}, pending_cents = NULL, pending_from = NULL, review_date = ?, review_snooze = NULL WHERE id = ?`)
+          .run(...(e.yearly_cents != null ? [cents, cents] : [cents]), review, id);
+        logHistory(db, RESOURCES.expenses, before, { ...db.prepare('SELECT * FROM expenses WHERE id = ?').get(id) }, { loginId: req.login ? req.login.id : null, date: from });
+      }
+    });
+    res.json({ ...db.prepare('SELECT * FROM expenses WHERE id = ?').get(id) });
+  });
+
+  // A statement update for a loan: { balance_cents, balance_date, interest_rate, repayment_cents }.
+  // Rate and repayment changes are logged on the statement date too.
+  router.post('/loans/:id/balance', (req, res) => {
+    const id = Number(req.params.id);
+    const l = db.prepare('SELECT * FROM loans WHERE id = ?').get(Number(req.params.id));
+    if (!l) return res.status(404).json({ error: 'Not found.' });
+    const data = clean({ ...RESOURCES.loans, required: [] }, req.body, { partial: true });
+    const allowed = ['balance_cents', 'balance_date', 'interest_rate', 'repayment_cents', 'offset_cents'];
+    for (const k of Object.keys(data)) if (!allowed.includes(k)) delete data[k];
+    if (data.balance_cents == null) throw new BadRequest('Enter the balance.');
+    if (!data.balance_date) data.balance_date = today();
+    if (data.balance_date > today()) throw new BadRequest("The balance date can't be in the future.");
+    const before = { ...l };
+    // An older statement than the one already saved goes in the history only; the newer balance stays.
+    const older = l.balance_cents != null && l.balance_date && data.balance_date < l.balance_date;
+    const saved = older ? { ...data, balance_cents: l.balance_cents, balance_date: l.balance_date } : { ...data };
+    // Likewise a rate or repayment from before a later recorded change.
+    const pastOnly = ['interest_rate', 'repayment_cents'].filter((f) => saved[f] != null && saved[f] !== l[f] && laterChange(db, 'loan', id, f, data.balance_date) === 'change');
+    for (const f of pastOnly) saved[f] = l[f];
+    const cols = Object.keys(saved);
+    transaction(db, () => {
+      for (const f of pastOnly) addHistory(db, { kind: 'loan', id, field: f, date: data.balance_date, value: data[f], frequency: f === 'repayment_cents' ? l.repayment_frequency : null, loginId: req.login ? req.login.id : null });
+      db.prepare(`UPDATE loans SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).run(...cols.map((c) => saved[c]), id);
+      const after = { ...db.prepare('SELECT * FROM loans WHERE id = ?').get(id) };
+      logHistory(db, RESOURCES.loans, before, older ? { ...after, balance_cents: data.balance_cents, balance_date: data.balance_date } : after,
+        { loginId: req.login ? req.login.id : null, date: data.balance_date });
+    });
+    res.json({ ...db.prepare('SELECT * FROM loans WHERE id = ?').get(id) });
+  });
+
+  // What a new loan's balance should be today if only the minimum (scheduled) repayments were made.
+  router.post('/loans/estimate-balance', (req, res) => {
+    const data = clean({ ...RESOURCES.loans, required: [] }, req.body, { partial: true });
+    const min = budget.minimumBalance(data, today());
+    if (min) return res.json({ ...min, balance_date: today() });
+    // No term: step through the repayment entered instead.
+    const balance = estimatedBalance({ ...data, balance_cents: null, balance_date: null, budget_cents: null, budget_frequency: null, budget_date: null }, today());
+    res.json({ balance_cents: balance == null ? null : Math.max(0, Math.round(balance)), balance_date: today() });
+  });
+
+  // Amounts over time for one expense or loan, oldest first.
+  router.get('/history/:kind/:id', (req, res) => {
+    const kind = req.params.kind;
+    if (!['expense', 'loan'].includes(kind)) return res.status(404).json({ error: 'Not found.' });
+    res.json(historyOf(db, kind, Number(req.params.id)));
+  });
+
+  // Removing an amount added by mistake. Removing the newest one puts the item back to the one before.
+  router.delete('/history/:kind/:id/:entry', (req, res) => {
+    const kind = req.params.kind;
+    const table = { expense: 'expenses', loan: 'loans' }[kind];
+    if (!table) return res.status(404).json({ error: 'Not found.' });
+    const id = Number(req.params.id);
+    const row = db.prepare('SELECT * FROM amount_history WHERE id = ? AND kind = ? AND item_id = ?').get(Number(req.params.entry), kind, id);
+    const item = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
+    if (!row || !item) return res.status(404).json({ error: 'Not found.' });
+    const newest = latestHistory(db, kind, id, row.field);
+    const count = db.prepare('SELECT count(*) AS n FROM amount_history WHERE kind = ? AND item_id = ? AND field = ?').get(kind, id, row.field).n;
+    if (count < 2) throw new BadRequest("That's the only amount recorded, so it can't be removed.");
+    transaction(db, () => {
+      db.prepare('DELETE FROM amount_history WHERE id = ?').run(row.id);
+      if (newest.id !== row.id) return;
+      const now = latestHistory(db, kind, id, row.field);
+      const set = row.field === 'balance_cents' ? { balance_cents: now.value, balance_date: now.on_date }
+        : row.field === 'amount_cents' && item.yearly_cents != null ? { amount_cents: now.value, yearly_cents: now.value }
+          : { [row.field]: now.value };
+      db.prepare(`UPDATE ${table} SET ${Object.keys(set).map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...Object.values(set), id);
+    });
+    res.json(historyOf(db, kind, id));
   });
 
   router.get('/loans/:id/details', (req, res) => {
@@ -371,12 +567,20 @@ function createApi(db) {
       ? budget.simulateLoan({ ...l, balance_cents: est.estimated_balance_cents, balance_date: now, budget_cents: null, budget_frequency: null, budget_date: null }, null,
         (date, balance) => bankPoints.push([budget.addDays(date, -1).slice(0, 7), Math.round(Math.max(0, balance))]))
       : null;
+    // The plan: the loan from its start at the current repayments, ignoring any statement balances.
+    // The actual path (through the balances entered) is drawn against it.
+    const planPoints = [];
+    const plan = l.start_date && l.principal_cents > 0 && l.balance_date
+      ? budget.simulateLoan({ ...l, balance_cents: null, balance_date: null }, null,
+        (date, balance) => planPoints.push([budget.addDays(date, -1).slice(0, 7), Math.round(Math.max(0, balance))]))
+      : null;
     // Interest charged since 1 July (whole months so far).
     const fy = budget.yearStart(now, 'financial').slice(0, 7);
     const interestFy = timeline ? timeline.points.filter((p) => p.month >= fy && p.month < now.slice(0, 7)).reduce((t, p) => t + p.interest_cents, 0) : null;
     res.json({ ...l, ...est, timeline,
       bank: bank ? { points: bankPoints, interest_cents: bank.interest_cents, payoff_date: bank.paid_off ? bank.date : null } : null,
-      interest_fy_cents: interestFy });
+      plan: plan ? { points: planPoints, payoff_date: plan.paid_off ? plan.date : null } : null,
+      interest_fy_cents: interestFy, history: historyOf(db, 'loan', l.id) });
   });
 
   router.get('/loan-calculator', (req, res) => {
@@ -469,10 +673,12 @@ function createApi(db) {
 
     router.post(`/${name}`, (req, res) => {
       const data = clean(resource, req.body, { partial: false });
+      if (resource.owned && !(req.body && 'owner_id' in req.body) && req.login) data.owner_id = req.login.id;
       checkUnique(data);
       const cols = Object.keys(data);
       const sql = `INSERT INTO ${name} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`;
       const { lastInsertRowid } = db.prepare(sql).run(...cols.map((c) => data[c]));
+      logHistory(db, resource, null, get(lastInsertRowid), { loginId: req.login ? req.login.id : null });
       res.status(201).json(get(lastInsertRowid));
     });
 
@@ -489,6 +695,7 @@ function createApi(db) {
             .run(...cols.map((c) => data[c]), id);
         }
         if (resource.afterUpdate) resource.afterUpdate(db, before, get(id));
+        logHistory(db, resource, before, get(id), { loginId: req.login ? req.login.id : null });
       });
       res.json(get(id));
     });
@@ -498,6 +705,7 @@ function createApi(db) {
       if (!before) return res.status(404).json({ error: 'Not found.' });
       transaction(db, () => {
         db.prepare(`DELETE FROM ${name} WHERE id = ?`).run(before.id);
+        if (resource.history) db.prepare('DELETE FROM amount_history WHERE kind = ? AND item_id = ?').run(resource.history.kind, before.id);
         if (resource.afterDelete) resource.afterDelete(db, before);
       });
       res.json({ ok: true });

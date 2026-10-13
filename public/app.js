@@ -205,13 +205,16 @@
 
   // Opens the shared form dialog. onSave receives the form element and
   // should throw an Error with a friendly message to keep the dialog open.
-  function openForm({ title, body, onSave, onDelete, saveLabel = 'Save', afterRender, noActions = false, cls = '' }) {
+  // Every popup gets the red ✕ at the top (ones with their own heading add it there). lead is a
+  // button for the left of the bottom row, like Back.
+  function openForm({ title, body, onSave, onDelete, saveLabel = 'Save', afterRender, noActions = false, cls = '', lead = null }) {
     $modal.className = cls;
     $modalForm.innerHTML = html`
-      ${title == null ? '' : html`<h2>${title}</h2>`}
+      ${title == null ? '' : popHead(title, {})}
       ${body}
       <p class="error" id="form-error"></p>
       <div class="dialog-actions" ${raw(noActions ? 'hidden' : '')}>
+        ${lead ? html`${lead}<span class="spacer"></span>` : ''}
         ${onDelete ? html`<button type="button" class="danger" data-modal="delete">Delete</button><span class="spacer"></span>` : ''}
         <button type="button" data-modal="cancel">${onSave ? 'Cancel' : 'Close'}</button>
         ${onSave ? html`<button type="submit" class="primary">${saveLabel}</button>` : ''}
@@ -262,23 +265,51 @@
     if (sel) $modalForm.querySelector(sel).hidden = !ev.target.checked;
   });
 
+  // The heading of a small question dialog, with the red ✕ (which answers nothing).
+  const promptHead = (title) => html`<div class="pop-head"><div class="pop-title"><h2>${title}</h2></div>
+    <div class="pop-btns"><button type="button" class="pop-btn x" data-p="" aria-label="Close">✕</button></div></div>`;
+
   // A small "type a name" dialog used for adding categories, payees, etc.
   function askText(title, label, value = '', { inputmode = '' } = {}) {
     return new Promise((resolve) => {
       $promptForm.innerHTML = html`
-        <h2>${title}</h2>
+        ${promptHead(title)}
         <div class="field"><label for="prompt-input">${label}</label><input id="prompt-input" name="value" value="${value}" autocomplete="off" ${inputmode ? raw(`inputmode="${inputmode}"`) : ''}></div>
         <div class="dialog-actions"><button type="button" data-p="cancel">Cancel</button><button type="submit" class="primary">OK</button></div>`.s;
       const input = $promptForm.querySelector('input');
       const done = (v) => { $promptForm.onsubmit = null; $promptForm.onclick = null; if ($prompt.open) $prompt.close(); resolve(v); };
       $promptForm.onsubmit = (e) => { e.preventDefault(); done(input.value.trim() || null); };
-      $promptForm.onclick = (e) => { if (e.target.dataset.p === 'cancel') done(null); };
+      $promptForm.onclick = (e) => { const p = e.target.closest('[data-p]')?.dataset.p; if (p === 'cancel' || p === '') done(null); };
       $prompt.oncancel = () => done(null);
       $prompt.showModal();
       input.focus();
       input.select();
     });
   }
+
+  // A question with a few buttons, over whatever form is open. Resolves to the picked value, or null on Escape.
+  function askChoice({ title, text, choices }) {
+    return new Promise((resolve) => {
+      $promptForm.innerHTML = html`
+        ${promptHead(title)}
+        <div class="choice-text">${text}</div>
+        <div class="dialog-actions">${choices.map((c) => html`<button type="button" data-p="${c.value}" class="${c.danger ? 'danger' : c.primary ? 'primary' : ''}">${c.label}</button>`)}</div>`.s;
+      const done = (v) => { $promptForm.onclick = null; if ($prompt.open) $prompt.close(); resolve(v); };
+      $promptForm.onclick = (e) => { const b = e.target.closest('[data-p]'); if (b) done(b.dataset.p || null); };
+      $prompt.oncancel = () => done(null);
+      $prompt.showModal();
+    });
+  }
+
+  // The same buttons on every details popup: Update (blue), Edit (green) and Close (red) at the top,
+  // and again at the bottom with Close on the right. upd and edit are { label, action, id }, or left out.
+  const popBtn = (cls, b) => html`<button type="button" class="pop-btn ${cls}" data-action="${b.action}" data-id="${b.id}">${b.label}</button>`;
+  const popTop = ({ upd, edit }) => html`<div class="pop-btns">${upd ? popBtn('upd', upd) : ''}${edit ? popBtn('edit', { ...edit, label: 'Edit' }) : ''}
+    <button type="button" class="pop-btn x" data-modal="cancel" aria-label="Close">✕</button></div>`;
+  const popFoot = ({ upd, edit }) => html`<div class="pop-foot">${upd ? popBtn('upd', upd) : ''}${edit ? popBtn('edit', edit) : ''}
+    <button type="button" class="pop-btn close" data-modal="cancel">Close</button></div>`;
+  // A popup's heading with those buttons beside it.
+  const popHead = (title, btns, sub = '') => html`<div class="pop-head"><div class="pop-title"><h2>${title}</h2>${sub}</div>${popTop(btns)}</div>`;
 
   const val = (form, name) => form.elements[name]?.value.trim() ?? '';
   const idVal = (form, name) => (val(form, name) ? Number(val(form, name)) : null);
@@ -418,7 +449,8 @@
     const accountsById = new Map(c.accounts.map((a) => [a.account_id, a]));
     const rows = state.data.accounts.map((a, i) => ({ a, r: accountsById.get(a.id), i })).filter((x) => x.r);
     // Accounts with nothing going in or out this cycle fold away.
-    const isUsed = ({ r }) => r.deposit_cents || r.bills_cents || r.savings_cents || r.held_cents;
+    const saved = goalSavings();
+    const isUsed = ({ a, r }) => r.deposit_cents || r.bills_cents || r.savings_cents || r.held_cents || saved.has(a.id);
     const used = rows.filter(isUsed);
     const unused = rows.filter((x) => !isUsed(x));
     // Plain wording, so no (i) is needed: what to transfer, what's still to come out, and what to keep in the account.
@@ -433,6 +465,7 @@
                   <span class="figure" title="This ${cycleWord()}'s bills from this account that haven't come out yet (savings not included)"><span class="label">Still to come out</span> <b class="num">${money(r.remaining_cents)}</b></span>
                   <span class="figure" title="${c.cycle.is_current ? 'About what should be in the account today' : `About what should be in the account on ${fmtDate(c.held_on, true)}, once that deposit is in`} so every bill ${HELD_LABELS[state.data.settings.held_basis].toLowerCase()} can be paid, with the deposits still to come. Savings not included."><span class="label">Keep in account</span> <b class="num">${money(r.held_cents)}</b></span>
                   ${r.deposit_cents !== r.rounded_cents ? html`<span class="figure muted">incl. ${state.data.settings.buffer_percent}% buffer</span>` : ''}
+                  ${saved.has(a.id) ? html`<span class="figure goal-saved" title="Saved so far in ${saved.get(a.id).goals.map((g) => g.name).join(', ')}"><span class="label">Goals</span> <b class="num">${money(saved.get(a.id).cents)} saved</b></span>` : ''}
                 </div>
                 ${r.spare_cents < 0 ? html`<div class="dep-warn">${r.savings_cents ? 'Bills + savings are' : 'Bills are'} ${money(need)}, ${money(-r.spare_cents)} more than this transfer</div>` : ''}
               </div>
@@ -484,6 +517,7 @@
 
       ${state.showIncomes && c.incomes.length ? incomeTable(c) : ''}
 
+      ${c.cycle.is_current ? reviewNotes() : ''}
       ${t.unassigned_cents > 0 ? unassignedNote(t.unassigned_cents) : ''}
       ${fixedRateNote()}
 
@@ -532,6 +566,206 @@
       ${goalsSummary()}`;
   }
 
+  // ---------- Price reviews and price history ----------
+
+  // Bills set to be checked once their review date passes (insurance renewals and the like).
+  const reviewDue = (e) => e.active && kindOf(e) === 'expense' && e.review_date && e.review_date <= state.data.settings.today
+    && !(e.review_snooze && e.review_snooze > state.data.settings.today);
+  const addYearsIso = (s, n) => {
+    const [y, m, d] = s.split('-').map(Number);
+    const last = new Date(Date.UTC(y + n, m, 0)).getUTCDate(); // 29 Feb becomes 28 Feb
+    return `${y + n}-${String(m).padStart(2, '0')}-${String(Math.min(d, last)).padStart(2, '0')}`;
+  };
+  // The same day in the first year after today.
+  const nextReview = (date) => {
+    let next = date || state.data.settings.today;
+    for (let n = 1; next <= state.data.settings.today; n++) next = addYearsIso(date || state.data.settings.today, n);
+    return next;
+  };
+  const amountText = (cents, freq) => `${money(cents)}${freq ? ` ${(FREQ_LABELS[freq] || '').toLowerCase()}` : ''}`;
+  const billCents = (e) => (isSplit(e) ? e.yearly_cents : e.amount_cents);
+
+  function reviewNotes() {
+    return state.data.expenses.filter(reviewDue).sort((a, b) => a.review_date.localeCompare(b.review_date)).map((e) => html`
+      <div class="card small note-banner review-banner"><span class="note-tag">Review</span>
+        <div class="grow"><span><button type="button" class="linkish" data-action="edit-expense" data-id="${e.id}">${e.name}</button>
+          was due for a price check on ${fmtDate(e.review_date, true)}. It's ${isSplit(e) ? `${money(e.yearly_cents)} a year` : amountText(e.amount_cents, e.frequency)} now. Has it changed?</span>
+          <div class="review-actions">
+            <button type="button" class="primary" data-action="review-update" data-id="${e.id}">Update price</button>
+            <button type="button" data-action="review-snooze" data-id="${e.id}">Remind me in 7 days</button>
+            <button type="button" data-action="review-skip" data-id="${e.id}">Skip until next year</button>
+          </div></div></div>`);
+  }
+
+  // The small popup for a new price: the amount, when it takes effect (backdated or ahead), and the next review.
+  // From the review reminder, the next review is needed so the reminder goes away.
+  function amountForm(e, { review = false } = {}) {
+    const today = state.data.settings.today;
+    const now = isSplit(e) ? `${money(e.yearly_cents)} a year` : amountText(e.amount_cents, e.frequency);
+    const showReview = kindOf(e) === 'expense';
+    openForm({
+      title: `Update ${e.name}`,
+      body: html`
+        <p class="muted small" style="margin-top:0">It's ${now} now.${review ? " Leave it as is if it hasn't changed." : ''}
+          ${e.pending_from ? html` <b>${money(e.pending_cents)}</b> is already set from ${fmtDate(e.pending_from, true)}; saving replaces it.` : ''}</p>
+        <div class="fields">
+          <div class="field"><label for="r-amount">New amount, ${isSplit(e) ? 'yearly' : (FREQ_LABELS[e.frequency] || '').toLowerCase()} ($)</label>
+            <input id="r-amount" name="amount" inputmode="decimal" value="${moneyInput(e.pending_cents ?? billCents(e))}" required></div>
+          <div class="field"><label for="r-from">Takes effect from</label><input id="r-from" type="date" name="from" value="${e.pending_from || today}" required>
+            <div class="hint">Backdate it, or pick a future date to change it then.</div></div>
+          ${showReview ? html`<div class="field full"><label for="r-date">Next review${review ? '' : ' (optional)'}</label><input id="r-date" type="date" name="review_date" value="${review || e.review_date ? nextReview(e.review_date) : ''}" ${review ? raw('required') : ''}>
+            <div class="hint">When it's likely to change again.</div></div>` : ''}
+        </div>`,
+      onSave: async (form) => {
+        const cents = moneyVal(form, 'amount', 'Amount', { required: true });
+        const from = val(form, 'from') || today;
+        const body = { amount_cents: cents, from };
+        if (showReview) {
+          const date = val(form, 'review_date') || null;
+          if (review && !date) throw new Error('Pick the next review date.');
+          if (date && date <= today) throw new Error('Pick a review date after today.');
+          body.review_date = date;
+        }
+        await api('POST', `/expenses/${e.id}/amount`, body);
+        await reload();
+        toast(from > today ? `${e.name} changes to ${money(cents)} on ${fmtDate(from, true)}`
+          : cents === billCents(e) ? `${e.name} checked${body.review_date ? `. Next review ${fmtDate(body.review_date, true)}` : ''}` : `${e.name} is now ${money(cents)}`);
+      },
+    });
+  }
+
+  // Loan statement update: the balance on a date, plus the rate and repayment if they've changed.
+  function balanceForm(l) {
+    const today = state.data.settings.today;
+    const est = l.estimated_balance_cents;
+    openForm({
+      title: `Update ${l.name}`,
+      body: html`
+        <p class="muted small" style="margin-top:0">${est != null ? html`The estimate today is <b>${money(est)}</b>. ` : ''}Enter the balance from a statement or the bank's app.</p>
+        <div class="fields">
+          <div class="field"><label for="b-balance">Balance ($)</label><input id="b-balance" name="balance" inputmode="decimal" value="" placeholder="${est != null ? moneyInput(est) : ''}" required></div>
+          <div class="field"><label for="b-date">Balance as at</label><input id="b-date" type="date" name="balance_date" value="${today}" max="${today}" required>
+            <div class="hint">The statement date, or today.</div></div>
+          <div class="field"><label for="b-rate">Interest rate (% p.a.)</label><input id="b-rate" name="interest_rate" inputmode="decimal" value="${l.interest_rate ?? ''}"></div>
+          <div class="field"><label for="b-rep">Bank repayment ($ ${FREQ_UNIT[l.repayment_frequency] ? `/ ${FREQ_UNIT[l.repayment_frequency]}` : ''})</label><input id="b-rep" name="repayment" inputmode="decimal" value="${moneyInput(l.repayment_cents)}" placeholder="${l.repayment_cents == null && l.scheduled ? `${moneyInput(l.scheduled.amount_cents)} (calculated)` : ''}"></div>
+          ${l.offset_cents != null ? html`<div class="field"><label for="b-offset">Offset balance ($)</label><input id="b-offset" name="offset" inputmode="decimal" value="${moneyInput(l.offset_cents)}"></div>` : ''}
+        </div>
+        <p class="hint">Rate and repayment changes are noted from the same date. Use Edit for everything else.</p>`,
+      onSave: async (form) => {
+        const body = { balance_cents: moneyVal(form, 'balance', 'Balance', { required: true }), balance_date: val(form, 'balance_date') || today,
+          interest_rate: numVal(form, 'interest_rate', 'Interest rate'), repayment_cents: moneyVal(form, 'repayment', 'Repayment') };
+        if (form.elements.offset) body.offset_cents = moneyVal(form, 'offset', 'Offset balance');
+        if (body.balance_date > today) throw new Error("The balance date can't be in the future.");
+        await api('POST', `/loans/${l.id}/balance`, body);
+        await reload();
+        toast(`${l.name} balance updated`);
+        const id = l.id;
+        setTimeout(() => loanDetails(id).catch(() => {}), 0);
+      },
+    });
+  }
+
+  async function reviewLater(e, how) {
+    const body = how === 'snooze' ? { review_snooze: addDaysIso(state.data.settings.today, 7) } : { review_date: nextReview(e.review_date), review_snooze: null };
+    await api('PATCH', `/expenses/${e.id}`, body);
+    await reload();
+    render();
+    toast(how === 'snooze' ? `We'll remind you about ${e.name} on ${fmtDate(body.review_snooze, true)}` : `${e.name} is next up for review on ${fmtDate(body.review_date, true)}`);
+  }
+
+  // A smooth line through points (monotone, so it never overshoots between two prices).
+  function smoothPath(pts) {
+    if (pts.length < 2) return pts.length ? `M${pts[0][0]},${pts[0][1]}` : '';
+    const n = pts.length;
+    const d = []; const m = [];
+    for (let i = 0; i < n - 1; i++) d.push((pts[i + 1][1] - pts[i][1]) / ((pts[i + 1][0] - pts[i][0]) || 1));
+    m[0] = d[0]; m[n - 1] = d[n - 2];
+    for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2;
+    for (let i = 0; i < n - 1; i++) {
+      if (d[i] === 0) { m[i] = 0; m[i + 1] = 0; continue; }
+      const a = m[i] / d[i]; const b = m[i + 1] / d[i]; const h = a * a + b * b;
+      if (h > 9) { const t = 3 / Math.sqrt(h); m[i] = t * a * d[i]; m[i + 1] = t * b * d[i]; }
+    }
+    let out = `M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`;
+    for (let i = 0; i < n - 1; i++) {
+      const [x0, y0] = pts[i]; const [x1, y1] = pts[i + 1]; const dx = (x1 - x0) / 3;
+      out += `C${(x0 + dx).toFixed(1)},${(y0 + m[i] * dx).toFixed(1)} ${(x1 - dx).toFixed(1)},${(y1 - m[i + 1] * dx).toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;
+    }
+    return out;
+  }
+
+  // A curved line of one amount over time, a point at each change (hover or tap for it), and the
+  // changes listed underneath, newest first. A change set for a future date shows in orange.
+  // rows: [{ on_date, value, frequency }] oldest first. future: { on_date, value, frequency } or null.
+  // remove: { kind, item } adds a bin to each entry, for one added by mistake.
+  function historyChart(rows, { fmt = (r) => amountText(r.value, r.frequency), costUp = true, label = 'Amount over time', future = null, remove = null } = {}) {
+    if (!rows.length) return '';
+    const today = state.data.settings.today;
+    const day = (s) => toDate(s).getTime() / 86400000;
+    const first = day(rows[0].on_date);
+    const now = Math.max(day(today), day(rows.at(-1).on_date));
+    const fut = future && day(future.on_date) > now ? future : null;
+    const end = fut ? day(fut.on_date) + Math.max(14, (day(fut.on_date) - first) * 0.08) : now;
+    const vals = [...rows.map((r) => Number(r.value)), ...(fut ? [Number(fut.value)] : [])];
+    const lo = Math.min(...vals); const hi = Math.max(...vals);
+    const pad = (hi - lo) * 0.25 || Math.abs(hi) * 0.2 || 1;
+    const W = 560; const H = 120;
+    const x = (d) => (end === first ? W / 2 : ((d - first) / (end - first)) * (W - 16) + 8);
+    const y = (v) => 12 + (1 - (v - (lo - pad)) / (hi - lo + 2 * pad)) * (H - 24);
+    // Hold each price until just before the next one, so the curve rises or falls at the change, not across the gap.
+    const ease = (fromX, toX) => Math.min(14, (toX - fromX) / 2);
+    const line = [];
+    rows.forEach((r, k) => {
+      const px = x(day(r.on_date));
+      if (k) line.push([px - ease(line.at(-1)[0], px), line.at(-1)[1]]);
+      line.push([px, y(Number(r.value))]);
+    });
+    if (x(now) > line.at(-1)[0] + 0.5) line.push([x(now), line.at(-1)[1]]);
+    const fx = fut ? x(day(fut.on_date)) : 0;
+    const futLine = fut ? [[x(now), line.at(-1)[1]], [fx - ease(x(now), fx), line.at(-1)[1]], [fx, y(Number(fut.value))], [x(end), y(Number(fut.value))]] : null;
+    const diff = (r, prev) => {
+      if (!prev || prev.frequency !== r.frequency) return '';
+      const dv = Number(r.value) - Number(prev.value);
+      if (!dv) return '';
+      const up = dv > 0;
+      const pct = prev.value ? ` (${up ? '+' : '−'}${Math.abs(Math.round((dv / prev.value) * 100))}%)` : '';
+      return html`<span class="ph-diff ${up === costUp ? 'worse' : 'better'}">${up ? '+' : '−'}${fmt({ ...r, value: Math.abs(dv), frequency: null })}${pct}</span>`;
+    };
+    const dot = (r, cls = '') => {
+      const [px, py] = [x(day(r.on_date)), y(Number(r.value))];
+      const tip = `${fmtDate(r.on_date, true)}${cls ? ' (coming up)' : ''}\n${fmt(r)}`;
+      return html`<button type="button" class="ph-pt ${cls} ${px / W > 0.6 ? 'tip-left' : ''}" style="left:${(px / W) * 100}%;top:${(py / H) * 100}%" data-tip="${tip}" aria-label="${tip.replace('\n', ': ')}"></button>`;
+    };
+    const changes = rows.map((r, k) => ({ r, prev: rows[k - 1] })).reverse();
+    return html`<div class="ph">
+      <div class="ph-box">
+        <svg class="ph-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${label}">
+          ${fut ? html`<rect x="${x(now).toFixed(1)}" y="0" width="${(W - x(now)).toFixed(1)}" height="${H}" fill="var(--firm)" opacity=".1"></rect>` : ''}
+          <path d="${smoothPath(line)}" fill="none" stroke="var(--brand)" stroke-width="2.5" stroke-linecap="round" vector-effect="non-scaling-stroke"></path>
+          ${futLine ? html`<path d="${smoothPath(futLine)}" fill="none" stroke="var(--firm)" stroke-width="2.5" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"></path>` : ''}
+        </svg>
+        <div class="ph-pts">${rows.map((r) => dot(r))}${fut ? dot(fut, 'future') : ''}</div>
+        ${fut ? html`<span class="ph-today" style="left:${(x(now) / W) * 100}%">Today</span>` : ''}
+      </div>
+      <div class="ph-axis"><span>${fmtDate(rows[0].on_date, true)}</span><span>${fut ? fmtDate(fut.on_date, true) : 'Today'}</span></div>
+      <ul class="ph-list">
+        ${fut ? html`<li class="future"><span class="ph-date">${fmtDate(fut.on_date, true)}</span><span class="num">${fmt(fut)}</span>${diff(fut, rows.at(-1))}<span class="ph-diff soon">Coming up</span></li>` : ''}
+        ${changes.map(({ r, prev }, k) => html`<li ${k + (fut ? 1 : 0) >= SHOW_FIRST ? raw('class="more" hidden') : ''}><span class="ph-date">${fmtDate(r.on_date, true)}</span>
+        <span class="num">${fmt(r)}</span>${prev ? diff(r, prev) : html`<span class="ph-diff muted">${rows.length === 1 && !fut ? 'Changes will show here' : 'First recorded'}</span>`}
+        ${remove && rows.length > 1 && r.id ? binBtn(remove, r, `${fmtDate(r.on_date, true)}: ${fmt(r)}`) : ''}</li>`)}</ul>
+      ${moreBtn(changes.length + (fut ? 1 : 0))}
+    </div>`;
+  }
+  const binBtn = (remove, r, what) => html`<button type="button" class="ph-bin" data-action="history-remove" data-kind="${remove.kind}" data-item="${remove.item}"
+    data-id="${r.id}" data-what="${what}" aria-label="Remove ${what}" title="Remove">${BIN_ICON}</button>`;
+  // A bill's price history, with any change waiting for a future date.
+  const priceHistory = (rows, e = null) => {
+    const own = rows.filter((r) => r.field === 'amount_cents');
+    const last = own.at(-1);
+    const future = e && e.pending_from ? { on_date: e.pending_from, value: e.pending_cents, frequency: last ? last.frequency : e.frequency } : null;
+    return historyChart(own, { label: 'Price over time', future, remove: e && e.id ? { kind: 'expense', item: e.id } : null });
+  };
+
   // Fixed rates ending within 60 days (or just ended), so there's time to look at rates.
   function fixedRateNote() {
     const ending = state.data.loans.filter((l) => !l.paid_off && l.rate_type === 'fixed' && l.fixed_until)
@@ -574,7 +808,7 @@
   function openGoals(kind) {
     const today = state.data.settings.today;
     const rank = (g) => (g.target_date ? (g.target_date < today ? 0 : 1) : 2);
-    return state.data.goals.filter((g) => !g.done && g.kind === kind)
+    return state.data.goals.filter((g) => !g.done && g.kind === kind && shownGoal(g))
       .sort((a, b) => rank(a) - rank(b) || (a.target_date || '').localeCompare(b.target_date || '')
         || (b.target_cents ? b.current_cents / b.target_cents : 0) - (a.target_cents ? a.current_cents / a.target_cents : 0));
   }
@@ -633,23 +867,69 @@
     }
     return html`<li class="clickable goal-sum${button ? ' with-btn' : ''}" data-action="edit-goal" data-id="${g.id}">
       <div class="grow">
-        <div class="dep-top"><span class="title">${g.name}</span>
+        <div class="dep-top"><span class="title">${g.name}${household() ? html` ${ownerTag(g)}` : ''}</span>
           <span class="dep-amt">${g.target_cents ? html`<b class="num">${money(left)}</b> <span class="muted">to go</span>` : html`<b class="num">${money(g.current_cents)}</b> <span class="muted">${debt ? 'paid' : 'saved'}</span>`}</span></div>
         <div class="goal-when">${when}</div>${body}
       </div>${button ? html`<button type="button" data-action="edit-goal" data-id="${g.id}">Edit</button>` : ''}</li>`;
   }
 
+  // Money already put aside in open savings goals, by the account it sits in (null: no account).
+  function goalSavings(goals = state.data.goals) {
+    const by = new Map();
+    for (const g of goals) {
+      if (g.kind !== 'goal' || g.done || !(g.current_cents > 0)) continue;
+      const key = g.account_id ?? null;
+      const x = by.get(key) || { cents: 0, goals: [] };
+      x.cents += g.current_cents;
+      x.goals.push(g);
+      by.set(key, x);
+    }
+    return by;
+  }
+
+  // Who a goal belongs to. Only shown once the household has more than one login.
+  const household = () => (state.logins || []).length > 1;
+  const ownerOf = (g) => (g.owner_id == null ? null : (state.logins || []).find((l) => l.id === g.owner_id) || null);
+  const whoKey = () => `goal-who-${state.me ? state.me.id : ''}`;
+  // 'mine' shows your own goals and shared ones; anything else shows everyone's.
+  const goalWho = () => {
+    if (!household()) return 'all';
+    if (state.goalWho == null) { try { state.goalWho = localStorage.getItem(whoKey()) || 'all'; } catch { state.goalWho = 'all'; } }
+    return state.goalWho;
+  };
+  const shownGoal = (g) => goalWho() !== 'mine' || g.owner_id == null || g.owner_id === state.me.id;
+  function setGoalWho(who) {
+    state.goalWho = who;
+    try { localStorage.setItem(whoKey(), who); } catch { /* this device only, then */ }
+    render();
+  }
+  function ownerTag(g) {
+    if (!household()) return '';
+    const l = ownerOf(g);
+    return l ? html`<span class="g-owner" style="--who:${l.colour || 'var(--brand)'}">${l.name}</span>` : html`<span class="g-owner shared">Shared</span>`;
+  }
+  // A price tag with an arrow: "update the amount".
+  const PRICE_ICON = raw('<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 1.5h5v5l-7 7-5-5z"/><circle cx="11" cy="4" r=".9" fill="currentColor" stroke="none"/><path d="M5 9.5l2.5-2.5M7.5 7v2.4M7.5 7H5.1"/></svg>');
+  const BIN_ICON = raw('<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v4.5M9.2 6.5v4.5"/></svg>');
+  // A list cut to its first five, with a button for the rest.
+  const SHOW_FIRST = 5;
+  const moreBtn = (n) => (n > SHOW_FIRST ? html`<button type="button" class="linkish show-more" data-action="show-more">Show ${n - SHOW_FIRST} more</button>` : '');
+  const PERSON_ICON = raw('<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><circle cx="8" cy="5" r="3" fill="currentColor"/><path d="M2 15c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z" fill="currentColor"/></svg>');
+  // The small Overview switch between your goals and everyone's.
+  const whoIcon = () => (household() ? html`<button type="button" class="who-btn ${goalWho() === 'mine' ? 'on' : ''}" data-action="goal-who" data-who="${goalWho() === 'mine' ? 'all' : 'mine'}"
+    aria-pressed="${goalWho() === 'mine' ? 'true' : 'false'}" title="${goalWho() === 'mine' ? "Showing yours and shared ones. Tap to show everyone's" : 'Showing everyone\'s. Tap to show just yours'}">${PERSON_ICON}<span>${goalWho() === 'mine' ? 'Mine' : 'All'}</span></button>` : '');
+
   // Goals and debts that need attention: overdue or due soonest first, then the rest by progress.
   function goalsSummary() {
-    const open = state.data.goals.filter((g) => !g.done);
-    if (!open.length) return '';
+    if (!state.data.goals.some((g) => !g.done)) return '';
+    const open = state.data.goals.filter((g) => !g.done && shownGoal(g));
     const pick = (kind) => openGoals(kind).slice(0, 3);
     const section = (kind, title) => {
       const list = pick(kind);
       const total = open.filter((g) => g.kind === kind).length;
       return html`
         <section class="card soft-${kind}">
-          <div class="card-head"><h2>${title}</h2><button type="button" class="linkish small" data-action="goal-list" data-kind="${kind}">See all${total > list.length ? ` (${total})` : ''}</button></div>
+          <div class="card-head"><h2>${title}</h2><span class="head-tools">${whoIcon()}<button type="button" class="linkish small" data-action="goal-list" data-kind="${kind}">See all${total > list.length ? ` (${total})` : ''}</button></span></div>
           ${list.length ? html`<ul class="list">${list.map((g) => goalRow(g))}</ul>` : html`<p class="empty">Nothing open.</p>`}
         </section>`;
     };
@@ -948,9 +1228,12 @@
     if (!a) return;
     const line = (label, value) => (value ? html`<li><div class="grow"><div class="meta">${label}</div><div class="title num">${value}</div></div>
       <button type="button" data-copy="${value}" data-label="${label}">Copy</button></li>` : '');
+    const btns = { edit: { label: 'Edit account', action: 'edit-account', id: a.id } };
     openForm({
-      title: a.name,
+      title: null,
+      noActions: true,
       body: html`
+        ${popHead(a.name, btns)}
         <ul class="list">
           ${line('BSB', a.bsb)}
           ${line('Account number', a.account_number)}
@@ -958,7 +1241,7 @@
         </ul>
         <p class="muted small">${[a.institution, a.type, a.owner && `Owner: ${a.owner}`].filter(Boolean).join(' · ')}</p>
         ${!a.bsb && !a.account_number ? html`<p>No bank details saved yet.</p>` : ''}
-        <p><a href="#/settings/accounts" data-modal="cancel">Edit accounts</a></p>`,
+        ${popFoot(btns)}`,
     });
   }
 
@@ -1132,7 +1415,8 @@
     const word = cycleWord();
     const count = (n) => `${n} ${n === 1 ? k.items.replace(/s$/, '') : k.items}`;
 
-    const nameLine = (e) => html`<span class="b-name">${e.name}</span>${payee(e.payee_id) ? html`<span class="b-payee"> · ${payee(e.payee_id).name}</span>` : ''}${e.active ? '' : html` <span class="chip">Paused</span>`}${kind === 'saving' && e.show_as_expense ? html` <span class="chip">In expenses</span>` : ''}${kind === 'expense' && kindOf(e) === 'saving' ? html` <span class="chip">Savings</span>` : ''}${untilTag(e)}`;
+    const nameLine = (e) => html`<span class="b-name">${e.name}</span>${payee(e.payee_id) ? html`<span class="b-payee"> · ${payee(e.payee_id).name}</span>` : ''}${e.active ? '' : html` <span class="chip">Paused</span>`}${kind === 'saving' && e.show_as_expense ? html` <span class="chip">In expenses</span>` : ''}${kind === 'expense' && kindOf(e) === 'saving' ? html` <span class="chip">Savings</span>` : ''}${untilTag(e)}${e.pending_from ? html` <span class="chip pending" title="New amount from ${fmtDate(e.pending_from, true)}">${money(e.pending_cents)} from ${dateNear(e.pending_from)}</span>` : ''}`;
+    const updBtn = (e) => html`<button type="button" class="upd-amt" data-action="update-amount" data-id="${e.id}" data-tip="Update amount" aria-label="Update the amount of ${e.name}">${PRICE_ICON}</button>`;
     const amountHtml = (e) => { const [c, unit] = billAmount(e); return html`<b class="num">${money(c)}</b> <span class="unit">/ ${unit}</span>`; };
     const dueHtml = (e) => (e.active && e.next_date ? relDueHtml(e.next_date) : html`<span class="rel-date">${e.active ? '' : 'Paused'}</span>`);
     const isToday = (e) => e.active && e.next_date === state.data.settings.today;
@@ -1148,7 +1432,7 @@
           <li class="clickable ${e.active ? '' : 'paused'}" data-action="edit-expense" data-id="${e.id}">
             <div class="grow"><div class="b-line1">${nameLine(e)}</div>
               <div class="b-line2">${e.active && e.next_date ? relDueHtml(e.next_date) : e.active ? FREQ_LABELS[e.frequency] : 'Paused'}${kindOf(e) === 'saving' && savingGoalText(e) ? ` · ${savingGoalText(e)}` : ''}</div></div>
-            <div class="right"><div>${amountHtml(e)}</div>${showsPerCycle(e) ? html`<div class="b-line2 num">≈ ${money(e.per_pay_cents)} ${aCycle()}</div>` : ''}</div>
+            <div class="right"><div>${updBtn(e)}${amountHtml(e)}</div>${showsPerCycle(e) ? html`<div class="b-line2 num">≈ ${money(e.per_pay_cents)} ${aCycle()}</div>` : ''}</div>
           </li>`)}</ul>`}
       </section>`;
     })}</div>`;
@@ -1167,7 +1451,7 @@
             <span class="b-cell">${nameLine(e)}</span>
             <span class="sched">${isSplit(e) ? `${money(e.yearly_cents)} a year, spread` : shortSchedule(e)}</span>
             <span>${dueHtml(e)}</span>
-            <span class="r">${amountHtml(e)}</span>
+            <span class="r">${updBtn(e)}${amountHtml(e)}</span>
             <span class="r per num">${money(e.per_pay_cents)}</span></div>`)}`;
       })}
       <div class="exp-tr exp-tt" role="row"><span>Total</span><span class="r num">${money(total)}</span></div>
@@ -1190,7 +1474,28 @@
         <div class="exp-count">${count(list.length)} · about ${money(Math.round(total))} ${aCycle()}</div>
         ${groups.length ? table : html`<p class="empty">${all.length ? `No ${k.items} match.` : k.none}</p>`}
       </div>
-      ${groups.length ? cards : ''}`;
+      ${groups.length ? cards : ''}
+      ${kind === 'saving' ? savingsGoalsCard() : ''}`;
+  }
+
+  // Savings tab: the goals that have money in them, under the account they're saved in.
+  function savingsGoalsCard() {
+    const by = goalSavings();
+    if (!by.size) return '';
+    const order = [...state.data.accounts.map((a) => a.id), null].filter((id) => by.has(id));
+    return html`<section class="card sv-goals">
+      <div class="card-head"><div><h2>Goals with money saved</h2><div class="muted head-sub">By the account they're saved in · <a href="#/goals/saving-for">Open Goals</a></div></div></div>
+      ${order.map((id) => {
+        const a = id != null && account(id);
+        const x = by.get(id);
+        return html`<div class="sv-acct" style="--acct:${a ? accountColor(a.id) : 'var(--muted)'}">
+          <div class="sv-acct-head"><span class="dot"></span><b>${a ? a.name : 'No account'}</b><span class="sv-total num">${money(x.cents)} saved</span></div>
+          <ul class="sv-list">${x.goals.map((g) => html`<li><span class="grow">${g.name}</span>
+            ${g.target_cents ? html`<span class="sv-bar">${progress(g.current_cents, g.target_cents, 'goal', 'var(--paid)')}</span>` : ''}
+            <span class="num sv-amt">${money(g.current_cents)}${g.target_cents ? html`<span class="muted"> of ${money(g.target_cents)}</span>` : ''}</span></li>`)}</ul>
+        </div>`;
+      })}
+    </section>`;
   }
 
   function scheduleFields(e) {
@@ -1249,11 +1554,15 @@
             <button type="button" class="icon" data-add="subcategory" aria-label="New sub category">+</button></div></div>
           <div class="field only-expense" ${kind === 'expense' ? '' : raw('hidden')}><label for="f-ref">Reference / customer no.</label><input id="f-ref" name="reference" value="${e.reference || ''}"></div>
           <div class="field"><label for="f-notes">Notes</label><input id="f-notes" name="notes" value="${e.notes || ''}"></div>
+          <div class="field only-expense" ${kind === 'expense' ? '' : raw('hidden')}><label for="f-review">Price review (optional)</label><input id="f-review" type="date" name="review_date" value="${e.review_date || ''}">
+            <div class="hint">When it usually changes, like an insurance renewal. The Overview reminds you once it passes.</div></div>
           ${temporaryField(e)}
           <div class="field full"><label class="check"><input type="checkbox" name="active" ${e.active ? raw('checked') : ''}> Active (untick to pause without deleting)</label></div>
+          ${e.id ? html`<div class="full ph-slot"></div>` : ''}
         </div>`,
       onSave: async (form) => {
         const saving = val(form, 'kind') === 'saving';
+        const review = saving ? null : val(form, 'review_date') || null;
         const yearly = saving && val(form, 'mode') === 'yearly' ? moneyVal(form, 'yearly', 'Yearly amount', { required: true }) : null;
         const body = {
           name: val(form, 'name'),
@@ -1274,7 +1583,10 @@
           active: form.elements.active.checked,
           kind: val(form, 'kind'),
           goal_cents: val(form, 'kind') === 'saving' ? moneyVal(form, 'goal', 'Savings goal') : null,
+          review_date: review,
         };
+        // A new review date starts afresh, without any "remind me later".
+        if (review !== (e.review_date || null)) body.review_snooze = null;
         if (!body.name) throw new Error('Please give it a name.');
         await (e.id ? api('PATCH', `/expenses/${e.id}`, body) : api('POST', '/expenses', body));
         await reload();
@@ -1282,6 +1594,12 @@
       },
       onDelete: e.id ? async () => { await api('DELETE', `/expenses/${e.id}`); await reload(); toast('Deleted'); } : null,
       afterRender: (form) => {
+        if (e.id) {
+          api('GET', `/history/expense/${e.id}`).then((rows) => {
+            const slot = form.querySelector('.ph-slot');
+            if (slot && rows.length) slot.innerHTML = html`<h3 class="ph-title">Price history</h3>${priceHistory(rows, e)}`.s;
+          }).catch(() => {});
+        }
         // Switching between expense and savings (and regular or yearly savings) shows the fields that fit.
         const showMode = () => {
           const yearly = form.elements.kind.value === 'saving' && form.elements.mode.value === 'yearly';
@@ -1422,9 +1740,9 @@
     const left = goalLeft(g);
     return html`
       <li class="g-item" data-goal="${g.id}">
-        <div class="g-main">
+        <div class="g-main clickable" data-action="edit-goal" data-id="${g.id}">
           <div class="g-name">${g.name}${g.notes ? html`<span class="g-note"> · ${g.notes}</span>` : ''}</div>
-          <div class="g-chips">${goalStatusChip(g)}
+          <div class="g-chips">${ownerTag(g)}${goalStatusChip(g)}
             ${acct ? html`<span class="g-acct"><span class="dot" style="background:${accountColor(acct.id)}"></span>${acct.name}</span>` : ''}
             ${debt && g.start_date ? html`<span class="g-started">Started ${fmtDate(g.start_date, true)}</span>` : ''}</div>
           <div class="g-progress">
@@ -1456,7 +1774,8 @@
   function renderGoals(kind) {
     const k = KIND[kind];
     const debt = kind === 'debt';
-    const all = state.data.goals.filter((g) => g.kind === kind);
+    const everyone = state.data.goals.filter((g) => g.kind === kind);
+    const all = everyone.filter(shownGoal);
     const items = all.filter((g) => !g.done);
     const done = all.filter((g) => g.done);
     const groups = new Map();
@@ -1475,11 +1794,19 @@
     const summary = html`<div class="g-stats">
       <div class="card g-stat"><div class="g-stat-lbl">${debt ? 'Paid back' : 'Saved'}</div><div class="g-stat-val num ${debt ? 'paid-back' : 'saved'}">${money(current)}</div>
         <div class="g-stat-sub">of ${money(target)} · ${target ? Math.round((current / target) * 100) : 0}%</div></div>
-      <div class="card g-stat"><div class="g-stat-lbl">${debt ? 'Still owed' : 'Still to go'}</div><div class="g-stat-val num">${money(left)}</div>
+      <div class="card g-stat"><div class="g-stat-lbl">${debt ? 'Still owed' : 'Still to go'}</div><div class="g-stat-val num owed">${money(left)}</div>
         <div class="g-stat-sub">across ${items.length} item${items.length === 1 ? '' : 's'}</div></div>
       <div class="card g-stat"><div class="g-stat-lbl">To stay on track</div><div class="g-stat-val num track">${money(perCycle)} / ${cycleShort()}</div>
         <div class="g-stat-sub ${dueNow.length ? 'soon' : ''}">${dueNow.length ? `plus ${money(dueNowTotal)} due now (${dueNow.map((g) => g.name).join(', ')})` : 'covers every dated item'}</div></div>
     </div>`;
+
+    // Saving for: what's saved in each account, so it can be checked against the bank.
+    const byAccount = debt ? new Map() : goalSavings(items);
+    const acctStrip = byAccount.size ? html`<div class="card g-accts"><span class="g-accts-lbl">Saved by account</span>
+      ${[...byAccount.entries()].map(([id, x]) => {
+        const a = id != null && account(id);
+        return html`<span class="g-acct-total" title="${x.goals.map((g) => `${g.name}: ${money(g.current_cents)}`).join('\n')}"><span class="dot" style="background:${a ? accountColor(a.id) : 'var(--muted)'}"></span>${a ? a.name : 'No account'} <b class="num">${money(x.cents)}</b></span>`;
+      })}</div>` : '';
 
     const groupCards = sections.map(({ name, list }) => {
       const color = groupColor(kind, name);
@@ -1508,8 +1835,16 @@
           <button type="button" class="linkish" data-action="toggle-goal" data-id="${g.id}">Undo</button></li>`)}</ul>` : ''}
       </section>` : '';
 
+    const hidden = everyone.filter((g) => !g.done).length - items.length;
+    const whoBar = household() ? html`<div class="g-who"><span class="mini-seg" role="group" aria-label="Whose ${k.title.toLowerCase()}">
+        <button type="button" class="${goalWho() === 'mine' ? 'on' : ''}" data-action="goal-who" data-who="mine" aria-pressed="${goalWho() === 'mine' ? 'true' : 'false'}">${PERSON_ICON} Mine</button>
+        <button type="button" class="${goalWho() !== 'mine' ? 'on' : ''}" data-action="goal-who" data-who="all" aria-pressed="${goalWho() !== 'mine' ? 'true' : 'false'}">Everyone's</button></span>
+      ${hidden ? html`<span class="muted small">Hiding ${hidden} of ${[...new Set(everyone.filter((g) => !shownGoal(g)).map((g) => (ownerOf(g) || {}).name))].join(' and ')}'s</span>` : ''}</div>` : '';
+
     return html`
+      ${whoBar}
       ${items.length || done.length ? summary : ''}
+      ${acctStrip}
       ${items.length ? groupCards : html`<div class="card"><p class="empty">${done.length ? 'Everything here is done.' : `No ${k.title.toLowerCase()} yet.`}</p></div>`}
       ${completed}`;
   }
@@ -1619,6 +1954,8 @@
           : html`
           <div class="field full"><label for="g-date">Aim for (optional)</label><input id="g-date" type="date" name="target_date" value="${g.target_date || ''}">
             <div class="hint">The date you'd like to reach this goal.</div></div>`}
+          ${household() ? html`<div class="field full"><label for="g-owner">Whose is it?</label><select id="g-owner" name="owner_id">
+            <option value="">Shared</option>${state.logins.map((l) => html`<option value="${l.id}" ${(g.id ? g.owner_id === l.id : l.you) ? raw('selected') : ''}>${l.name}${l.you ? ' (you)' : ''}</option>`)}</select></div>` : ''}
           <div class="field full"><label for="g-notes">Notes</label><textarea id="g-notes" name="notes" rows="2">${g.notes || ''}</textarea></div>
           <div class="field full"><label class="check"><input type="checkbox" name="done" ${g.done ? raw('checked') : ''}> Done</label></div>
         </div>`,
@@ -1639,6 +1976,7 @@
           target_date: val(form, 'target_date') || null,
         };
         if (kind === 'goal') body.account_id = idVal(form, 'account_id');
+        if (form.elements.owner_id) body.owner_id = form.elements.owner_id.value === '' ? null : Number(form.elements.owner_id.value);
         if (kind === 'debt') {
           body.start_date = val(form, 'start_date') || null;
           body.target_firm = form.elements.target_firm.checked;
@@ -1748,8 +2086,9 @@
           </div>
         </div>
         <div class="lc-right">
+          <span class="lc-btns">${l.paid_off ? '' : popBtn('upd', { label: 'Update balance', action: 'update-balance', id: l.id })}
+            ${popBtn('edit', { label: 'Edit', action: 'edit-loan', id: l.id })}${popBtn('del', { label: 'Delete', action: 'delete-loan', id: l.id })}</span>
           ${bal != null ? html`<div class="lc-bal"><div class="num">${money(bal)}</div><div class="muted">left to pay</div></div>` : ''}
-          <button type="button" class="linkish lc-edit" data-action="edit-loan" data-id="${l.id}">Edit</button>
         </div>
       </div>
       <div class="lc-strip">
@@ -1802,20 +2141,32 @@
     if (!t || t.points.length < 2) return '';
     const today = state.data.settings.today;
     const todayI = monthIdx(today) + (Number(today.slice(8)) - 1) / 30;
-    const plan = t.points.map((p) => [monthIdx(p.month), p.balance_cents]);
+    const at = (d) => monthIdx(d) + (Number(d.slice(8)) - 1) / 30;
+    // With a statement balance, the plan runs from the start ignoring it, and the actual path goes
+    // through each balance entered, then on at today's repayments.
+    const planned = l.plan && l.plan.points.length > 1;
+    const plan = (planned ? l.plan.points : t.points.map((p) => [p.month, p.balance_cents])).map(([m, v]) => [monthIdx(m), v]);
     const startI = l.start_date ? monthIdx(l.start_date) : plan[0][0] - 1;
     if (l.start_date && l.principal_cents) plan.unshift([startI, l.principal_cents]);
+    const updates = (l.history || []).filter((r) => r.field === 'balance_cents').map((r) => [at(r.on_date), Number(r.value)]).sort((a, b) => a[0] - b[0]);
+    const lastI = updates.length ? updates.at(-1)[0] : null;
+    const actual = planned && updates.length ? [[startI, l.principal_cents], ...updates,
+      ...t.points.map((p) => [monthIdx(p.month), p.balance_cents]).filter(([i]) => i > lastI)] : [];
     const bal = l.estimated_balance_cents || 0;
     const bank = l.bank ? [[todayI, bal], ...l.bank.points.map(([m, v]) => [monthIdx(m), v])] : [];
     const extra = extraPoints ? [[todayI, bal], ...extraPoints.map((v, k) => [monthIdx(today) + k + 1, v])] : [];
-    const endI = Math.max(l.end_date ? monthIdx(l.end_date) : 0, plan.at(-1)[0], bank.length ? bank.at(-1)[0] : 0);
-    const top = Math.max(l.principal_cents || 0, ...plan.map((p) => p[1]), 1);
+    const endI = Math.max(l.end_date ? monthIdx(l.end_date) : 0, plan.at(-1)[0], bank.length ? bank.at(-1)[0] : 0, actual.length ? actual.at(-1)[0] : 0);
+    const top = Math.max(l.principal_cents || 0, ...plan.map((p) => p[1]), ...actual.map((p) => p[1]), 1);
     const W = 560; const H = 180;
     const x = (i) => ((i - startI) / (endI - startI || 1)) * W;
     const y = (v) => 6 + (1 - v / top) * (H - 6);
     const path = (pts) => pts.map(([i, v], k) => `${k ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('');
     const line = path(plan);
     const area = `${line}L${x(plan.at(-1)[0]).toFixed(1)},${H}L${x(plan[0][0]).toFixed(1)},${H}Z`;
+    // Dotted lines where the repayment, balance or rate was changed (not where it was first recorded).
+    const seen = new Set();
+    const marks = (l.history || []).filter((r) => { const first = !seen.has(r.field); seen.add(r.field); return !first && r.field !== 'balance_cents'; })
+      .map((r) => ({ r, i: monthIdx(r.on_date) + (Number(r.on_date.slice(8)) - 1) / 30 })).filter(({ i }) => i >= startI && i <= endI);
     const y0 = Math.floor(startI / 12); const y1 = Math.ceil(endI / 12);
     const step = Math.max(1, Math.round((y1 - y0) / 5));
     const years = [];
@@ -1826,20 +2177,81 @@
         <path d="${area}" fill="#2ec4b6" opacity=".12"></path>
         ${bank.length > 1 ? html`<path d="${path(bank)}" fill="none" stroke="#8b98a8" stroke-width="1.5" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"></path>` : ''}
         <path d="${line}" fill="none" stroke="#2ec4b6" stroke-width="2.5" vector-effect="non-scaling-stroke"></path>
+        ${actual.length > 1 ? html`<path class="ld-actual" d="${path(actual)}" fill="none" stroke="var(--firm)" stroke-width="2.5" vector-effect="non-scaling-stroke"></path>` : ''}
         ${extra.length > 1 ? html`<path d="${path(extra)}" fill="none" stroke="#3fb950" stroke-width="2.5" vector-effect="non-scaling-stroke"></path>` : ''}
         <line x1="${x(todayI)}" x2="${x(todayI)}" y1="0" y2="${H}" stroke="#5b6778" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"></line>
+        ${marks.map(({ r, i }) => html`<line class="ld-mark" x1="${x(i).toFixed(1)}" x2="${x(i).toFixed(1)}" y1="0" y2="${H}" stroke="var(--firm)" stroke-width="1.5" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"><title>${fmtDate(r.on_date, true)}: ${LOAN_FIELDS[r.field]} ${loanHistoryValue(r)}</title></line>`)}
         <line class="ld-cursor" x1="0" x2="0" y1="0" y2="${H}" stroke="currentColor" stroke-width="1" opacity="0" vector-effect="non-scaling-stroke"></line>
       </svg>
       <span class="ld-today" style="left:${(x(todayI) / W) * 100}%">Today</span>
+      <div class="ld-pts">${balancePoints(l, x, y, startI, endI, W, H, actual.length ? null : plan)}</div>
       <div class="ld-tip" hidden></div>
       <div class="ld-years">${years.map((yr) => html`<span style="left:${(x(yr * 12) / W) * 100}%">${yr}</span>`)}</div>
     </div>`;
+  }
+
+  // Each balance entered from a statement, as a point on the line. Hover or tap for the estimate it replaced.
+  function balancePoints(l, x, y, startI, endI, W, H, plan) {
+    // Where the drawn line is at a point in time, so each dot sits on it.
+    const lineAt = (i) => {
+      const k = plan.findIndex((p) => p[0] >= i);
+      if (k <= 0) return plan[Math.max(0, k)][1];
+      const [i0, v0] = plan[k - 1]; const [i1, v1] = plan[k];
+      return v0 + ((v1 - v0) * (i - i0)) / (i1 - i0 || 1);
+    };
+    // On the actual line (plan null), a dot sits at the balance itself.
+    return (l.history || []).filter((r) => r.field === 'balance_cents').map((r) => {
+      const i = monthIdx(r.on_date) + (Number(r.on_date.slice(8)) - 1) / 30;
+      if (i < startI || i > endI) return '';
+      const before = r.before_value != null ? Number(r.before_value) : null;
+      const diff = before != null ? Number(r.value) - before : null;
+      const tip = [`Balance updated ${fmtDate(r.on_date, true)}`,
+        `Calculated before: ${before != null ? money(Math.round(before)) : 'not recorded'}`,
+        `Set to: ${money(r.value)}`,
+        diff != null ? `Difference: ${diff > 0 ? '+' : diff < 0 ? '−' : ''}${money(Math.abs(Math.round(diff)))}` : null].filter(Boolean).join('\n');
+      const right = x(i) / W > 0.6;
+      return html`<button type="button" class="ld-pt ${right ? 'tip-left' : ''}" style="left:${(x(i) / W) * 100}%;top:${(y(plan ? lineAt(i) : Number(r.value)) / H) * 100}%" data-tip="${tip}" aria-label="${tip.replace(/\n/g, '. ')}"></button>`;
+    });
+  }
+
+  const LOAN_FIELDS = { repayment_cents: 'Repayment', balance_cents: 'Balance', interest_rate: 'Interest rate' };
+  const loanHistoryValue = (r) => (r.field === 'interest_rate' ? `${Number(r.value)}%` : r.field === 'repayment_cents' ? `${money(r.value)}${r.frequency ? ` / ${FREQ_UNIT[r.frequency]}` : ''}` : money(r.value));
+
+  // Every change to a loan's repayment, statement balance and rate, newest first.
+  function loanHistoryPopup(l) {
+    const rows = [...(l.history || [])].reverse();
+    const prevOf = (r) => { const k = l.history.indexOf(r); return l.history.slice(0, k).reverse().find((q) => q.field === r.field); };
+    const change = (r) => {
+      const p = prevOf(r);
+      if (!p) return html`<span class="muted">First recorded</span>`;
+      const d = Number(r.value) - Number(p.value);
+      if (!d) return html`<span class="muted">${r.frequency !== p.frequency ? 'New schedule' : 'No change'}</span>`;
+      const txt = r.field === 'interest_rate' ? `${Math.abs(Math.round(d * 100) / 100)}%` : money(Math.abs(d));
+      // A higher repayment or a lower balance or rate is good news.
+      const good = r.field === 'repayment_cents' ? d > 0 : d < 0;
+      return html`<span class="ph-diff ${good ? 'better' : 'worse'}">${d > 0 ? '+' : '−'}${txt}</span>`;
+    };
+    openForm({
+      title: `${l.name} history`,
+      body: html`
+        <p class="muted small" style="margin-top:0">Each time the repayment, statement balance or rate was changed. Balances use their statement date. The loan chart marks these with dotted lines.</p>
+        ${rows.length ? html`<div class="lh-table" role="table">
+          <div class="lh-tr lh-th" role="row"><span>Date</span><span>What</span><span class="r">Amount</span><span class="r">Change</span><span></span></div>
+          ${rows.map((r, k) => html`<div class="lh-tr ${k >= SHOW_FIRST ? 'more' : ''}" role="row" ${k >= SHOW_FIRST ? raw('hidden') : ''}><span>${fmtDate(r.on_date, true)}</span><span>${LOAN_FIELDS[r.field]}</span>
+            <span class="r num">${loanHistoryValue(r)}</span><span class="r">${change(r)}</span>
+            <span class="r">${l.history.filter((q) => q.field === r.field).length > 1 ? binBtn({ kind: 'loan', item: l.id }, r, `${LOAN_FIELDS[r.field]} ${fmtDate(r.on_date, true)}: ${loanHistoryValue(r)}`) : ''}</span></div>`)}</div>
+          ${moreBtn(rows.length)}`
+          : html`<p class="empty">Nothing recorded yet. Changes show here from now on.</p>`}`,
+      lead: html`<button type="button" data-action="loan-details" data-id="${l.id}">‹ Back to ${l.name}</button>`,
+    });
   }
 
   // Hover, or tap, for a month's repayments, interest and balance. The tooltip flips left past 60% of the width.
   function loanChartTip(ev) {
     const chart = ev.target.closest && ev.target.closest('.ld-chart');
     if (!chart) return;
+    // A balance point has its own tooltip.
+    if (ev.target.closest('.ld-pt')) { chart.querySelector('.ld-tip').hidden = true; return; }
     const svg = chart.querySelector('svg');
     const box = svg.getBoundingClientRect();
     const f = Math.min(1, Math.max(0, (ev.clientX - box.left) / box.width));
@@ -1909,6 +2321,8 @@
   });
 
   // Detail popup: balance and pay-off, how it's paid, what it costs, the balance over time and what paying extra would do.
+  const loanBtns = (l) => ({ upd: l.paid_off ? null : { label: 'Update balance', action: 'update-balance', id: l.id }, edit: { label: 'Edit loan', action: 'edit-loan', id: l.id } });
+
   async function loanDetails(id) {
     const l = await api('GET', `/loans/${id}/details`);
     openLoan = l;
@@ -1957,8 +2371,7 @@
               ${l.term_months ? html`<span class="lc-chip soft">${termText(l.term_months)}${l.end_date ? ` · ends ${fmtDate(l.end_date, true)}` : ''}</span>` : ''}
             </div>
           </div>
-          <div class="ld-head-btns"><button type="button" class="linkish" data-action="edit-loan" data-id="${l.id}">Edit</button>
-            <button type="button" class="ld-x" data-modal="cancel" aria-label="Close">✕</button></div>
+          ${popTop(loanBtns(l))}
         </div>
 
         <div class="ld-sum">
@@ -1969,7 +2382,7 @@
 
         ${warn ? html`<div class="ld-warn"><span>The estimate is <b>${money(Math.abs(gap))}</b> ${gap < 0 ? 'below' : 'above'} your last statement (${fmtDate(h.to)}).
             <button type="button" class="linkish" data-action="ld-working">How is this worked out?</button></span>
-          <button type="button" class="ld-warn-btn" data-action="edit-loan" data-id="${l.id}">Update balance</button></div>
+          <button type="button" class="ld-warn-btn" data-action="update-balance" data-id="${l.id}">Update balance</button></div>
           <div class="ld-working" hidden>Before ${fmtDate(h.to, true)} (estimated at today's rate): ${money(h.paid_cents)} repaid, ${money(h.interest_cents)} interest.
             Since then (calculated): ${money(t.paid_since_cents)} repaid, ${money(t.interest_since_cents)} interest.
             The estimate puts the balance at ${money(h.estimated_balance_cents)}; your statement says ${money(h.statement_balance_cents)}.</div>` : ''}
@@ -1983,8 +2396,8 @@
         <div class="ld-pad ld-bar">${loanBar(l)}</div>
 
         ${t && t.points.length > 1 ? html`<div class="ld-pad ld-sec">
-          <h3>Balance over time</h3>
-          <div class="ld-keys"><span><i class="k-plan"></i>Your plan</span>${l.bank ? html`<span><i class="k-bank"></i>Bank schedule</span>` : ''}<span class="ld-key-extra" hidden><i class="k-extra"></i>With extra</span></div>
+          <div class="ld-sec-head"><h3>Balance over time</h3>${l.history && l.history.length ? html`<button type="button" class="linkish small" data-action="loan-history">History</button>` : ''}</div>
+          <div class="ld-keys"><span><i class="k-plan"></i>Your plan</span>${l.bank ? html`<span><i class="k-bank"></i>Bank schedule</span>` : ''}${(l.history || []).some((r) => r.field === 'balance_cents') ? html`<span><i class="k-pt ${l.plan ? 'k-actual' : ''}"></i>${l.plan ? 'Actual (balance updates)' : 'Balance updated'}</span>` : ''}${(() => { const seenF = new Set(); return (l.history || []).some((r) => { const again = seenF.has(r.field); seenF.add(r.field); return again && r.field !== 'balance_cents'; }); })() ? html`<span><i class="k-mark"></i>Rate or repayment changed</span>` : ''}<span class="ld-key-extra" hidden><i class="k-extra"></i>With extra</span></div>
           <div class="ld-chart-wrap">${loanChart(l, null)}</div>
         </div>` : ''}
 
@@ -2008,7 +2421,7 @@
           </ul></div>
 
         <p class="ld-pad ld-foot">Estimates${t && t.from ? ` from ${fmtDate(t.from, true)}` : ''}, using the repayments you budget${fees ? `. The total cost includes about ${money(fees)} in fees over the term` : ''}. Update the balance from a statement to keep them close.</p>
-        <div class="ld-btns"><button type="button" data-modal="cancel">Close</button><button type="button" class="primary" data-action="edit-loan" data-id="${l.id}">Edit loan</button></div>
+        <div class="ld-btns">${popFoot(loanBtns(l))}</div>
       </div>`,
     });
   }
@@ -2031,9 +2444,12 @@
     // Copyable lines, like an account's bank details.
     const line = (label, value, copy = true) => (value ? html`<li><div class="grow"><div class="meta">${label}</div><div class="title num">${value}</div></div>
       ${copy ? html`<button type="button" data-copy="${value}" data-label="${label}">Copy</button>` : ''}</li>` : '');
+    const btns = { upd: { label: 'Update amount', action: 'update-amount', id: e.id }, edit: { label: `Edit ${kindOf(e) === 'saving' ? 'saving' : 'expense'}`, action: 'edit-expense', id: e.id } };
     openForm({
-      title: e.name,
+      title: null,
+      noActions: true,
       body: html`
+        ${popHead(e.name, btns)}
         <div class="facts two">
           ${fact(status === 'paid' ? 'Came out' : status === 'due' ? 'Due today' : 'Due', money(Number(amount)), fmtDate(date, true))}
           ${fact('How often', isSplit(e) ? `${money(e.yearly_cents)} a year` : e.spread ? `${money(e.amount_cents)} ${FREQ_LABELS[e.frequency].toLowerCase()}` : FREQ_LABELS[e.frequency],
@@ -2050,10 +2466,12 @@
           ${line(p?.pay_type === 'bpay' ? 'Reference (CRN)' : 'Reference', ref)}
           ${cat ? line('Category', [cat.name, sub?.name].filter(Boolean).join(' › '), false) : ''}
           ${!e.spread && e.next_date && e.next_date !== date ? line('Next after this', fmtDate(e.next_date, true), false) : ''}
+          ${e.pending_from ? line('Price change', `${money(e.pending_cents)} from ${fmtDate(e.pending_from, true)}`, false) : ''}
           ${e.notes ? line('Notes', e.notes, false) : ''}
         </ul>
         <p class="hint">Paid so far counts every date it was due before today${e.start_date ? `, from ${fmtDate(e.start_date, true)}` : ''}.</p>
-        <div class="row" style="justify-content:flex-end"><button type="button" class="primary" data-action="edit-expense" data-id="${e.id}">Edit ${kindOf(e) === 'saving' ? 'saving' : 'expense'}</button></div>`,
+        ${e.history && e.history.length ? html`<h3 class="ph-title">Price history${e.review_date ? html` <span class="muted small">· ${e.review_date <= state.data.settings.today ? 'review was due' : 'next review'} ${fmtDate(e.review_date, true)}</span>` : ''}</h3>${priceHistory(e.history, e)}` : ''}
+        ${popFoot(btns)}`,
     });
   }
 
@@ -2205,13 +2623,13 @@
   // Loans to bring up to date from a statement.
   function updateBalances() {
     const loans = state.data.loans.filter((l) => !l.paid_off);
-    if (loans.length === 1) return loanForm(loans[0]);
+    if (loans.length === 1) return balanceForm(loans[0]);
     openForm({
       title: 'Update balances',
       body: html`<p class="hint">Pick a loan and enter the balance from its latest statement.</p>
         <ul class="list">${loans.map((l) => html`<li><div class="grow"><div class="title">${l.name}</div>
           <div class="meta">${l.balance_cents != null && l.balance_date ? `${money(l.balance_cents)} as at ${fmtDate(l.balance_date, true)}` : 'No statement balance yet'}</div></div>
-          <button type="button" data-action="edit-loan" data-id="${l.id}">Update</button></li>`)}</ul>`,
+          <button type="button" data-action="update-balance" data-id="${l.id}">Update</button></li>`)}</ul>`,
     });
   }
 
@@ -2339,6 +2757,21 @@
         if (body.balance_cents != null && !body.balance_date) throw new Error('Add the date the balance is from.');
         if (body.repayment_cents == null && !(body.principal_cents && body.term_months)) {
           throw new Error('Add the amount borrowed and term so the repayment can be worked out, or enter the repayment yourself.');
+        }
+        // A loan that started in the past with no balance: offer to work out where it should be by now.
+        const today = state.data.settings.today;
+        if (!l.id && body.start_date && body.start_date < today && body.balance_cents == null && body.principal_cents) {
+          const guess = await api('POST', '/loans/estimate-balance', body);
+          const est = guess.balance_cents;
+          const pick = await askChoice({
+            title: 'Work out the balance?',
+            text: html`<p>This loan started ${fmtDate(body.start_date, true)} and has no balance yet.</p>
+              <p><b>Yes</b> sets it to ${est != null ? html`about <b>${money(est)}</b>, ` : ''}what's left if only the minimum repayments were made${guess.repayments != null ? html`: ${guess.repayments} repayment${guess.repayments === 1 ? '' : 's'} of ${money(guess.repayment_cents)}, the amount borrowed plus interest spread evenly over the term` : ''}.</p>
+              <p><b>No</b> keeps the full ${money(body.principal_cents)} borrowed as today's balance, until you update it.</p>`,
+            choices: [{ label: 'Cancel', value: 'cancel' }, { label: 'No', value: 'no' }, { label: 'Yes', value: 'yes', primary: true }],
+          });
+          if (!pick || pick === 'cancel') throw new Error('');
+          Object.assign(body, { balance_cents: pick === 'yes' && est != null ? est : body.principal_cents, balance_date: today });
         }
         await (l.id ? api('PATCH', `/loans/${l.id}`, body) : api('POST', '/loans', body));
         await reload();
@@ -3306,6 +3739,36 @@ sudo docker compose up -d --build</pre>`;
     'edit-expense': (el) => { const e = findById(state.data.expenses, el); if (e) expenseForm(e); },
     'new-goal': (el) => goalForm(el.dataset.kind),
     'goal-list': (el) => goalListPopup(el.dataset.kind),
+    'goal-who': (el) => setGoalWho(el.dataset.who),
+    'loan-history': () => { if (openLoan) loanHistoryPopup(openLoan); },
+    'show-more': (el) => { el.parentElement.querySelectorAll('.more[hidden]').forEach((m) => { m.hidden = false; }); el.remove(); },
+    'history-remove': async (el) => {
+      const { kind, item, id, what } = el.dataset;
+      const ok = await askChoice({ title: 'Remove this entry?', text: html`<p><b>${what}</b></p><p>It comes out of the history. If it's the newest one, the ${kind === 'loan' ? 'loan goes' : 'bill goes'} back to the one before it.</p>`,
+        choices: [{ label: 'Cancel', value: 'no' }, { label: 'Remove', value: 'yes', danger: true }] });
+      if (ok !== 'yes') return;
+      await api('DELETE', `/history/${kind}/${item}/${id}`);
+      await reload();
+      await render();
+      toast('Removed');
+      if (kind === 'loan') {
+        openLoan = await api('GET', `/loans/${item}/details`);
+        loanHistoryPopup(openLoan);
+        return;
+      }
+      // Redraw the price history where it is (the bill popup or the edit form), and the amount if it went back.
+      const e = await api('GET', `/expenses/${item}/details`);
+      const box = el.closest('.ph');
+      if (box) box.outerHTML = priceHistory(e.history, e).s;
+      const form = document.querySelector('#modal form');
+      const amt = form && form.elements.amount;
+      if (amt && !amt.closest('[hidden]')) amt.value = (e.amount_cents / 100).toFixed(2);
+    },
+    'review-update': (el) => { const e = findById(state.data.expenses, el); if (e) amountForm(e, { review: true }); },
+    'update-amount': (el) => { const e = findById(state.data.expenses, el); if (e) amountForm(e); },
+    'update-balance': (el) => { const l = openLoan && openLoan.id === Number(el.dataset.id) ? openLoan : findById(state.data.loans, el); if (l) balanceForm(l); },
+    'review-snooze': (el) => { const e = findById(state.data.expenses, el); if (e) return reviewLater(e, 'snooze'); },
+    'review-skip': (el) => { const e = findById(state.data.expenses, el); if (e) return reviewLater(e, 'skip'); },
     'edit-goal': (el) => { const g = findById(state.data.goals, el); if (g) goalForm(g.kind, g); },
     'ld-working': (el) => {
       const box = el.closest('.ld').querySelector('.ld-working');
@@ -3363,6 +3826,17 @@ sudo docker compose up -d --build</pre>`;
     'new-income': () => incomeForm(),
     'new-loan': () => loanForm(),
     'edit-loan': (el) => { const l = findById(state.data.loans, el); if (l) loanForm(l); },
+    'delete-loan': async (el) => {
+      const l = findById(state.data.loans, el);
+      if (!l) return;
+      const ok = await askChoice({ title: `Delete ${l.name}?`, text: html`<p>Are you sure? The loan, its repayments in the budget and its history are removed. This can't be undone.</p>`,
+        choices: [{ label: 'Cancel', value: 'no' }, { label: 'Delete', value: 'yes', danger: true }] });
+      if (ok !== 'yes') return;
+      await api('DELETE', `/loans/${l.id}`);
+      await reload();
+      await render();
+      toast('Loan deleted');
+    },
     'loan-details': async (el) => loanDetails(Number(el.dataset.id)),
     'update-balances': () => updateBalances(),
     'toggle-calc': () => { try { localStorage.setItem('calc-open', calcOpen() ? '0' : '1'); } catch { /* not remembered */ } render(); },
@@ -3829,7 +4303,8 @@ sudo docker compose up -d --build</pre>`;
       await reload();
       // Who's logged in: their name in the menu, and their theme.
       state.me = await api('GET', '/me');
-      state.logins = null;
+      state.goalWho = null;
+      state.logins = await api('GET', '/logins').catch(() => null);
       applyTheme(state.me.theme, state.me.custom_theme);
       showMe();
       render();

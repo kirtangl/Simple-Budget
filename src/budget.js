@@ -478,6 +478,25 @@ function calculatedRepayment(loan) {
   return Math.round(amortisedRepayment(loan.principal_cents, loan.interest_rate, LOAN_FREQUENCIES[loan.repayment_frequency] || 12, loanPeriods(loan)));
 }
 
+// Where a loan should be on `date` if only the minimum repayments were made: the amount borrowed
+// spread over the term with interest (so it reaches $0 at the end), less the repayments due so far.
+// Null without an amount, start date and term.
+function minimumBalance(loan, date) {
+  const n = loanPeriods(loan);
+  const P = Number(loan.principal_cents);
+  if (!(P > 0) || !n || !loan.start_date || !date) return null;
+  const freq = LOAN_FREQUENCIES[loan.repayment_frequency] ? loan.repayment_frequency : 'monthly';
+  const ppy = LOAN_FREQUENCIES[freq];
+  let k = 0;
+  if (freq === 'monthly') { while (k < n && addMonths(loan.start_date, k + 1) <= date) k++; }
+  else k = Math.max(0, Math.floor(daysBetween(loan.start_date, date) / (freq === 'weekly' ? 7 : 14)));
+  k = Math.min(k, n);
+  const pmt = amortisedRepayment(P, loan.interest_rate, ppy, n);
+  const r = (Number(loan.interest_rate) || 0) / 100 / ppy;
+  const left = r ? P * (1 + r) ** k - (pmt * ((1 + r) ** k - 1)) / r : P - pmt * k;
+  return { balance_cents: Math.max(0, Math.round(left)), repayments: k, repayment_cents: Math.round(pmt) };
+}
+
 // The scheduled repayment: the one you set, or the calculated one.
 function loanRepayment(loan) {
   return loan.repayment_cents != null ? loan.repayment_cents : calculatedRepayment(loan);
@@ -516,8 +535,10 @@ function simulateLoan(loan, until, sample) {
   const b = budgetedRepayment(loan);
   const s = scheduledRepayment(loan);
   const firstPay = b.date || loan.start_date;
-  const asExpense = loanAsExpense(loan, firstPay || date);
-  const asScheduled = scheduleAsExpense(loan, s.date || loan.start_date || date);
+  // The due dates are an anchor for the rhythm: repayments were also made between the start and them.
+  const back = (row) => (loan.start_date && row.start_date && row.start_date > loan.start_date ? { ...row, start_date: loan.start_date } : row);
+  const asExpense = back(loanAsExpense(loan, firstPay || date));
+  const asScheduled = back(scheduleAsExpense(loan, s.date || loan.start_date || date));
   const daily = (Number(loan.interest_rate) || 0) / 100 / 365;
   const offset = Number(loan.offset_cents) || 0;
   const interestDay = Math.min(Math.max(Number(loan.interest_day) || Number((loan.start_date || date).slice(8)), 1), 31);
@@ -553,7 +574,7 @@ function simulateLoan(loan, until, sample) {
       accrued = 0;
     }
     const budgeted = !b.custom || !b.date || date >= b.date;
-    const isDue = budgeted ? due.has(date) && (!b.date || date >= b.date) : dueScheduled.has(date);
+    const isDue = budgeted ? due.has(date) : dueScheduled.has(date);
     if (isDue && (!loan.start_date || date > loan.start_date)) {
       const pay = Math.min(budgeted ? b.amount_cents : s.amount_cents, balance + accrued);
       balance -= pay;
@@ -602,7 +623,12 @@ function loanTimeline(loan, today) {
   // Part-months at the joins are carried into the next month.
   const h = loanHistory(loan);
   const before = h ? simulateLoan(h.fresh, h.to, add) : null;
-  if (before) carry = before.month_so_far;
+  if (before) {
+    carry = before.month_so_far;
+    // Bend the estimate so it meets the statement balance, rather than jumping to it.
+    const gap = h.statement_balance_cents - before.balance_cents;
+    points.forEach((p, i) => { p.balance_cents = Math.max(0, Math.round(p.balance_cents + (gap * (i + 1)) / (points.length + 1))); });
+  }
   const sofar = simulateLoan(loan, today, add);
   if (!sofar) return null;
   carry = carry ? { paid_cents: carry.paid_cents + sofar.month_so_far.paid_cents, interest_cents: carry.interest_cents + sofar.month_so_far.interest_cents } : sofar.month_so_far;
@@ -651,7 +677,7 @@ module.exports = {
   addDays, daysBetween, isValidDate, cycleIndexFor, cycleBounds,
   perPayCents, fortnightlyCents, occurrences, INCOME_FREQUENCIES, incomePerCycle, isSplit, perCycleCents, inRange, nextDate, movedFrom, spreadsEachCycle, yearStart, paidBetween,
   LOAN_FREQUENCIES, amortisedRepayment, maxPrincipal, addMonths, loanAsExpense, scheduleAsExpense,
-  scheduledRepayment, budgetedRepayment, nextDue, loanEndDate, calculatedRepayment,
+  scheduledRepayment, budgetedRepayment, nextDue, loanEndDate, calculatedRepayment, minimumBalance,
   loanRepayment, simulateLoan, loanEstimates, loanTimeline, loanHistory, ROUNDING, DEFAULT_DEPOSIT_RULES, roundUp, depositCents, buildCycle,
   HELD_BASES, lookAheadEnd, heldEstimates,
 };
