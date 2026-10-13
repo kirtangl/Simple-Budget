@@ -478,6 +478,25 @@ function calculatedRepayment(loan) {
   return Math.round(amortisedRepayment(loan.principal_cents, loan.interest_rate, LOAN_FREQUENCIES[loan.repayment_frequency] || 12, loanPeriods(loan)));
 }
 
+// Where a loan should be on `date` if only the minimum repayments were made: the amount borrowed
+// spread over the term with interest (so it reaches $0 at the end), less the repayments due so far.
+// Null without an amount, start date and term.
+function minimumBalance(loan, date) {
+  const n = loanPeriods(loan);
+  const P = Number(loan.principal_cents);
+  if (!(P > 0) || !n || !loan.start_date || !date) return null;
+  const freq = LOAN_FREQUENCIES[loan.repayment_frequency] ? loan.repayment_frequency : 'monthly';
+  const ppy = LOAN_FREQUENCIES[freq];
+  let k = 0;
+  if (freq === 'monthly') { while (k < n && addMonths(loan.start_date, k + 1) <= date) k++; }
+  else k = Math.max(0, Math.floor(daysBetween(loan.start_date, date) / (freq === 'weekly' ? 7 : 14)));
+  k = Math.min(k, n);
+  const pmt = amortisedRepayment(P, loan.interest_rate, ppy, n);
+  const r = (Number(loan.interest_rate) || 0) / 100 / ppy;
+  const left = r ? P * (1 + r) ** k - (pmt * ((1 + r) ** k - 1)) / r : P - pmt * k;
+  return { balance_cents: Math.max(0, Math.round(left)), repayments: k, repayment_cents: Math.round(pmt) };
+}
+
 // The scheduled repayment: the one you set, or the calculated one.
 function loanRepayment(loan) {
   return loan.repayment_cents != null ? loan.repayment_cents : calculatedRepayment(loan);
@@ -651,7 +670,7 @@ module.exports = {
   addDays, daysBetween, isValidDate, cycleIndexFor, cycleBounds,
   perPayCents, fortnightlyCents, occurrences, INCOME_FREQUENCIES, incomePerCycle, isSplit, perCycleCents, inRange, nextDate, movedFrom, spreadsEachCycle, yearStart, paidBetween,
   LOAN_FREQUENCIES, amortisedRepayment, maxPrincipal, addMonths, loanAsExpense, scheduleAsExpense,
-  scheduledRepayment, budgetedRepayment, nextDue, loanEndDate, calculatedRepayment,
+  scheduledRepayment, budgetedRepayment, nextDue, loanEndDate, calculatedRepayment, minimumBalance,
   loanRepayment, simulateLoan, loanEstimates, loanTimeline, loanHistory, ROUNDING, DEFAULT_DEPOSIT_RULES, roundUp, depositCents, buildCycle,
   HELD_BASES, lookAheadEnd, heldEstimates,
 };

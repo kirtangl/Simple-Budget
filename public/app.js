@@ -294,6 +294,16 @@
     });
   }
 
+  // The same buttons on every details popup: Update (blue), Edit (green) and Close (red) at the top,
+  // and again at the bottom with Close on the right. upd and edit are { label, action, id }, or left out.
+  const popBtn = (cls, b) => html`<button type="button" class="pop-btn ${cls}" data-action="${b.action}" data-id="${b.id}">${b.label}</button>`;
+  const popTop = ({ upd, edit }) => html`<div class="pop-btns">${upd ? popBtn('upd', upd) : ''}${edit ? popBtn('edit', { ...edit, label: 'Edit' }) : ''}
+    <button type="button" class="pop-btn x" data-modal="cancel" aria-label="Close">✕</button></div>`;
+  const popFoot = ({ upd, edit }) => html`<div class="pop-foot">${upd ? popBtn('upd', upd) : ''}${edit ? popBtn('edit', edit) : ''}
+    <button type="button" class="pop-btn close" data-modal="cancel">Close</button></div>`;
+  // A popup's heading with those buttons beside it.
+  const popHead = (title, btns, sub = '') => html`<div class="pop-head"><div class="pop-title"><h2>${title}</h2>${sub}</div>${popTop(btns)}</div>`;
+
   const val = (form, name) => form.elements[name]?.value.trim() ?? '';
   const idVal = (form, name) => (val(form, name) ? Number(val(form, name)) : null);
   function moneyVal(form, name, label, { required } = {}) {
@@ -656,45 +666,93 @@
     toast(how === 'snooze' ? `We'll remind you about ${e.name} on ${fmtDate(body.review_snooze, true)}` : `${e.name} is next up for review on ${fmtDate(body.review_date, true)}`);
   }
 
-  // A step chart of one amount over time, with each change listed underneath (newest first).
-  // rows: [{ on_date, value, frequency }] oldest first. fmt turns a value into text.
-  function historyChart(rows, { fmt = (r) => amountText(r.value, r.frequency), costUp = true, label = 'Amount over time' } = {}) {
+  // A smooth line through points (monotone, so it never overshoots between two prices).
+  function smoothPath(pts) {
+    if (pts.length < 2) return pts.length ? `M${pts[0][0]},${pts[0][1]}` : '';
+    const n = pts.length;
+    const d = []; const m = [];
+    for (let i = 0; i < n - 1; i++) d.push((pts[i + 1][1] - pts[i][1]) / ((pts[i + 1][0] - pts[i][0]) || 1));
+    m[0] = d[0]; m[n - 1] = d[n - 2];
+    for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2;
+    for (let i = 0; i < n - 1; i++) {
+      if (d[i] === 0) { m[i] = 0; m[i + 1] = 0; continue; }
+      const a = m[i] / d[i]; const b = m[i + 1] / d[i]; const h = a * a + b * b;
+      if (h > 9) { const t = 3 / Math.sqrt(h); m[i] = t * a * d[i]; m[i + 1] = t * b * d[i]; }
+    }
+    let out = `M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`;
+    for (let i = 0; i < n - 1; i++) {
+      const [x0, y0] = pts[i]; const [x1, y1] = pts[i + 1]; const dx = (x1 - x0) / 3;
+      out += `C${(x0 + dx).toFixed(1)},${(y0 + m[i] * dx).toFixed(1)} ${(x1 - dx).toFixed(1)},${(y1 - m[i + 1] * dx).toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;
+    }
+    return out;
+  }
+
+  // A curved line of one amount over time, a point at each change (hover or tap for it), and the
+  // changes listed underneath, newest first. A change set for a future date shows in orange.
+  // rows: [{ on_date, value, frequency }] oldest first. future: { on_date, value, frequency } or null.
+  function historyChart(rows, { fmt = (r) => amountText(r.value, r.frequency), costUp = true, label = 'Amount over time', future = null } = {}) {
     if (!rows.length) return '';
     const today = state.data.settings.today;
     const day = (s) => toDate(s).getTime() / 86400000;
     const first = day(rows[0].on_date);
-    const last = Math.max(day(today), day(rows.at(-1).on_date));
-    const vals = rows.map((r) => Number(r.value));
+    const now = Math.max(day(today), day(rows.at(-1).on_date));
+    const fut = future && day(future.on_date) > now ? future : null;
+    const end = fut ? day(fut.on_date) + Math.max(14, (day(fut.on_date) - first) * 0.08) : now;
+    const vals = [...rows.map((r) => Number(r.value)), ...(fut ? [Number(fut.value)] : [])];
     const lo = Math.min(...vals); const hi = Math.max(...vals);
     const pad = (hi - lo) * 0.25 || Math.abs(hi) * 0.2 || 1;
     const W = 560; const H = 120;
-    const x = (d) => (last === first ? W / 2 : ((d - first) / (last - first)) * (W - 16) + 8);
-    const y = (v) => 10 + (1 - (v - (lo - pad)) / (hi - lo + 2 * pad)) * (H - 20);
-    let path = '';
+    const x = (d) => (end === first ? W / 2 : ((d - first) / (end - first)) * (W - 16) + 8);
+    const y = (v) => 12 + (1 - (v - (lo - pad)) / (hi - lo + 2 * pad)) * (H - 24);
+    // Hold each price until just before the next one, so the curve rises or falls at the change, not across the gap.
+    const ease = (fromX, toX) => Math.min(14, (toX - fromX) / 2);
+    const line = [];
     rows.forEach((r, k) => {
-      const px = x(day(r.on_date)).toFixed(1); const py = y(Number(r.value)).toFixed(1);
-      path += k ? `H${px}V${py}` : `M${px},${py}`;
+      const px = x(day(r.on_date));
+      if (k) line.push([px - ease(line.at(-1)[0], px), line.at(-1)[1]]);
+      line.push([px, y(Number(r.value))]);
     });
-    path += `H${x(last).toFixed(1)}`;
-    const changes = rows.map((r, k) => ({ r, prev: rows[k - 1] })).reverse();
+    if (x(now) > line.at(-1)[0] + 0.5) line.push([x(now), line.at(-1)[1]]);
+    const fx = fut ? x(day(fut.on_date)) : 0;
+    const futLine = fut ? [[x(now), line.at(-1)[1]], [fx - ease(x(now), fx), line.at(-1)[1]], [fx, y(Number(fut.value))], [x(end), y(Number(fut.value))]] : null;
     const diff = (r, prev) => {
       if (!prev || prev.frequency !== r.frequency) return '';
-      const d = Number(r.value) - Number(prev.value);
-      if (!d) return '';
-      const up = d > 0;
-      const pct = prev.value ? ` (${up ? '+' : '−'}${Math.abs(Math.round((d / prev.value) * 100))}%)` : '';
-      return html`<span class="ph-diff ${up === costUp ? 'worse' : 'better'}">${up ? '+' : '−'}${fmt({ ...r, value: Math.abs(d), frequency: null })}${pct}</span>`;
+      const dv = Number(r.value) - Number(prev.value);
+      if (!dv) return '';
+      const up = dv > 0;
+      const pct = prev.value ? ` (${up ? '+' : '−'}${Math.abs(Math.round((dv / prev.value) * 100))}%)` : '';
+      return html`<span class="ph-diff ${up === costUp ? 'worse' : 'better'}">${up ? '+' : '−'}${fmt({ ...r, value: Math.abs(dv), frequency: null })}${pct}</span>`;
     };
+    const dot = (r, cls = '') => {
+      const [px, py] = [x(day(r.on_date)), y(Number(r.value))];
+      const tip = `${fmtDate(r.on_date, true)}${cls ? ' (coming up)' : ''}\n${fmt(r)}`;
+      return html`<button type="button" class="ph-pt ${cls} ${px / W > 0.6 ? 'tip-left' : ''}" style="left:${(px / W) * 100}%;top:${(py / H) * 100}%" data-tip="${tip}" aria-label="${tip.replace('\n', ': ')}"></button>`;
+    };
+    const changes = rows.map((r, k) => ({ r, prev: rows[k - 1] })).reverse();
     return html`<div class="ph">
-      <svg class="ph-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${label}">
-        <path d="${path}" fill="none" stroke="var(--brand)" stroke-width="2" vector-effect="non-scaling-stroke"></path>
-      </svg>
-      <div class="ph-axis"><span>${fmtDate(rows[0].on_date, true)}</span><span>${last === day(today) ? 'Today' : fmtDate(rows.at(-1).on_date, true)}</span></div>
-      <ul class="ph-list">${changes.map(({ r, prev }) => html`<li><span class="ph-date">${fmtDate(r.on_date, true)}</span>
-        <span class="num">${fmt(r)}</span>${prev ? diff(r, prev) : html`<span class="ph-diff muted">${rows.length === 1 ? 'Changes will show here' : 'First recorded'}</span>`}</li>`)}</ul>
+      <div class="ph-box">
+        <svg class="ph-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${label}">
+          ${fut ? html`<rect x="${x(now).toFixed(1)}" y="0" width="${(W - x(now)).toFixed(1)}" height="${H}" fill="var(--firm)" opacity=".1"></rect>` : ''}
+          <path d="${smoothPath(line)}" fill="none" stroke="var(--brand)" stroke-width="2.5" stroke-linecap="round" vector-effect="non-scaling-stroke"></path>
+          ${futLine ? html`<path d="${smoothPath(futLine)}" fill="none" stroke="var(--firm)" stroke-width="2.5" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"></path>` : ''}
+        </svg>
+        <div class="ph-pts">${rows.map((r) => dot(r))}${fut ? dot(fut, 'future') : ''}</div>
+        ${fut ? html`<span class="ph-today" style="left:${(x(now) / W) * 100}%">Today</span>` : ''}
+      </div>
+      <div class="ph-axis"><span>${fmtDate(rows[0].on_date, true)}</span><span>${fut ? fmtDate(fut.on_date, true) : 'Today'}</span></div>
+      <ul class="ph-list">
+        ${fut ? html`<li class="future"><span class="ph-date">${fmtDate(fut.on_date, true)}</span><span class="num">${fmt(fut)}</span>${diff(fut, rows.at(-1))}<span class="ph-diff soon">Coming up</span></li>` : ''}
+        ${changes.map(({ r, prev }) => html`<li><span class="ph-date">${fmtDate(r.on_date, true)}</span>
+        <span class="num">${fmt(r)}</span>${prev ? diff(r, prev) : html`<span class="ph-diff muted">${rows.length === 1 && !fut ? 'Changes will show here' : 'First recorded'}</span>`}</li>`)}</ul>
     </div>`;
   }
-  const priceHistory = (rows) => historyChart(rows.filter((r) => r.field === 'amount_cents'), { label: 'Price over time' });
+  // A bill's price history, with any change waiting for a future date.
+  const priceHistory = (rows, e = null) => {
+    const own = rows.filter((r) => r.field === 'amount_cents');
+    const last = own.at(-1);
+    const future = e && e.pending_from ? { on_date: e.pending_from, value: e.pending_cents, frequency: last ? last.frequency : e.frequency } : null;
+    return historyChart(own, { label: 'Price over time', future });
+  };
 
   // Fixed rates ending within 60 days (or just ended), so there's time to look at rates.
   function fixedRateNote() {
@@ -1154,9 +1212,12 @@
     if (!a) return;
     const line = (label, value) => (value ? html`<li><div class="grow"><div class="meta">${label}</div><div class="title num">${value}</div></div>
       <button type="button" data-copy="${value}" data-label="${label}">Copy</button></li>` : '');
+    const btns = { edit: { label: 'Edit account', action: 'edit-account', id: a.id } };
     openForm({
-      title: a.name,
+      title: null,
+      noActions: true,
       body: html`
+        ${popHead(a.name, btns)}
         <ul class="list">
           ${line('BSB', a.bsb)}
           ${line('Account number', a.account_number)}
@@ -1164,7 +1225,7 @@
         </ul>
         <p class="muted small">${[a.institution, a.type, a.owner && `Owner: ${a.owner}`].filter(Boolean).join(' · ')}</p>
         ${!a.bsb && !a.account_number ? html`<p>No bank details saved yet.</p>` : ''}
-        <p><a href="#/settings/accounts" data-modal="cancel">Edit accounts</a></p>`,
+        ${popFoot(btns)}`,
     });
   }
 
@@ -1520,7 +1581,7 @@
         if (e.id) {
           api('GET', `/history/expense/${e.id}`).then((rows) => {
             const slot = form.querySelector('.ph-slot');
-            if (slot && rows.length) slot.innerHTML = html`<h3 class="ph-title">Price history</h3>${priceHistory(rows)}`.s;
+            if (slot && rows.length) slot.innerHTML = html`<h3 class="ph-title">Price history</h3>${priceHistory(rows, e)}`.s;
           }).catch(() => {});
         }
         // Switching between expense and savings (and regular or yearly savings) shows the fields that fit.
@@ -2098,25 +2159,32 @@
         <line class="ld-cursor" x1="0" x2="0" y1="0" y2="${H}" stroke="currentColor" stroke-width="1" opacity="0" vector-effect="non-scaling-stroke"></line>
       </svg>
       <span class="ld-today" style="left:${(x(todayI) / W) * 100}%">Today</span>
-      ${balancePoints(l, x, y, startI, endI, W, H)}
+      <div class="ld-pts">${balancePoints(l, x, y, startI, endI, W, H, plan)}</div>
       <div class="ld-tip" hidden></div>
       <div class="ld-years">${years.map((yr) => html`<span style="left:${(x(yr * 12) / W) * 100}%">${yr}</span>`)}</div>
     </div>`;
   }
 
   // Each balance entered from a statement, as a point on the line. Hover or tap for the estimate it replaced.
-  function balancePoints(l, x, y, startI, endI, W, H) {
+  function balancePoints(l, x, y, startI, endI, W, H, plan) {
+    // Where the drawn line is at a point in time, so each dot sits on it.
+    const lineAt = (i) => {
+      const k = plan.findIndex((p) => p[0] >= i);
+      if (k <= 0) return plan[Math.max(0, k)][1];
+      const [i0, v0] = plan[k - 1]; const [i1, v1] = plan[k];
+      return v0 + ((v1 - v0) * (i - i0)) / (i1 - i0 || 1);
+    };
     return (l.history || []).filter((r) => r.field === 'balance_cents').map((r) => {
       const i = monthIdx(r.on_date) + (Number(r.on_date.slice(8)) - 1) / 30;
       if (i < startI || i > endI) return '';
       const before = r.before_value != null ? Number(r.before_value) : null;
       const diff = before != null ? Number(r.value) - before : null;
       const tip = [`Balance updated ${fmtDate(r.on_date, true)}`,
-        before != null ? `Estimate before: ${money(Math.round(before))}` : null,
-        `Statement: ${money(r.value)}`,
-        diff ? `${diff > 0 ? 'Higher' : 'Lower'} by ${money(Math.abs(Math.round(diff)))}` : null].filter(Boolean).join('\n');
+        `Calculated before: ${before != null ? money(Math.round(before)) : 'not recorded'}`,
+        `Set to: ${money(r.value)}`,
+        diff != null ? `Difference: ${diff > 0 ? '+' : diff < 0 ? '−' : ''}${money(Math.abs(Math.round(diff)))}` : null].filter(Boolean).join('\n');
       const right = x(i) / W > 0.6;
-      return html`<button type="button" class="ld-pt ${right ? 'tip-left' : ''}" style="left:${(x(i) / W) * 100}%;top:${(y(Number(r.value)) / H) * 100}%" data-tip="${tip}" aria-label="${tip.replace(/\n/g, '. ')}"></button>`;
+      return html`<button type="button" class="ld-pt ${right ? 'tip-left' : ''}" style="left:${(x(i) / W) * 100}%;top:${(y(lineAt(i)) / H) * 100}%" data-tip="${tip}" aria-label="${tip.replace(/\n/g, '. ')}"></button>`;
     });
   }
 
@@ -2225,6 +2293,8 @@
   });
 
   // Detail popup: balance and pay-off, how it's paid, what it costs, the balance over time and what paying extra would do.
+  const loanBtns = (l) => ({ upd: l.paid_off ? null : { label: 'Update balance', action: 'update-balance', id: l.id }, edit: { label: 'Edit loan', action: 'edit-loan', id: l.id } });
+
   async function loanDetails(id) {
     const l = await api('GET', `/loans/${id}/details`);
     openLoan = l;
@@ -2273,9 +2343,7 @@
               ${l.term_months ? html`<span class="lc-chip soft">${termText(l.term_months)}${l.end_date ? ` · ends ${fmtDate(l.end_date, true)}` : ''}</span>` : ''}
             </div>
           </div>
-          <div class="ld-head-btns"><button type="button" class="ld-upd" data-action="update-balance" data-id="${l.id}">Update balance</button>
-            <button type="button" class="linkish" data-action="edit-loan" data-id="${l.id}">Edit</button>
-            <button type="button" class="ld-x" data-modal="cancel" aria-label="Close">✕</button></div>
+          ${popTop(loanBtns(l))}
         </div>
 
         <div class="ld-sum">
@@ -2325,7 +2393,7 @@
           </ul></div>
 
         <p class="ld-pad ld-foot">Estimates${t && t.from ? ` from ${fmtDate(t.from, true)}` : ''}, using the repayments you budget${fees ? `. The total cost includes about ${money(fees)} in fees over the term` : ''}. Update the balance from a statement to keep them close.</p>
-        <div class="ld-btns"><button type="button" data-modal="cancel">Close</button><button type="button" class="primary" data-action="edit-loan" data-id="${l.id}">Edit loan</button></div>
+        <div class="ld-btns">${popFoot(loanBtns(l))}</div>
       </div>`,
     });
   }
@@ -2348,9 +2416,12 @@
     // Copyable lines, like an account's bank details.
     const line = (label, value, copy = true) => (value ? html`<li><div class="grow"><div class="meta">${label}</div><div class="title num">${value}</div></div>
       ${copy ? html`<button type="button" data-copy="${value}" data-label="${label}">Copy</button>` : ''}</li>` : '');
+    const btns = { upd: { label: 'Update amount', action: 'update-amount', id: e.id }, edit: { label: `Edit ${kindOf(e) === 'saving' ? 'saving' : 'expense'}`, action: 'edit-expense', id: e.id } };
     openForm({
-      title: e.name,
+      title: null,
+      noActions: true,
       body: html`
+        ${popHead(e.name, btns)}
         <div class="facts two">
           ${fact(status === 'paid' ? 'Came out' : status === 'due' ? 'Due today' : 'Due', money(Number(amount)), fmtDate(date, true))}
           ${fact('How often', isSplit(e) ? `${money(e.yearly_cents)} a year` : e.spread ? `${money(e.amount_cents)} ${FREQ_LABELS[e.frequency].toLowerCase()}` : FREQ_LABELS[e.frequency],
@@ -2371,9 +2442,8 @@
           ${e.notes ? line('Notes', e.notes, false) : ''}
         </ul>
         <p class="hint">Paid so far counts every date it was due before today${e.start_date ? `, from ${fmtDate(e.start_date, true)}` : ''}.</p>
-        ${e.history && e.history.length ? html`<h3 class="ph-title">Price history${e.review_date ? html` <span class="muted small">· ${e.review_date <= state.data.settings.today ? 'review was due' : 'next review'} ${fmtDate(e.review_date, true)}</span>` : ''}</h3>${priceHistory(e.history)}` : ''}
-        <div class="row" style="justify-content:flex-end"><button type="button" data-action="update-amount" data-id="${e.id}">Update amount</button>
-          <button type="button" class="primary" data-action="edit-expense" data-id="${e.id}">Edit ${kindOf(e) === 'saving' ? 'saving' : 'expense'}</button></div>`,
+        ${e.history && e.history.length ? html`<h3 class="ph-title">Price history${e.review_date ? html` <span class="muted small">· ${e.review_date <= state.data.settings.today ? 'review was due' : 'next review'} ${fmtDate(e.review_date, true)}</span>` : ''}</h3>${priceHistory(e.history, e)}` : ''}
+        ${popFoot(btns)}`,
     });
   }
 
@@ -2663,11 +2733,12 @@
         // A loan that started in the past with no balance: offer to work out where it should be by now.
         const today = state.data.settings.today;
         if (!l.id && body.start_date && body.start_date < today && body.balance_cents == null && body.principal_cents) {
-          const est = (await api('POST', '/loans/estimate-balance', body)).balance_cents;
+          const guess = await api('POST', '/loans/estimate-balance', body);
+          const est = guess.balance_cents;
           const pick = await askChoice({
             title: 'Work out the balance?',
             text: html`<p>This loan started ${fmtDate(body.start_date, true)} and has no balance yet.</p>
-              <p><b>Yes</b> sets it to ${est != null ? html`about <b>${money(est)}</b>, ` : ''}what's left if only the minimum repayments were made.</p>
+              <p><b>Yes</b> sets it to ${est != null ? html`about <b>${money(est)}</b>, ` : ''}what's left if only the minimum repayments were made${guess.repayments != null ? html`: ${guess.repayments} repayment${guess.repayments === 1 ? '' : 's'} of ${money(guess.repayment_cents)}, the amount borrowed plus interest spread evenly over the term` : ''}.</p>
               <p><b>No</b> keeps the full ${money(body.principal_cents)} borrowed as today's balance, until you update it.</p>`,
             choices: [{ label: 'Cancel', value: 'cancel' }, { label: 'No', value: 'no' }, { label: 'Yes', value: 'yes', primary: true }],
           });

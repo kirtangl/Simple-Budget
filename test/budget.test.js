@@ -346,3 +346,16 @@ test('an offset balance cuts the interest from the statement on, not before it',
   assert.ok(saved > 280000 && saved < 320000, String(saved));
   assert.ok(offset.payoff_date < plain.payoff_date);
 });
+
+test('minimum balance follows the standard schedule and reaches zero at the end', () => {
+  const loan = { principal_cents: 2000000, interest_rate: 8, start_date: '2024-02-01', term_months: 60, repayment_frequency: 'monthly' };
+  const r = budget.minimumBalance(loan, '2026-10-13'); // 32 repayments made
+  assert.equal(r.repayments, 32);
+  assert.equal(r.repayment_cents, 40553);
+  assert.equal(r.balance_cents, 1032670); // checked by stepping month by month
+  assert.equal(budget.minimumBalance(loan, '2029-02-01').balance_cents, 0);
+  assert.equal(budget.minimumBalance({ ...loan, term_months: null }, '2026-01-01'), null);
+  const f = budget.minimumBalance({ ...loan, repayment_frequency: 'fortnightly', interest_rate: 0 }, '2024-03-01'); // 2 fortnights in
+  assert.equal(f.repayments, 2);
+  assert.equal(f.balance_cents, Math.round(2000000 - (2000000 / 130) * 2));
+});

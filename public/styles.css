@@ -1610,7 +1610,18 @@ dialog.loan-modal .error:empty { display: none; }
 
 /* Price and loan history: a step chart with the changes listed under it. */
 .ph-title { font-size: 14px; font-weight: 700; margin: 16px 0 8px; }
+.ph-box { position: relative; }
 .ph-chart { display: block; width: 100%; height: 110px; background: color-mix(in srgb, var(--brand) 5%, transparent); border-radius: 8px; }
+.ph-pts { position: absolute; inset: 0; pointer-events: none; }
+.ph-pt { position: absolute; width: 10px; height: 10px; min-height: 0; padding: 0; margin: -5px 0 0 -5px; border-radius: 50%; pointer-events: auto; cursor: pointer;
+  border: 2px solid var(--card); background: var(--brand); box-shadow: 0 0 0 1px var(--brand); }
+.ph-pt.future { background: var(--firm); box-shadow: 0 0 0 1px var(--firm); }
+.ph-pt:hover::after, .ph-pt:focus::after { content: attr(data-tip); position: absolute; left: 12px; bottom: 10px; z-index: 6; white-space: pre; padding: 5px 9px; border-radius: 8px;
+  font-size: 12px; line-height: 1.45; font-weight: 500; color: var(--text); background: var(--card); border: 1px solid var(--line); box-shadow: 0 6px 16px rgb(0 0 0 / 30%); }
+.ph-pt.tip-left:hover::after, .ph-pt.tip-left:focus::after { left: auto; right: 12px; }
+.ph-today { position: absolute; top: 3px; margin-left: 5px; font-size: 11px; color: var(--muted); pointer-events: none; }
+.ph-list li.future { color: var(--firm); }
+.ph-diff.soon { color: var(--firm); }
 .ph-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 4px; }
 .ph-list { list-style: none; margin: 8px 0 0; padding: 0; max-height: 220px; overflow-y: auto; }
 .ph-list li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13px; }
@@ -1650,3 +1661,29 @@ dialog.loan-modal .error:empty { display: none; }
 .ld-pt.tip-left:hover::after, .ld-pt.tip-left:focus::after { left: auto; right: 14px; }
 .ld-keys .k-pt { width: 9px; height: 9px; border-radius: 50%; background: var(--firm); }
 .lc-btns { display: inline-flex; gap: 14px; flex-wrap: wrap; justify-content: flex-end; }
+
+/* Details popups share one set of buttons: Update (blue), Edit (green), Close (red). Dimmed until hovered. */
+.pop-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.pop-title { min-width: 0; }
+.pop-title h2 { margin: 4px 0 0; overflow-wrap: anywhere; }
+.pop-btns, .pop-foot { display: flex; align-items: center; gap: 8px; flex: none; }
+.pop-foot { justify-content: flex-end; flex-wrap: wrap; margin-top: 16px; }
+.pop-btn { --c: var(--muted); min-height: 0; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 13px; font-weight: 600; box-shadow: none; cursor: pointer;
+  color: color-mix(in srgb, var(--c) 70%, var(--muted)); background: transparent; border: 1px solid color-mix(in srgb, var(--c) 35%, var(--line));
+  transition: color .15s, background .15s, border-color .15s; }
+.pop-btn:hover, .pop-btn:focus-visible { color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border-color: color-mix(in srgb, var(--c) 70%, transparent); }
+.pop-btn.upd { --c: var(--info); }
+.pop-btn.edit { --c: var(--paid); }
+.pop-btn.x, .pop-btn.close { --c: var(--danger); }
+.pop-btn.x { width: 32px; padding: 0; font-size: 14px; }
+.pop-foot .pop-btn { height: 38px; padding: 0 16px; }
+.ld-head .pop-btns { margin-left: auto; }
+.ld-btns .pop-foot { margin: 0; width: 100%; }
+@media (max-width: 720px) {
+  /* Phones: just the ✕ up top; all three sit along the bottom. */
+  .pop-btns .pop-btn.upd, .pop-btns .pop-btn.edit { display: none; }
+  .pop-foot .pop-btn { flex: 1 1 auto; height: 44px; padding: 0 8px; white-space: nowrap; }
+}
+/* Same box as the chart's drawing area (not the year labels under it), so points land on the line. */
+.ld-pts { position: absolute; left: 0; right: 0; top: 0; height: 180px; pointer-events: none; }
+.ld-pts .ld-pt { pointer-events: auto; }

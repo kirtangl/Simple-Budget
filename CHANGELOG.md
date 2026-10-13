@@ -8,13 +8,14 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 - See what's saved in goals for each account, in green: on the Overview deposits, on the Goals page, and on the Budget → Savings tab with the goals listed under each account.
 - Goals and repayments remember who added them, shown as their name in their colour, or Shared. Switch between **Mine** and **Everyone's** on the Goals page, or with the small person button on the Overview.
 - Price reviews: give a bill a review date, like an insurance renewal. Once it passes, the Overview asks if the price has changed, with **Update price**, **Remind me in 7 days** and **Skip until next year**.
-- Price history: every change to a bill's amount is kept from now on, and shown as a chart when you open the bill.
+- Price history: every change to a bill's amount is kept from now on, and shown as a curved chart when you open the bill. Tap a point for its date and amount. A price set for a future date shows in orange.
 - Loan history: changes to a loan's repayment and rate are marked on its chart with dotted lines, each balance you enter is a point you can hover or tap to see the estimate it replaced, and **History** lists them all.
 - **Update amount**: a small popup for a new price, from the price tag button on each expense or the bill's popup on the Overview. **Takes effect from** can be backdated, or set ahead so the price changes on that day.
 - **Update balance**: a small popup for a loan's statement balance, rate and repayment, beside Edit.
-- Adding a loan that started in the past with no balance asks whether to work the balance out from the minimum repayments.
+- Adding a loan that started in the past with no balance asks whether to work the balance out from the minimum repayments (the amount borrowed plus interest, spread evenly over the term).
 
 ### Improved
+- Popups for a bill, loan or account have the same buttons in the same places: Update (blue), Edit (green) and Close (red) at the top, and again at the bottom with Close on the right. They stay dim until you point at them.
 - On the Goals page, tap an item to edit it. Paid back shows in green, and Still owed and Still to go in red.
 
 ### Fixed

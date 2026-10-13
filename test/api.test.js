@@ -811,6 +811,7 @@ test('a loan balance update keeps the estimate it replaced, and a past loan can 
   const loan = { name: 'Car', principal_cents: 3000000, interest_rate: 7, start_date: '2024-01-01', term_months: 60, repayment_frequency: 'monthly' };
   const est = (await call('POST', '/loans/estimate-balance', loan)).body;
   assert.ok(est.balance_cents > 0 && est.balance_cents < 3000000);
+  assert.equal(est.repayment_cents, 59404); // $30,000 at 7% over 60 months
   const l = (await call('POST', '/loans', loan)).body;
   const r = await call('POST', `/loans/${l.id}/balance`, { balance_cents: 2000000, balance_date: '2025-06-30', interest_rate: 6.5 });
   assert.equal(r.status, 200);

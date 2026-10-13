@@ -494,6 +494,9 @@ function createApi(db) {
   // What a new loan's balance should be today if only the minimum (scheduled) repayments were made.
   router.post('/loans/estimate-balance', (req, res) => {
     const data = clean({ ...RESOURCES.loans, required: [] }, req.body, { partial: true });
+    const min = budget.minimumBalance(data, today());
+    if (min) return res.json({ ...min, balance_date: today() });
+    // No term: step through the repayment entered instead.
     const balance = estimatedBalance({ ...data, balance_cents: null, balance_date: null, budget_cents: null, budget_frequency: null, budget_date: null }, today());
     res.json({ balance_cents: balance == null ? null : Math.max(0, Math.round(balance)), balance_date: today() });
   });
