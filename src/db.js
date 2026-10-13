@@ -201,6 +201,31 @@ const MIGRATIONS = [
   `
   ALTER TABLE goals ADD COLUMN owner_id INTEGER;
   `,
+  // 14: price reviews on expenses, and a log of amounts over time for expenses and loans.
+  // Each change is one row per field; a second change on the same day replaces the first.
+  `
+  ALTER TABLE expenses ADD COLUMN review_date TEXT;
+  ALTER TABLE expenses ADD COLUMN review_snooze TEXT;
+  CREATE TABLE amount_history (
+    id         INTEGER PRIMARY KEY,
+    kind       TEXT    NOT NULL CHECK (kind IN ('expense', 'loan')),
+    item_id    INTEGER NOT NULL,
+    field      TEXT    NOT NULL,
+    on_date    TEXT    NOT NULL,
+    value      NUMERIC NOT NULL,
+    frequency  TEXT,
+    login_id   INTEGER
+  );
+  CREATE INDEX amount_history_item ON amount_history (kind, item_id, field, on_date);
+  INSERT INTO amount_history (kind, item_id, field, on_date, value, frequency)
+    SELECT 'expense', id, 'amount_cents', date('now', 'localtime'), amount_cents, frequency FROM expenses;
+  INSERT INTO amount_history (kind, item_id, field, on_date, value, frequency)
+    SELECT 'loan', id, 'repayment_cents', date('now', 'localtime'), repayment_cents, repayment_frequency FROM loans WHERE repayment_cents IS NOT NULL;
+  INSERT INTO amount_history (kind, item_id, field, on_date, value)
+    SELECT 'loan', id, 'balance_cents', coalesce(balance_date, date('now', 'localtime')), balance_cents FROM loans WHERE balance_cents IS NOT NULL;
+  INSERT INTO amount_history (kind, item_id, field, on_date, value)
+    SELECT 'loan', id, 'interest_rate', date('now', 'localtime'), interest_rate FROM loans WHERE interest_rate IS NOT NULL;
+  `,
 ];
 
 function openDatabase(file) {

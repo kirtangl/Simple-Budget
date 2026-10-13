@@ -486,6 +486,7 @@
 
       ${state.showIncomes && c.incomes.length ? incomeTable(c) : ''}
 
+      ${c.cycle.is_current ? reviewNotes() : ''}
       ${t.unassigned_cents > 0 ? unassignedNote(t.unassigned_cents) : ''}
       ${fixedRateNote()}
 
@@ -533,6 +534,107 @@
 
       ${goalsSummary()}`;
   }
+
+  // ---------- Price reviews and price history ----------
+
+  // Bills set to be checked once their review date passes (insurance renewals and the like).
+  const reviewDue = (e) => e.active && kindOf(e) === 'expense' && e.review_date && e.review_date <= state.data.settings.today
+    && !(e.review_snooze && e.review_snooze > state.data.settings.today);
+  const addYearsIso = (s, n) => {
+    const [y, m, d] = s.split('-').map(Number);
+    const last = new Date(Date.UTC(y + n, m, 0)).getUTCDate(); // 29 Feb becomes 28 Feb
+    return `${y + n}-${String(m).padStart(2, '0')}-${String(Math.min(d, last)).padStart(2, '0')}`;
+  };
+  // The same day in the first year after today.
+  const nextReview = (date) => {
+    let next = date || state.data.settings.today;
+    for (let n = 1; next <= state.data.settings.today; n++) next = addYearsIso(date || state.data.settings.today, n);
+    return next;
+  };
+  const amountText = (cents, freq) => `${money(cents)}${freq ? ` ${(FREQ_LABELS[freq] || '').toLowerCase()}` : ''}`;
+  const billCents = (e) => (isSplit(e) ? e.yearly_cents : e.amount_cents);
+
+  function reviewNotes() {
+    return state.data.expenses.filter(reviewDue).sort((a, b) => a.review_date.localeCompare(b.review_date)).map((e) => html`
+      <div class="card small note-banner review-banner"><span class="note-tag">Review</span>
+        <div class="grow"><span><button type="button" class="linkish" data-action="edit-expense" data-id="${e.id}">${e.name}</button>
+          was due for a price check on ${fmtDate(e.review_date, true)}. It's ${isSplit(e) ? `${money(e.yearly_cents)} a year` : amountText(e.amount_cents, e.frequency)} now. Has it changed?</span>
+          <div class="review-actions">
+            <button type="button" class="primary" data-action="review-update" data-id="${e.id}">Update price</button>
+            <button type="button" data-action="review-snooze" data-id="${e.id}">Remind me in 7 days</button>
+            <button type="button" data-action="review-skip" data-id="${e.id}">Skip until next year</button>
+          </div></div></div>`);
+  }
+
+  function reviewForm(e) {
+    openForm({
+      title: `Update ${e.name}`,
+      body: html`
+        <p class="muted small" style="margin-top:0">It's ${isSplit(e) ? `${money(e.yearly_cents)} a year` : amountText(e.amount_cents, e.frequency)} now. Leave it as is if it hasn't changed.</p>
+        <div class="fields">
+          <div class="field"><label for="r-amount">New amount, ${isSplit(e) ? 'yearly' : (FREQ_LABELS[e.frequency] || '').toLowerCase()} ($)</label>
+            <input id="r-amount" name="amount" inputmode="decimal" value="${moneyInput(billCents(e))}" required></div>
+          <div class="field"><label for="r-date">Next review</label><input id="r-date" type="date" name="review_date" value="${nextReview(e.review_date)}" required>
+            <div class="hint">When it's likely to change again.</div></div>
+        </div>`,
+      onSave: async (form) => {
+        const cents = moneyVal(form, 'amount', 'Amount', { required: true });
+        const date = val(form, 'review_date');
+        if (!date || date <= state.data.settings.today) throw new Error('Pick a review date after today.');
+        await api('PATCH', `/expenses/${e.id}`, { ...(isSplit(e) ? { yearly_cents: cents } : { amount_cents: cents }), review_date: date, review_snooze: null });
+        await reload();
+        toast(cents === billCents(e) ? `${e.name} checked. Next review ${fmtDate(date, true)}` : `${e.name} is now ${money(cents)}`);
+      },
+    });
+  }
+
+  async function reviewLater(e, how) {
+    const body = how === 'snooze' ? { review_snooze: addDaysIso(state.data.settings.today, 7) } : { review_date: nextReview(e.review_date), review_snooze: null };
+    await api('PATCH', `/expenses/${e.id}`, body);
+    await reload();
+    render();
+    toast(how === 'snooze' ? `We'll remind you about ${e.name} on ${fmtDate(body.review_snooze, true)}` : `${e.name} is next up for review on ${fmtDate(body.review_date, true)}`);
+  }
+
+  // A step chart of one amount over time, with each change listed underneath (newest first).
+  // rows: [{ on_date, value, frequency }] oldest first. fmt turns a value into text.
+  function historyChart(rows, { fmt = (r) => amountText(r.value, r.frequency), costUp = true, label = 'Amount over time' } = {}) {
+    if (!rows.length) return '';
+    const today = state.data.settings.today;
+    const day = (s) => toDate(s).getTime() / 86400000;
+    const first = day(rows[0].on_date);
+    const last = Math.max(day(today), day(rows.at(-1).on_date));
+    const vals = rows.map((r) => Number(r.value));
+    const lo = Math.min(...vals); const hi = Math.max(...vals);
+    const pad = (hi - lo) * 0.25 || Math.abs(hi) * 0.2 || 1;
+    const W = 560; const H = 120;
+    const x = (d) => (last === first ? W / 2 : ((d - first) / (last - first)) * (W - 16) + 8);
+    const y = (v) => 10 + (1 - (v - (lo - pad)) / (hi - lo + 2 * pad)) * (H - 20);
+    let path = '';
+    rows.forEach((r, k) => {
+      const px = x(day(r.on_date)).toFixed(1); const py = y(Number(r.value)).toFixed(1);
+      path += k ? `H${px}V${py}` : `M${px},${py}`;
+    });
+    path += `H${x(last).toFixed(1)}`;
+    const changes = rows.map((r, k) => ({ r, prev: rows[k - 1] })).reverse();
+    const diff = (r, prev) => {
+      if (!prev || prev.frequency !== r.frequency) return '';
+      const d = Number(r.value) - Number(prev.value);
+      if (!d) return '';
+      const up = d > 0;
+      const pct = prev.value ? ` (${up ? '+' : '−'}${Math.abs(Math.round((d / prev.value) * 100))}%)` : '';
+      return html`<span class="ph-diff ${up === costUp ? 'worse' : 'better'}">${up ? '+' : '−'}${fmt({ ...r, value: Math.abs(d), frequency: null })}${pct}</span>`;
+    };
+    return html`<div class="ph">
+      <svg class="ph-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${label}">
+        <path d="${path}" fill="none" stroke="var(--brand)" stroke-width="2" vector-effect="non-scaling-stroke"></path>
+      </svg>
+      <div class="ph-axis"><span>${fmtDate(rows[0].on_date, true)}</span><span>${last === day(today) ? 'Today' : fmtDate(rows.at(-1).on_date, true)}</span></div>
+      <ul class="ph-list">${changes.map(({ r, prev }) => html`<li><span class="ph-date">${fmtDate(r.on_date, true)}</span>
+        <span class="num">${fmt(r)}</span>${prev ? diff(r, prev) : html`<span class="ph-diff muted">${rows.length === 1 ? 'Changes will show here' : 'First recorded'}</span>`}</li>`)}</ul>
+    </div>`;
+  }
+  const priceHistory = (rows) => historyChart(rows.filter((r) => r.field === 'amount_cents'), { label: 'Price over time' });
 
   // Fixed rates ending within 60 days (or just ended), so there's time to look at rates.
   function fixedRateNote() {
@@ -1312,11 +1414,15 @@
             <button type="button" class="icon" data-add="subcategory" aria-label="New sub category">+</button></div></div>
           <div class="field only-expense" ${kind === 'expense' ? '' : raw('hidden')}><label for="f-ref">Reference / customer no.</label><input id="f-ref" name="reference" value="${e.reference || ''}"></div>
           <div class="field"><label for="f-notes">Notes</label><input id="f-notes" name="notes" value="${e.notes || ''}"></div>
+          <div class="field only-expense" ${kind === 'expense' ? '' : raw('hidden')}><label for="f-review">Price review (optional)</label><input id="f-review" type="date" name="review_date" value="${e.review_date || ''}">
+            <div class="hint">When it usually changes, like an insurance renewal. The Overview reminds you once it passes.</div></div>
           ${temporaryField(e)}
           <div class="field full"><label class="check"><input type="checkbox" name="active" ${e.active ? raw('checked') : ''}> Active (untick to pause without deleting)</label></div>
+          ${e.id ? html`<div class="full ph-slot"></div>` : ''}
         </div>`,
       onSave: async (form) => {
         const saving = val(form, 'kind') === 'saving';
+        const review = saving ? null : val(form, 'review_date') || null;
         const yearly = saving && val(form, 'mode') === 'yearly' ? moneyVal(form, 'yearly', 'Yearly amount', { required: true }) : null;
         const body = {
           name: val(form, 'name'),
@@ -1337,7 +1443,10 @@
           active: form.elements.active.checked,
           kind: val(form, 'kind'),
           goal_cents: val(form, 'kind') === 'saving' ? moneyVal(form, 'goal', 'Savings goal') : null,
+          review_date: review,
         };
+        // A new review date starts afresh, without any "remind me later".
+        if (review !== (e.review_date || null)) body.review_snooze = null;
         if (!body.name) throw new Error('Please give it a name.');
         await (e.id ? api('PATCH', `/expenses/${e.id}`, body) : api('POST', '/expenses', body));
         await reload();
@@ -1345,6 +1454,12 @@
       },
       onDelete: e.id ? async () => { await api('DELETE', `/expenses/${e.id}`); await reload(); toast('Deleted'); } : null,
       afterRender: (form) => {
+        if (e.id) {
+          api('GET', `/history/expense/${e.id}`).then((rows) => {
+            const slot = form.querySelector('.ph-slot');
+            if (slot && rows.length) slot.innerHTML = html`<h3 class="ph-title">Price history</h3>${priceHistory(rows)}`.s;
+          }).catch(() => {});
+        }
         // Switching between expense and savings (and regular or yearly savings) shows the fields that fit.
         const showMode = () => {
           const yearly = form.elements.kind.value === 'saving' && form.elements.mode.value === 'yearly';
@@ -2136,6 +2251,7 @@
           ${e.notes ? line('Notes', e.notes, false) : ''}
         </ul>
         <p class="hint">Paid so far counts every date it was due before today${e.start_date ? `, from ${fmtDate(e.start_date, true)}` : ''}.</p>
+        ${e.history && e.history.length ? html`<h3 class="ph-title">Price history${e.review_date ? html` <span class="muted small">· ${e.review_date <= state.data.settings.today ? 'review was due' : 'next review'} ${fmtDate(e.review_date, true)}</span>` : ''}</h3>${priceHistory(e.history)}` : ''}
         <div class="row" style="justify-content:flex-end"><button type="button" class="primary" data-action="edit-expense" data-id="${e.id}">Edit ${kindOf(e) === 'saving' ? 'saving' : 'expense'}</button></div>`,
     });
   }
@@ -3390,6 +3506,9 @@ sudo docker compose up -d --build</pre>`;
     'new-goal': (el) => goalForm(el.dataset.kind),
     'goal-list': (el) => goalListPopup(el.dataset.kind),
     'goal-who': (el) => setGoalWho(el.dataset.who),
+    'review-update': (el) => { const e = findById(state.data.expenses, el); if (e) reviewForm(e); },
+    'review-snooze': (el) => { const e = findById(state.data.expenses, el); if (e) return reviewLater(e, 'snooze'); },
+    'review-skip': (el) => { const e = findById(state.data.expenses, el); if (e) return reviewLater(e, 'skip'); },
     'edit-goal': (el) => { const g = findById(state.data.goals, el); if (g) goalForm(g.kind, g); },
     'ld-working': (el) => {
       const box = el.closest('.ld').querySelector('.ld-working');

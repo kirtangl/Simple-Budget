@@ -772,3 +772,24 @@ test('goals belong to whoever added them, can be shared, and become shared when 
   assert.equal((await call('DELETE', `/logins/${sam.id}`)).status, 200);
   assert.equal((await call('GET', '/goals')).body.find((g) => g.id === sams.id).owner_id, null);
 }));
+
+test('expense amounts and loan figures are logged as they change', () => withServer({}, async (call) => {
+  const e = (await call('POST', '/expenses', { name: 'Health insurance', amount_cents: 20000, frequency: 'monthly' })).body;
+  await call('PATCH', `/expenses/${e.id}`, { name: 'Health cover' }); // not an amount change
+  await call('PATCH', `/expenses/${e.id}`, { amount_cents: 25000 });
+  await call('PATCH', `/expenses/${e.id}`, { amount_cents: 24000 }); // same day: replaces the 250
+  let h = (await call('GET', `/history/expense/${e.id}`)).body;
+  assert.deepEqual(h.map((r) => r.value), [20000, 24000]);
+  assert.equal((await call('GET', `/expenses/${e.id}/details`)).body.history.length, 2);
+  const due = (await call('PATCH', `/expenses/${e.id}`, { review_date: '2026-01-01', review_snooze: '2026-01-08' })).body;
+  assert.equal(due.review_date, '2026-01-01');
+  assert.equal((await call('PATCH', `/expenses/${e.id}`, { review_date: 'soon' })).status, 400);
+
+  const l = (await call('POST', '/loans', { name: 'Car', repayment_cents: 50000, repayment_frequency: 'monthly', balance_cents: 1000000, balance_date: '2026-01-31', interest_rate: 6.5 })).body;
+  await call('PATCH', `/loans/${l.id}`, { balance_cents: 950000, balance_date: '2026-03-31', interest_rate: 6.25 });
+  h = (await call('GET', `/history/loan/${l.id}`)).body;
+  assert.deepEqual(h.filter((r) => r.field === 'balance_cents').map((r) => [r.on_date, r.value]), [['2026-01-31', 1000000], ['2026-03-31', 950000]]);
+  assert.deepEqual(h.filter((r) => r.field === 'interest_rate').map((r) => r.value), [6.5, 6.25]);
+  await call('DELETE', `/expenses/${e.id}`);
+  assert.deepEqual((await call('GET', `/history/expense/${e.id}`)).body, []);
+}));

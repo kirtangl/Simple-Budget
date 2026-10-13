@@ -80,6 +80,7 @@ const T = {
 };
 
 const LABELS = {
+  review_date: 'Review date', review_snooze: 'Reminder date',
   name: 'Name', amount_cents: 'Amount', frequency: 'Frequency', after_tax_cents: 'After tax amount',
   category_id: 'Category', kind: 'Type', bsb: 'BSB', account_number: 'Account number',
   start_date: 'Start date', target_date: 'Target date', interest_rate: 'Interest rate', term_months: 'Term (months)',
@@ -124,7 +125,10 @@ const RESOURCES = {
       reference: T.text, notes: T.text, active: T.bool,
       kind: T.enumOf('expense', 'saving'), goal_cents: T.positiveCents,
       yearly_cents: T.positiveCents, show_as_expense: T.bool, start_date: T.date, end_date: T.date,
+      review_date: T.date, review_snooze: T.date,
     },
+    // Every change to the amount is kept, for the price history chart.
+    history: { kind: 'expense', fields: { amount_cents: (r) => [r.amount_cents, r.frequency] } },
     required: ['name', 'amount_cents', 'frequency'],
     order: 'name COLLATE NOCASE',
     // A saving with a yearly target is stored as a yearly amount, so anything
@@ -159,6 +163,12 @@ const RESOURCES = {
       budget_frequency: T.enumOf(...Object.keys(budget.LOAN_FREQUENCIES)), budget_cents: T.positiveCents, budget_date: T.date,
       rate_type: T.enumOf('variable', 'fixed'), fixed_until: T.date, offset_cents: T.positiveCents, monthly_fee_cents: T.positiveCents, break_fees: T.text },
     required: ['name'],
+    // Repayments, statement balances and rates over time. A balance is logged on its statement date.
+    history: { kind: 'loan', fields: {
+      repayment_cents: (r) => [r.repayment_cents, r.repayment_frequency],
+      balance_cents: (r) => [r.balance_cents, null, r.balance_date],
+      interest_rate: (r) => [r.interest_rate, null],
+    } },
     order: 'paid_off, name COLLATE NOCASE',
     unique: { label: 'A loan' },
   },
@@ -204,6 +214,33 @@ function clean(resource, body, { partial }) {
     if (out[key] === null) delete out[key];
   }
   return out;
+}
+
+// Notes what changed in a row's tracked amounts. Setting the same amount again adds nothing.
+function logHistory(db, resource, before, after, loginId = null) {
+  if (!resource.history) return;
+  const { kind, fields } = resource.history;
+  for (const [field, pick] of Object.entries(fields)) {
+    const [value, frequency, onDate] = pick(after);
+    if (value === null || value === undefined) continue;
+    if (before) {
+      const [old, oldFreq, oldDate] = pick(before);
+      if (old === value && oldFreq === frequency && oldDate === onDate) continue;
+    }
+    const date = onDate || today();
+    const [last, before1] = db.prepare('SELECT * FROM amount_history WHERE kind = ? AND item_id = ? AND field = ? ORDER BY on_date DESC, id DESC LIMIT 2').all(kind, after.id, field);
+    // A second change on the same day replaces the first (a typo fixed), but the starting amount is always kept.
+    if (last && before1 && last.on_date === date) {
+      db.prepare('UPDATE amount_history SET value = ?, frequency = ?, login_id = ? WHERE id = ?').run(value, frequency ?? null, loginId, last.id);
+    } else if (!last || last.value !== value || last.frequency !== (frequency ?? null)) {
+      db.prepare('INSERT INTO amount_history (kind, item_id, field, on_date, value, frequency, login_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(kind, after.id, field, date, value, frequency ?? null, loginId);
+    }
+  }
+}
+
+function historyOf(db, kind, id) {
+  return db.prepare('SELECT field, on_date, value, frequency, login_id FROM amount_history WHERE kind = ? AND item_id = ? ORDER BY on_date, id').all(kind, id).map((r) => ({ ...r }));
 }
 
 function today() {
@@ -357,7 +394,14 @@ function createApi(db) {
     const cy = budget.yearStart(now, 'calendar');
     res.json({ ...e, next_date: budget.nextDate(e, now, opts.anchor), spread: budget.spreadsEachCycle(e, opts.payCycle),
       paid_fytd: { from: fy, ...budget.paidBetween(e, fy, now, opts) },
-      paid_ytd: { from: cy, ...budget.paidBetween(e, cy, now, opts) } });
+      paid_ytd: { from: cy, ...budget.paidBetween(e, cy, now, opts) }, history: historyOf(db, 'expense', e.id) });
+  });
+
+  // Amounts over time for one expense or loan, oldest first.
+  router.get('/history/:kind/:id', (req, res) => {
+    const kind = req.params.kind;
+    if (!['expense', 'loan'].includes(kind)) return res.status(404).json({ error: 'Not found.' });
+    res.json(historyOf(db, kind, Number(req.params.id)));
   });
 
   router.get('/loans/:id/details', (req, res) => {
@@ -476,6 +520,7 @@ function createApi(db) {
       const cols = Object.keys(data);
       const sql = `INSERT INTO ${name} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`;
       const { lastInsertRowid } = db.prepare(sql).run(...cols.map((c) => data[c]));
+      logHistory(db, resource, null, get(lastInsertRowid), req.login ? req.login.id : null);
       res.status(201).json(get(lastInsertRowid));
     });
 
@@ -492,6 +537,7 @@ function createApi(db) {
             .run(...cols.map((c) => data[c]), id);
         }
         if (resource.afterUpdate) resource.afterUpdate(db, before, get(id));
+        logHistory(db, resource, before, get(id), req.login ? req.login.id : null);
       });
       res.json(get(id));
     });
@@ -501,6 +547,7 @@ function createApi(db) {
       if (!before) return res.status(404).json({ error: 'Not found.' });
       transaction(db, () => {
         db.prepare(`DELETE FROM ${name} WHERE id = ?`).run(before.id);
+        if (resource.history) db.prepare('DELETE FROM amount_history WHERE kind = ? AND item_id = ?').run(resource.history.kind, before.id);
         if (resource.afterDelete) resource.afterDelete(db, before);
       });
       res.json({ ok: true });
