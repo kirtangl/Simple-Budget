@@ -985,12 +985,14 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
 .exp-tile.shut .exp-tg { border-bottom: 0; }
 .exp-tile .exp-td:last-child { border-bottom: 0; }
 /* The search, filters, count and column headings stay put under the top bar; the tiles scroll behind them. */
-.exp-shell { position: sticky; top: var(--top-h, 58px); z-index: 6; overflow: visible; }
-.exp-shell .exp-th { border-radius: 0 0 calc(var(--radius) - 1px) calc(var(--radius) - 1px); border-bottom: 0; }
+/* The page colour behind it fills its rounded top corners and leaves a small gap under it, so the tiles scroll away into that gap. */
+.exp-pin { position: sticky; top: var(--top-h, 58px); z-index: 6; background: var(--bg); padding-bottom: 12px; margin-bottom: -12px; }
+.exp-shell { border-radius: var(--radius) var(--radius) 0 0; }
+.exp-shell .exp-th { border-bottom: 0; }
+@media (max-width: 899px) { .exp-pin { display: none; } }
 .exp-mpin { position: sticky; top: var(--top-h, 58px); z-index: 6; margin: -8px -16px 0; padding: 8px 16px 10px; background: var(--bg); }
 .exp-mpin .exp-mcount { margin-bottom: 0; }
 /* Fills the page colour in behind the pinned box's rounded corners, so nothing shows through them. */
-.exp-shell::before { content: ''; position: absolute; inset: -1px; z-index: -1; background: var(--bg); }
 @media (max-width: 720px) {
   .exp-ghead { flex-wrap: wrap; row-gap: 2px; }
 }
@@ -1057,7 +1059,7 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
 .exp-reset:disabled { opacity: .4; cursor: default; }
 .exp-count { padding: 10px 16px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
 .exp-shell > .empty { margin: 0; }
-.exp-shell + .exp-cards { margin-top: 12px; }
+.exp-shell:has(> .empty) { border-radius: var(--radius); }
 @media (min-width: 900px) {
   .exp-shell .exp-count { border-bottom: 0; }
   .exp-th { border-top: 1px solid var(--line); }
@@ -1074,7 +1076,6 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
   .exp-mtools { display: flex; }
   .exp-mcount { display: block; }
   .exp-shell { display: none; }
-  .exp-shell + .exp-cards { margin-top: 0; }
   .exp-ghead .g-count { display: none; }
   .exp-ghead .g-right { font-size: 13px; }
 }

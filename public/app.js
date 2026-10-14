@@ -1478,7 +1478,7 @@
         <button type="button" class="filters-btn ${filtersOn() ? 'on' : ''}" data-action="expense-filters" data-kind="${kind}">Filters${filtersOn() ? html` <span class="tab-count">${filtersOn()}</span>` : ''}</button>
       </div>
       <p class="exp-mcount">${count(list.length)} · about ${money(Math.round(total))} ${aCycle()}</p></div>
-      <div class="card exp-shell">
+      <div class="exp-pin"><div class="card exp-shell">
         <div class="exp-tools">
           <label class="exp-search-wrap"><span class="ico" aria-hidden="true">⌕</span><input type="search" class="exp-search" placeholder="${k.search}" value="${state.expenseQuery}" data-input="expense-query" aria-label="Search"></label>
           ${dropdown('expenseAccount', 'Account', [['', 'All accounts'], ...accounts.map((a) => [String(a.id), a.name]), ...(noAccount ? [['none', 'No account']] : [])])}
@@ -1489,7 +1489,7 @@
                   </div>
         <div class="exp-count">${count(list.length)} · about ${money(Math.round(total))} ${aCycle()}</div>
         ${groups.length ? head : html`<p class="empty">${all.length ? `No ${k.items} match.` : k.none}</p>`}
-      </div>
+      </div></div>
       ${groups.length ? html`${table}${cards}` : ''}
       ${kind === 'saving' ? savingsGoalsCard() : ''}`;
   }
