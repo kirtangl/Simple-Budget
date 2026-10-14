@@ -2,6 +2,16 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v0.9.1 (14 October 2026)
+
+### Improved
+- The buttons at the bottom of every popup stay in view while you scroll, on desktop as well as phones. When a popup is long enough to scroll, a thin line sits above them.
+- Expenses on the Overview show their account in a bubble of the account's colour, so it stands out more.
+- Every bar on the Overview is the same thin size as the Expenses bar at the top.
+
+### Fixed
+- The bars are back on **Deposits this fortnight**: green for the bills that have come out of each account, red for what's still to come out.
+
 ## v0.9.0 (13 October 2026)
 
 ### New

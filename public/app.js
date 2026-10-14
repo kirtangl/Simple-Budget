@@ -222,9 +222,19 @@
     modalHandler = { onSave, onDelete };
     if (afterRender) afterRender($modalForm);
     if (!$modal.open) $modal.showModal();
+    watchScroll();
     const first = $modalForm.querySelector('input:not([type=checkbox]), select, textarea');
     if (first && window.matchMedia('(min-width: 721px)').matches) first.focus();
   }
+
+  // Popups that need a scrollbar get a thin line above their buttons, which stay at the bottom while the rest scrolls.
+  const scrollWatch = new ResizeObserver(() => {
+    for (const form of [$modalForm, $promptForm]) form.classList.toggle('scrolls', form.scrollHeight > form.clientHeight + 1);
+  });
+  const watchScroll = () => {
+    scrollWatch.disconnect();
+    for (const form of [$modalForm, $promptForm]) [form, ...form.children].forEach((el) => scrollWatch.observe(el));
+  };
 
   const closeForm = () => { if ($modal.open) $modal.close(); modalHandler = null; };
 
@@ -282,6 +292,7 @@
       $promptForm.onclick = (e) => { const p = e.target.closest('[data-p]')?.dataset.p; if (p === 'cancel' || p === '') done(null); };
       $prompt.oncancel = () => done(null);
       $prompt.showModal();
+      watchScroll();
       input.focus();
       input.select();
     });
@@ -298,6 +309,7 @@
       $promptForm.onclick = (e) => { const b = e.target.closest('[data-p]'); if (b) done(b.dataset.p || null); };
       $prompt.oncancel = () => done(null);
       $prompt.showModal();
+      watchScroll();
     });
   }
 
@@ -461,6 +473,7 @@
               <div class="grow">
                 <div class="dep-top"><button class="acct-btn" data-action="account-details" data-id="${a.id}" data-tip="${bankTip(a) || 'No bank details yet'}">${a.name}</button>
                   <span class="dep-amt"><span class="muted">Transfer</span> <b class="num">${money(r.deposit_cents)}</b></span></div>
+                <div class="dep-bar" title="${r.bills_cents ? `${money(r.paid_cents)} of ${money(r.bills_cents)} in bills has come out` : `No bills from this account ${thisCycle()}`}">${progress(r.bills_cents ? r.paid_cents : 1, r.bills_cents || 1)}</div>
                 <div class="figures">
                   <span class="figure" title="This ${cycleWord()}'s bills from this account that haven't come out yet (savings not included)"><span class="label">Still to come out</span> <b class="num">${money(r.remaining_cents)}</b></span>
                   <span class="figure" title="${c.cycle.is_current ? 'About what should be in the account today' : `About what should be in the account on ${fmtDate(c.held_on, true)}, once that deposit is in`} so every bill ${HELD_LABELS[state.data.settings.held_basis].toLowerCase()} can be paid, with the deposits still to come. Savings not included."><span class="label">Keep in account</span> <b class="num">${money(r.held_cents)}</b></span>
@@ -541,7 +554,7 @@
               <div class="date-box"><b>${d.getUTCDate()}</b><span>${DAYS[d.getUTCDay()]}</span></div>
               <div class="grow"><div class="title">${b.name}${b.kind === 'saving' ? html` <span class="chip">Savings</span>` : b.kind === 'loan' ? html` <span class="chip">Loan</span>` : ''}</div>
                 ${b.moved_from_day ? html`<div class="meta moved">(set for the ${ordinal(b.moved_from_day)}, last day of ${MONTHS[d.getUTCMonth()]})</div>` : ''}
-                <div class="meta">${a ? html`<span class="acct-tag"><span class="dot" style="background:${accountColor(a.id)}"></span>${a.name}</span>` : ''}${p && a ? ' · ' : ''}${p ? p.name : ''}</div></div>
+                <div class="meta">${a ? html`<span class="acct-tag bubble" style="--acct:${accountColor(a.id)}"><span class="dot"></span>${a.name}</span>` : ''}${p && a ? ' · ' : ''}${p ? p.name : ''}</div></div>
               <div class="right">${b.status === 'paid' ? html`<div class="num"><span class="tick" aria-label="Paid">✓</span> ${money(b.amount_cents)}</div>`
                 : html`<div class="num">${money(b.amount_cents)}</div>${b.status === 'due' ? html`<span class="status due">Due today</span>` : ''}`}</div>
             </li>`;
@@ -1391,7 +1404,7 @@
         ${group('Due', expenseWhenOptions().map(([v, t]) => chip('expenseWhen', v, t)))}
         ${group('Group by', [chip('expenseGroup', '', 'Account'), chip('expenseGroup', 'category', 'Category')])}
         ${group('Sort', [chip('expenseSort', 'due', 'Next due'), chip('expenseSort', 'amount', 'Amount'), chip('expenseSort', 'az', 'A–Z')])}
-        <button type="button" class="primary sheet-done" data-modal="cancel">Show ${n} ${n === 1 ? KIND_TEXT[kind].items.replace(/s$/, '') : KIND_TEXT[kind].items}</button>`,
+        <div class="sheet-foot"><button type="button" class="primary sheet-done" data-modal="cancel">Show ${n} ${n === 1 ? KIND_TEXT[kind].items.replace(/s$/, '') : KIND_TEXT[kind].items}</button></div>`,
     });
   }
 

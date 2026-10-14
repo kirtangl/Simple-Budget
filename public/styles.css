@@ -439,6 +439,21 @@ dialog h2 { margin-bottom: 14px; }
   .fields { grid-template-columns: 1fr; }
 }
 
+/* A popup's buttons stay along the bottom while the rest scrolls, on every screen size.
+   When the popup needs a scrollbar, a thin line separates them from what scrolls under. */
+dialog form > .dialog-actions, dialog form > .pop-foot, dialog form > .sheet-foot, dialog.loan-modal .ld-btns {
+  position: sticky; bottom: 0; z-index: 3; background: var(--card); border-top: 1px solid transparent; }
+/* Sticky edges sit inside the form's padding, so they're pulled down by the same amount to meet the popup's bottom edge. */
+dialog form > .dialog-actions, dialog form > .pop-foot, dialog form > .sheet-foot { bottom: -18px; margin: 8px -18px -18px; padding: 12px 18px 18px; }
+dialog form.scrolls > .dialog-actions, dialog form.scrolls > .pop-foot, dialog form.scrolls > .sheet-foot, dialog.loan-modal form.scrolls .ld-btns { border-top-color: var(--line); }
+/* Nothing under the buttons of a details popup. */
+dialog form > .pop-foot { margin-top: 16px; }
+dialog form > .pop-foot ~ .error:empty, dialog form > .sheet-foot ~ .error:empty { display: none; }
+@media (max-width: 720px) {
+  dialog form > .dialog-actions, dialog form > .pop-foot, dialog form > .sheet-foot {
+    bottom: calc(-44px - env(safe-area-inset-bottom)); margin-bottom: calc(-44px - env(safe-area-inset-bottom)); padding-bottom: calc(44px + env(safe-area-inset-bottom)); }
+}
+
 #toast {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 50;
   background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-weight: 600;
@@ -683,6 +698,10 @@ button.info:hover { color: var(--brand); border-color: var(--brand); }
 .acct-tag { display: inline-flex; align-items: center; gap: 5px; vertical-align: top; }
 .bill .meta:has(.acct-tag) { display: flex; align-items: center; flex-wrap: wrap; column-gap: 4px; }
 .acct-tag .dot { width: 8px; height: 8px; }
+/* Overview expenses: the account in a bubble of its own colour, a deep shade of it inside. */
+.acct-tag.bubble { padding: 1px 8px 1px 6px; border-radius: 999px; border: 1px solid var(--acct); background: color-mix(in srgb, var(--acct) 20%, var(--card));
+  color: var(--text); font-weight: 500; line-height: 1.35; max-width: 100%; }
+.acct-tag.bubble .dot { background: var(--acct); }
 .toolbar.compact { margin: -4px 0 8px; gap: 6px; }
 .toolbar.compact select { min-width: 120px; padding-top: 6px; padding-bottom: 6px; min-height: 0; font-size: .85rem; }
 
@@ -769,6 +788,11 @@ button.info:hover { color: var(--brand); border-color: var(--brand); }
 .dep-amt { white-space: nowrap; font-size: .85rem; }
 .dep-amt b { font-size: 1.1rem; }
 li.deposit .figures { margin-top: 4px; }
+/* Deposits: green for what has come out, red for what's still to come out. */
+.dep-bar { margin: 6px 0 2px; }
+.dep-bar .bar { background: color-mix(in srgb, var(--danger) 28%, var(--card)); }
+/* Every bar on the Overview is as thin as the Expenses one up top. */
+.stats .bar, .overview-main .bar, .overview-pair .bar { height: 4px; }
 .dep-warn { margin-top: 4px; font-size: .8rem; color: var(--due); }
 
 /* Bills: a tick for paid, nothing for upcoming, and a line marking today */
@@ -1047,7 +1071,7 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
   background: var(--card); border: 1px solid var(--line); color: var(--text); box-shadow: none; }
 .sheet-chip .dot { width: 8px; height: 8px; }
 .sheet-chip.on { background: var(--brand-soft); color: var(--brand); border-color: transparent; font-weight: 600; }
-.sheet-done { width: 100%; min-height: 48px; font-size: 16px; margin-top: 4px; }
+.sheet-done { width: 100%; min-height: 48px; font-size: 16px; margin: 0; }
 @media (max-width: 899px) { .exp-rows .b-payee { display: none; } }
 #modal-form:has(.sheet-reset)::before { content: ''; display: block; width: 40px; height: 4px; border-radius: 2px; margin: -6px auto 12px;
   background: color-mix(in srgb, var(--text) 25%, var(--card)); }
@@ -1374,7 +1398,7 @@ dialog.loan-modal .error:empty { display: none; }
   .ld-strip { margin: 14px 16px 0; grid-template-columns: 1fr; }
   .ld-extra { margin: 18px 16px 0; padding: 12px; }
   .ld-x-cells b { font-size: 13px; }
-  .ld-btns { position: sticky; bottom: 0; z-index: 3; background: var(--card); border-top: 1px solid var(--line); padding: 12px 16px calc(20px + env(safe-area-inset-bottom)); margin-top: 16px; }
+  .ld-btns { padding: 12px 16px calc(20px + env(safe-area-inset-bottom)); margin-top: 16px; }
   .ld-btns button { flex: 1; height: 44px; }
 }
 
