@@ -222,9 +222,19 @@
     modalHandler = { onSave, onDelete };
     if (afterRender) afterRender($modalForm);
     if (!$modal.open) $modal.showModal();
+    watchScroll();
     const first = $modalForm.querySelector('input:not([type=checkbox]), select, textarea');
     if (first && window.matchMedia('(min-width: 721px)').matches) first.focus();
   }
+
+  // Popups that need a scrollbar get a thin line above their buttons, which stay at the bottom while the rest scrolls.
+  const scrollWatch = new ResizeObserver(() => {
+    for (const form of [$modalForm, $promptForm]) form.classList.toggle('scrolls', form.scrollHeight > form.clientHeight + 1);
+  });
+  const watchScroll = () => {
+    scrollWatch.disconnect();
+    for (const form of [$modalForm, $promptForm]) [form, ...form.children].forEach((el) => scrollWatch.observe(el));
+  };
 
   const closeForm = () => { if ($modal.open) $modal.close(); modalHandler = null; };
 
@@ -282,6 +292,7 @@
       $promptForm.onclick = (e) => { const p = e.target.closest('[data-p]')?.dataset.p; if (p === 'cancel' || p === '') done(null); };
       $prompt.oncancel = () => done(null);
       $prompt.showModal();
+      watchScroll();
       input.focus();
       input.select();
     });
@@ -298,6 +309,7 @@
       $promptForm.onclick = (e) => { const b = e.target.closest('[data-p]'); if (b) done(b.dataset.p || null); };
       $prompt.oncancel = () => done(null);
       $prompt.showModal();
+      watchScroll();
     });
   }
 
@@ -457,10 +469,11 @@
     const depositRow = (a, r, i) => {
       const need = r.bills_cents + r.savings_cents;
       return html`
-            <li class="acct-line deposit" style="--acct:${colorFor(a, i)}">
+            <li class="acct-line deposit clickable" data-action="account-details" data-id="${a.id}" style="--acct:${colorFor(a, i)}">
               <div class="grow">
                 <div class="dep-top"><button class="acct-btn" data-action="account-details" data-id="${a.id}" data-tip="${bankTip(a) || 'No bank details yet'}">${a.name}</button>
                   <span class="dep-amt"><span class="muted">Transfer</span> <b class="num">${money(r.deposit_cents)}</b></span></div>
+                <div class="dep-bar" title="${r.bills_cents ? `${money(r.paid_cents)} of ${money(r.bills_cents)} in bills has come out` : `No bills from this account ${thisCycle()}`}">${progress(r.bills_cents ? r.paid_cents : 1, r.bills_cents || 1)}</div>
                 <div class="figures">
                   <span class="figure" title="This ${cycleWord()}'s bills from this account that haven't come out yet (savings not included)"><span class="label">Still to come out</span> <b class="num">${money(r.remaining_cents)}</b></span>
                   <span class="figure" title="${c.cycle.is_current ? 'About what should be in the account today' : `About what should be in the account on ${fmtDate(c.held_on, true)}, once that deposit is in`} so every bill ${HELD_LABELS[state.data.settings.held_basis].toLowerCase()} can be paid, with the deposits still to come. Savings not included."><span class="label">Keep in account</span> <b class="num">${money(r.held_cents)}</b></span>
@@ -541,7 +554,7 @@
               <div class="date-box"><b>${d.getUTCDate()}</b><span>${DAYS[d.getUTCDay()]}</span></div>
               <div class="grow"><div class="title">${b.name}${b.kind === 'saving' ? html` <span class="chip">Savings</span>` : b.kind === 'loan' ? html` <span class="chip">Loan</span>` : ''}</div>
                 ${b.moved_from_day ? html`<div class="meta moved">(set for the ${ordinal(b.moved_from_day)}, last day of ${MONTHS[d.getUTCMonth()]})</div>` : ''}
-                <div class="meta">${a ? html`<span class="acct-tag"><span class="dot" style="background:${accountColor(a.id)}"></span>${a.name}</span>` : ''}${p && a ? ' · ' : ''}${p ? p.name : ''}</div></div>
+                <div class="meta">${a ? html`<span class="acct-tag bubble" style="--acct:${accountColor(a.id)}"><span class="dot"></span>${a.name}</span>` : ''}${p && a ? ' · ' : ''}${p ? p.name : ''}</div></div>
               <div class="right">${b.status === 'paid' ? html`<div class="num"><span class="tick" aria-label="Paid">✓</span> ${money(b.amount_cents)}</div>`
                 : html`<div class="num">${money(b.amount_cents)}</div>${b.status === 'due' ? html`<span class="status due">Due today</span>` : ''}`}</div>
             </li>`;
@@ -1391,7 +1404,7 @@
         ${group('Due', expenseWhenOptions().map(([v, t]) => chip('expenseWhen', v, t)))}
         ${group('Group by', [chip('expenseGroup', '', 'Account'), chip('expenseGroup', 'category', 'Category')])}
         ${group('Sort', [chip('expenseSort', 'due', 'Next due'), chip('expenseSort', 'amount', 'Amount'), chip('expenseSort', 'az', 'A–Z')])}
-        <button type="button" class="primary sheet-done" data-modal="cancel">Show ${n} ${n === 1 ? KIND_TEXT[kind].items.replace(/s$/, '') : KIND_TEXT[kind].items}</button>`,
+        <div class="sheet-foot"><button type="button" class="primary sheet-done" data-modal="cancel">Show ${n} ${n === 1 ? KIND_TEXT[kind].items.replace(/s$/, '') : KIND_TEXT[kind].items}</button></div>`,
     });
   }
 
@@ -1404,7 +1417,7 @@
 
     const groups = (byCategory
       ? [...state.data.categories.map((c) => ({ id: c.id, name: c.name })), { id: null, name: 'No category' }]
-        .map((g) => ({ ...g, color: 'var(--muted)', items: list.filter((e) => (e.category_id ?? null) === g.id) }))
+        .map((g, i) => ({ ...g, color: g.id == null ? 'var(--muted)' : colorFor(state.data.categories[i], i), items: list.filter((e) => (e.category_id ?? null) === g.id) }))
       : [...state.data.accounts.map((a) => ({ id: a.id, name: a.name, color: accountColor(a.id), deposit: kind === 'expense' ? depositFor(a.id) : null })),
         { id: null, name: 'No account', color: 'var(--muted)' }]
         .map((g) => ({ ...g, items: list.filter((e) => (e.account_id ?? null) === g.id) })))
@@ -1437,13 +1450,14 @@
       </section>`;
     })}</div>`;
 
-    // Desktop: one table, sortable by its headings.
+    // Desktop: a table, sortable by its headings, with each group in its own tile under the pinned headings.
     const sortHead = (key, text, cls = '') => html`<button type="button" class="th ${cls} ${sortBy === key ? 'on' : ''}" data-action="set-filter" data-key="expenseSort" data-value="${key}">${text}${sortBy === key ? ' ↓' : ''}</button>`;
+    const head = html`<div class="exp-tr exp-th" role="row">${sortHead('az', k.one === 'saving' ? 'Saving' : 'Bill')}<span class="th">Schedule</span>${sortHead('due', 'Next due')}${sortHead('amount', 'Amount', 'r')}<span class="th r">Per ${word}</span></div>`;
     const table = html`<div class="exp-table" role="table">
-      <div class="exp-tr exp-th" role="row">${sortHead('az', k.one === 'saving' ? 'Saving' : 'Bill')}<span class="th">Schedule</span>${sortHead('due', 'Next due')}${sortHead('amount', 'Amount', 'r')}<span class="th r">Per ${word}</span></div>
       ${groups.map((g) => {
         const shut = collapsed.has(g.key);
-        return html`<div class="exp-tr exp-tg ${shut ? 'shut' : ''}" role="row" data-action="toggle-group" data-key="${g.key}" aria-expanded="${shut ? 'false' : 'true'}">
+        return html`<section class="card exp-tile ${shut ? 'shut' : ''}" role="rowgroup">
+          <div class="exp-tr exp-tg" role="row" data-action="toggle-group" data-key="${g.key}" aria-expanded="${shut ? 'false' : 'true'}">
           <span class="g-cell"><span class="chev">${shut ? '▸' : '▾'}</span><span class="dot" style="background:${g.color}"></span><span class="g-name">${g.name}</span><span class="g-count">${count(g.items.length)}</span></span>
           <span class="g-dep r">${g.deposit != null ? `${money(g.deposit)} deposit` : ''}</span>
           <span class="r g-total ${g.deposit != null && g.total > g.deposit ? 'over' : ''}">${money(g.total)}</span></div>
@@ -1452,29 +1466,31 @@
             <span class="sched">${isSplit(e) ? `${money(e.yearly_cents)} a year, spread` : shortSchedule(e)}</span>
             <span>${dueHtml(e)}</span>
             <span class="r">${updBtn(e)}${amountHtml(e)}</span>
-            <span class="r per num">${money(e.per_pay_cents)}</span></div>`)}`;
+            <span class="r per num">${money(e.per_pay_cents)}</span></div>`)}
+        </section>`;
       })}
-      <div class="exp-tr exp-tt" role="row"><span>Total</span><span class="r num">${money(total)}</span></div>
+      <div class="card exp-tile"><div class="exp-tr exp-tt" role="row"><span>Total</span><span class="r num">${money(total)}</span></div></div>
     </div>`;
 
     return html`
-      <div class="exp-mtools">
+      <div class="exp-mpin"><div class="exp-mtools">
         <label class="exp-search-wrap"><span class="ico" aria-hidden="true">⌕</span><input type="search" class="exp-search" placeholder="Search" value="${state.expenseQuery}" data-input="expense-query" aria-label="Search"></label>
         <button type="button" class="filters-btn ${filtersOn() ? 'on' : ''}" data-action="expense-filters" data-kind="${kind}">Filters${filtersOn() ? html` <span class="tab-count">${filtersOn()}</span>` : ''}</button>
       </div>
-      <p class="exp-mcount">${count(list.length)} · about ${money(Math.round(total))} ${aCycle()}</p>
-      <div class="card exp-shell">
+      <p class="exp-mcount">${count(list.length)} · about ${money(Math.round(total))} ${aCycle()}</p></div>
+      <div class="exp-pin"><div class="card exp-shell">
         <div class="exp-tools">
           <label class="exp-search-wrap"><span class="ico" aria-hidden="true">⌕</span><input type="search" class="exp-search" placeholder="${k.search}" value="${state.expenseQuery}" data-input="expense-query" aria-label="Search"></label>
           ${dropdown('expenseAccount', 'Account', [['', 'All accounts'], ...accounts.map((a) => [String(a.id), a.name]), ...(noAccount ? [['none', 'No account']] : [])])}
           ${dropdown('expenseWhen', 'Due', expenseWhenOptions())}
           ${dropdown('expenseGroup', 'Group by', [['', 'Account'], ['category', 'Category']])}
+          ${dropdown('expenseSort', 'Sort by', [['due', 'Next due'], ['amount', 'Amount'], ['az', 'A–Z']])}
           <button type="button" class="exp-reset" data-action="expense-reset" ${filtersOn() || state.expenseQuery ? '' : raw('disabled')} title="Clear the search and filters">↺ Reset</button>
                   </div>
         <div class="exp-count">${count(list.length)} · about ${money(Math.round(total))} ${aCycle()}</div>
-        ${groups.length ? table : html`<p class="empty">${all.length ? `No ${k.items} match.` : k.none}</p>`}
-      </div>
-      ${groups.length ? cards : ''}
+        ${groups.length ? head : html`<p class="empty">${all.length ? `No ${k.items} match.` : k.none}</p>`}
+      </div></div>
+      ${groups.length ? html`${table}${cards}` : ''}
       ${kind === 'saving' ? savingsGoalsCard() : ''}`;
   }
 
@@ -2467,7 +2483,7 @@
           ${cat ? line('Category', [cat.name, sub?.name].filter(Boolean).join(' › '), false) : ''}
           ${!e.spread && e.next_date && e.next_date !== date ? line('Next after this', fmtDate(e.next_date, true), false) : ''}
           ${e.pending_from ? line('Price change', `${money(e.pending_cents)} from ${fmtDate(e.pending_from, true)}`, false) : ''}
-          ${e.notes ? line('Notes', e.notes, false) : ''}
+          ${e.notes ? html`<li class="note-line"><div class="grow"><div class="meta">Notes</div><div class="title">${e.notes}</div></div></li>` : ''}
         </ul>
         <p class="hint">Paid so far counts every date it was due before today${e.start_date ? `, from ${fmtDate(e.start_date, true)}` : ''}.</p>
         ${e.history && e.history.length ? html`<h3 class="ph-title">Price history${e.review_date ? html` <span class="muted small">· ${e.review_date <= state.data.settings.today ? 'review was due' : 'next review'} ${fmtDate(e.review_date, true)}</span>` : ''}</h3>${priceHistory(e.history, e)}` : ''}
@@ -4186,7 +4202,7 @@ sudo docker compose up -d --build</pre>`;
   function renderSection(name, tab) {
     const sec = SECTIONS[name];
     const t = sec.tabs[tab];
-    return html`
+    return html`<div class="sec-pin ${name === 'budget' ? 'on' : ''}">
       <div class="page-head sec-head">
         <div><h1>${sec.title}</h1><p class="muted small">${sec.sub}</p></div>
         <button class="primary add-btn" data-action="${t.action}" ${raw(t.kind ? `data-kind="${t.kind}"` : '')} aria-label="${t.add}"><span class="add-full">+ ${t.add}</span><span class="add-short" aria-hidden="true">+</span></button>
@@ -4195,7 +4211,7 @@ sudo docker compose up -d --build</pre>`;
         const on = key === tab;
         const bad = x.alert && x.alert();
         return html`<a role="tab" href="#/${name}/${key}" aria-selected="${on ? 'true' : 'false'}" tabindex="${on ? '0' : '-1'}">${x.label}<span class="tab-count ${bad || ''}" ${raw(bad ? `title="${bad === 'bad' ? 'Overdue' : 'Due soon'}"` : '')}>${x.count()}</span></a>`;
-      })}</div>
+      })}</div></div>
       ${t.render()}`;
   }
 
@@ -4240,6 +4256,7 @@ sudo docker compose up -d --build</pre>`;
       else out = await renderOverview();
       if (seq === renderSeq) {
         $app.innerHTML = out.s;
+        pinUnderTopbar();
         makeKeyboardReachable($app);
         scrollBillsToToday();
         if ($app.querySelector('#calc-form')) runCalc();
@@ -4251,6 +4268,15 @@ sudo docker compose up -d --build</pre>`;
       }
     }
   }
+
+  // Headings pinned while the page scrolls sit just under the top bar, whatever its height.
+  function pinUnderTopbar() {
+    const bar = document.querySelector('.topbar');
+    if (bar) document.documentElement.style.setProperty('--top-h', `${bar.offsetHeight}px`);
+    const head = document.querySelector('.sec-pin.on');
+    document.documentElement.style.setProperty('--sec-h', `${head && getComputedStyle(head).position === 'sticky' ? head.offsetHeight : 0}px`);
+  }
+  window.addEventListener('resize', pinUnderTopbar);
 
   // Rows and cards that open something when clicked aren't buttons, so give them
   // a place in the Tab order; Enter or Space then clicks them (see below).

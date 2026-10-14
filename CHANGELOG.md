@@ -2,6 +2,24 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v0.9.1 (14 October 2026)
+
+### Improved
+- The buttons at the bottom of every popup stay in view while you scroll, on desktop as well as phones. When a popup is long enough to scroll, a thin line sits above them.
+- Expenses on the Overview show their account in a bubble of the account's colour, so it stands out more.
+- Every bar on the Overview is the same thin size as the Expenses bar at the top.
+- Paid bills on the Overview keep a green date again.
+- Tap anywhere on an account under **Deposits this fortnight** to see its bank details, and rows light up when you point at them, like the rest of the Overview.
+- Items on the Goals page light up when you point at them, like other rows you can tap.
+- A bill's notes are shaded in its popup, so they stand out.
+- Budget → Expenses and Savings on a computer: each account or category is its own tile, with its name (tap to fold it away), deposit and total across the top, so it's easy to tell the headings from the bills.
+- On a computer, the whole top of the Budget page (title, Add button, tabs, and on Expenses and Savings the search, filters, bill count and column headings) stays put as you scroll. On phones the search, Filters and count stay at the top. There's also a **Sort by** next to **Group by**.
+- Grouping by category shows each category in its own colour.
+
+### Fixed
+- The payee beside an account bubble on the Overview lines up with the account name on every computer.
+- The bars are back on **Deposits this fortnight**: green for the bills that have come out of each account, red for what's still to come out.
+
 ## v0.9.0 (13 October 2026)
 
 ### New
