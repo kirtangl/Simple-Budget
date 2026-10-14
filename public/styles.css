@@ -1217,7 +1217,9 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
 .g-main { min-width: 0; cursor: pointer; }
 /* The same hover highlight as other clickable rows (not while its add/remove panel is open). */
 .g-item { position: relative; isolation: isolate; }
-.g-item:has(> .g-main:hover):not(:has(.g-panel-slot > *))::before { content: ''; position: absolute; inset: 1px -10px 0; z-index: -1; border-radius: 10px;
+/* An open ⋯ menu has to sit over the rows below it, which needs the row not to be its own layer. */
+.g-item:has(.g-menu:not([hidden])) { isolation: auto; }
+.g-item:has(> .g-main:hover):not(:has(.g-panel-slot > *)):not(:has(.g-menu:not([hidden])))::before { content: ''; position: absolute; inset: 1px -10px 0; z-index: -1; border-radius: 10px;
   background: color-mix(in srgb, var(--inset) 70%, transparent); }
 .g-name { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
 .g-note { font-size: 13px; font-weight: 400; color: var(--muted); }
