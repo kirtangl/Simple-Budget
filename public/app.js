@@ -1417,7 +1417,7 @@
 
     const groups = (byCategory
       ? [...state.data.categories.map((c) => ({ id: c.id, name: c.name })), { id: null, name: 'No category' }]
-        .map((g) => ({ ...g, color: 'var(--muted)', items: list.filter((e) => (e.category_id ?? null) === g.id) }))
+        .map((g, i) => ({ ...g, color: g.id == null ? 'var(--muted)' : colorFor(state.data.categories[i], i), items: list.filter((e) => (e.category_id ?? null) === g.id) }))
       : [...state.data.accounts.map((a) => ({ id: a.id, name: a.name, color: accountColor(a.id), deposit: kind === 'expense' ? depositFor(a.id) : null })),
         { id: null, name: 'No account', color: 'var(--muted)' }]
         .map((g) => ({ ...g, items: list.filter((e) => (e.account_id ?? null) === g.id) })))
@@ -4202,7 +4202,7 @@ sudo docker compose up -d --build</pre>`;
   function renderSection(name, tab) {
     const sec = SECTIONS[name];
     const t = sec.tabs[tab];
-    return html`
+    return html`<div class="sec-pin ${name === 'budget' ? 'on' : ''}">
       <div class="page-head sec-head">
         <div><h1>${sec.title}</h1><p class="muted small">${sec.sub}</p></div>
         <button class="primary add-btn" data-action="${t.action}" ${raw(t.kind ? `data-kind="${t.kind}"` : '')} aria-label="${t.add}"><span class="add-full">+ ${t.add}</span><span class="add-short" aria-hidden="true">+</span></button>
@@ -4211,7 +4211,7 @@ sudo docker compose up -d --build</pre>`;
         const on = key === tab;
         const bad = x.alert && x.alert();
         return html`<a role="tab" href="#/${name}/${key}" aria-selected="${on ? 'true' : 'false'}" tabindex="${on ? '0' : '-1'}">${x.label}<span class="tab-count ${bad || ''}" ${raw(bad ? `title="${bad === 'bad' ? 'Overdue' : 'Due soon'}"` : '')}>${x.count()}</span></a>`;
-      })}</div>
+      })}</div></div>
       ${t.render()}`;
   }
 
@@ -4273,6 +4273,8 @@ sudo docker compose up -d --build</pre>`;
   function pinUnderTopbar() {
     const bar = document.querySelector('.topbar');
     if (bar) document.documentElement.style.setProperty('--top-h', `${bar.offsetHeight}px`);
+    const head = document.querySelector('.sec-pin.on');
+    document.documentElement.style.setProperty('--sec-h', `${head && getComputedStyle(head).position === 'sticky' ? head.offsetHeight : 0}px`);
   }
   window.addEventListener('resize', pinUnderTopbar);
 

@@ -986,10 +986,11 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
 .exp-tile .exp-td:last-child { border-bottom: 0; }
 /* The search, filters, count and column headings stay put under the top bar; the tiles scroll behind them. */
 /* The page colour behind it fills its rounded top corners and leaves a small gap under it, so the tiles scroll away into that gap. */
-.exp-pin { position: sticky; top: var(--top-h, 58px); z-index: 6; background: var(--bg); padding-bottom: 12px; margin-bottom: -12px; }
+.exp-pin { position: sticky; top: calc(var(--top-h, 58px) + var(--sec-h, 0px)); z-index: 6; background: var(--bg); padding-bottom: 12px; margin-bottom: -12px; }
 .exp-shell { border-radius: var(--radius) var(--radius) 0 0; }
 .exp-shell .exp-th { border-bottom: 0; }
 @media (max-width: 899px) { .exp-pin { display: none; } }
+@media (min-width: 900px) { .exp-mpin { display: none; } }
 .exp-mpin { position: sticky; top: var(--top-h, 58px); z-index: 6; margin: -8px -16px 0; padding: 8px 16px 10px; background: var(--bg); }
 .exp-mpin .exp-mcount { margin-bottom: 0; }
 /* Fills the page colour in behind the pinned box's rounded corners, so nothing shows through them. */
@@ -1750,3 +1751,9 @@ dialog.loan-modal .error:empty { display: none; }
 /* The actual path's key: its orange line with a dot. */
 .ld-keys .k-pt.k-actual { width: 18px; border-radius: 0; background: linear-gradient(var(--firm), var(--firm)) center / 18px 2.5px no-repeat,
   radial-gradient(circle, var(--firm) 4px, transparent 4.5px) center / 9px 9px no-repeat; }
+
+/* Budget on a computer: the title, Add button and tabs stay put from the start, with the table headings under them. */
+@media (min-width: 900px) {
+  .sec-pin.on { position: sticky; top: var(--top-h, 58px); z-index: 7; margin: -16px -16px 0; padding: 16px 16px 16px; background: var(--bg); }
+  .sec-pin.on .sec-tabs { margin-bottom: 0; }
+}

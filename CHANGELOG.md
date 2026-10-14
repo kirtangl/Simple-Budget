@@ -13,7 +13,8 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 - Items on the Goals page light up when you point at them, like other rows you can tap.
 - A bill's notes are shaded in its popup, so they stand out.
 - Budget → Expenses and Savings on a computer: each account or category is its own tile, with its name (tap to fold it away), deposit and total across the top, so it's easy to tell the headings from the bills.
-- The search, filters, bill count and column headings stay at the top as you scroll, on phones too, and there's a **Sort by** next to **Group by**.
+- On a computer, the whole top of the Budget page (title, Add button, tabs, and on Expenses and Savings the search, filters, bill count and column headings) stays put as you scroll. On phones the search, Filters and count stay at the top. There's also a **Sort by** next to **Group by**.
+- Grouping by category shows each category in its own colour.
 
 ### Fixed
 - The payee beside an account bubble on the Overview lines up with the account name on every computer.
