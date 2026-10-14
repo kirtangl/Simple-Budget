@@ -2480,7 +2480,7 @@
           ${cat ? line('Category', [cat.name, sub?.name].filter(Boolean).join(' › '), false) : ''}
           ${!e.spread && e.next_date && e.next_date !== date ? line('Next after this', fmtDate(e.next_date, true), false) : ''}
           ${e.pending_from ? line('Price change', `${money(e.pending_cents)} from ${fmtDate(e.pending_from, true)}`, false) : ''}
-          ${e.notes ? line('Notes', e.notes, false) : ''}
+          ${e.notes ? html`<li class="note-line"><div class="grow"><div class="meta">Notes</div><div class="title">${e.notes}</div></div></li>` : ''}
         </ul>
         <p class="hint">Paid so far counts every date it was due before today${e.start_date ? `, from ${fmtDate(e.start_date, true)}` : ''}.</p>
         ${e.history && e.history.length ? html`<h3 class="ph-title">Price history${e.review_date ? html` <span class="muted small">· ${e.review_date <= state.data.settings.today ? 'review was due' : 'next review'} ${fmtDate(e.review_date, true)}</span>` : ''}</h3>${priceHistory(e.history, e)}` : ''}

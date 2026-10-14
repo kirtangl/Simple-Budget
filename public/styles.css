@@ -700,8 +700,12 @@ button.info:hover { color: var(--brand); border-color: var(--brand); }
 .acct-tag .dot { width: 8px; height: 8px; }
 /* Overview expenses: the account in a bubble of its own colour, a deep shade of it inside. */
 .acct-tag.bubble { padding: 1px 8px 1px 6px; border-radius: 999px; border: 1px solid var(--acct); background: color-mix(in srgb, var(--acct) 14%, var(--card));
-  color: var(--text); font-weight: 500; line-height: 1.35; max-width: 100%; }
+  color: var(--text); font-weight: 500; max-width: 100%; }
 .acct-tag.bubble .dot { background: var(--acct); }
+/* A bill's notes, shaded so they stand out in its popup. */
+.list > li.note-line { margin: 6px 0 8px; padding: 10px 12px; border: 0; border-radius: 10px; background: var(--inset); }
+.list > li.note-line + li { border-top: 0; }
+.note-line .title { font-weight: 500; white-space: pre-wrap; }
 .toolbar.compact { margin: -4px 0 8px; gap: 6px; }
 .toolbar.compact select { min-width: 120px; padding-top: 6px; padding-bottom: 6px; min-height: 0; font-size: .85rem; }
 

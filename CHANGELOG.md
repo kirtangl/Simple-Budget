@@ -11,8 +11,10 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 - Paid bills on the Overview keep a green date again.
 - Tap anywhere on an account under **Deposits this fortnight** to see its bank details, and rows light up when you point at them, like the rest of the Overview.
 - Items on the Goals page light up when you point at them, like other rows you can tap.
+- A bill's notes are shaded in its popup, so they stand out.
 
 ### Fixed
+- The payee beside an account bubble on the Overview lines up with the account name on every computer.
 - The bars are back on **Deposits this fortnight**: green for the bills that have come out of each account, red for what's still to come out.
 
 ## v0.9.0 (13 October 2026)
