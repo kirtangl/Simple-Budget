@@ -699,7 +699,7 @@ button.info:hover { color: var(--brand); border-color: var(--brand); }
 .bill .meta:has(.acct-tag) { display: flex; align-items: center; flex-wrap: wrap; column-gap: 4px; }
 .acct-tag .dot { width: 8px; height: 8px; }
 /* Overview expenses: the account in a bubble of its own colour, a deep shade of it inside. */
-.acct-tag.bubble { padding: 1px 8px 1px 6px; border-radius: 999px; border: 1px solid var(--acct); background: color-mix(in srgb, var(--acct) 20%, var(--card));
+.acct-tag.bubble { padding: 1px 8px 1px 6px; border-radius: 999px; border: 1px solid var(--acct); background: color-mix(in srgb, var(--acct) 14%, var(--card));
   color: var(--text); font-weight: 500; line-height: 1.35; max-width: 100%; }
 .acct-tag.bubble .dot { background: var(--acct); }
 .toolbar.compact { margin: -4px 0 8px; gap: 6px; }
@@ -858,7 +858,7 @@ li.bill .date-box { width: 42px; height: 42px; padding: 0; border-radius: 6px; d
   background: color-mix(in srgb, var(--text) 7%, var(--card)); color: var(--text); }
 li.bill .date-box b { font-size: 1rem; }
 li.bill .date-box span { font-size: .62rem; }
-li.bill.paid .date-box { background: color-mix(in srgb, var(--text) 7%, var(--card)); }
+li.bill.paid .date-box { background: color-mix(in srgb, var(--paid) 24%, var(--card)); }
 li.bill.due .date-box { background: color-mix(in srgb, var(--firm) 58%, var(--card)); color: #fff4ea; }
 li.bill.due .date-box span { color: inherit; opacity: .85; }
 li.bill .status.due { background: var(--firm); color: #1a0f05; font-size: 10px; font-weight: 700; border-radius: 3px; padding: 2px 6px; }
@@ -1211,6 +1211,10 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
 .g-items { list-style: none; margin: 0 16px 12px; padding: 0 0 0 14px; border-left: 3px solid var(--line); }
 .g-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 20px; align-items: start; padding: 12px 0; border-top: 1px solid var(--line); }
 .g-main { min-width: 0; cursor: pointer; }
+/* The same hover highlight as other clickable rows (not while its add/remove panel is open). */
+.g-item { position: relative; isolation: isolate; }
+.g-item:has(> .g-main:hover):not(:has(.g-panel-slot > *))::before { content: ''; position: absolute; inset: 1px -10px 0; z-index: -1; border-radius: 10px;
+  background: color-mix(in srgb, var(--inset) 70%, transparent); }
 .g-name { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
 .g-note { font-size: 13px; font-weight: 400; color: var(--muted); }
 .g-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }

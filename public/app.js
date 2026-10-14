@@ -469,7 +469,7 @@
     const depositRow = (a, r, i) => {
       const need = r.bills_cents + r.savings_cents;
       return html`
-            <li class="acct-line deposit" style="--acct:${colorFor(a, i)}">
+            <li class="acct-line deposit clickable" data-action="account-details" data-id="${a.id}" style="--acct:${colorFor(a, i)}">
               <div class="grow">
                 <div class="dep-top"><button class="acct-btn" data-action="account-details" data-id="${a.id}" data-tip="${bankTip(a) || 'No bank details yet'}">${a.name}</button>
                   <span class="dep-amt"><span class="muted">Transfer</span> <b class="num">${money(r.deposit_cents)}</b></span></div>

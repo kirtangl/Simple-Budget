@@ -8,6 +8,9 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 - The buttons at the bottom of every popup stay in view while you scroll, on desktop as well as phones. When a popup is long enough to scroll, a thin line sits above them.
 - Expenses on the Overview show their account in a bubble of the account's colour, so it stands out more.
 - Every bar on the Overview is the same thin size as the Expenses bar at the top.
+- Paid bills on the Overview keep a green date again.
+- Tap anywhere on an account under **Deposits this fortnight** to see its bank details, and rows light up when you point at them, like the rest of the Overview.
+- Items on the Goals page light up when you point at them, like other rows you can tap.
 
 ### Fixed
 - The bars are back on **Deposits this fortnight**: green for the bills that have come out of each account, red for what's still to come out.
