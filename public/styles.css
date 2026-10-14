@@ -977,8 +977,20 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
 
 @media (min-width: 900px) {
   .exp-cards { display: none; }
-  .exp-table { display: block; }
+  .exp-table { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
 }
+/* Each group is its own tile: its heading is the collapse button, with the deposit and the total. */
+.exp-tile { padding: 0; overflow: hidden; }
+.exp-tile .exp-tg { background: color-mix(in srgb, var(--text) 4%, var(--card)); padding-top: 12px; padding-bottom: 12px; font-size: 14px; }
+.exp-tile.shut .exp-tg { border-bottom: 0; }
+.exp-tile .exp-td:last-child { border-bottom: 0; }
+/* The search, filters, count and column headings stay put under the top bar; the tiles scroll behind them. */
+.exp-shell { position: sticky; top: var(--top-h, 58px); z-index: 6; overflow: visible; }
+.exp-shell .exp-th { border-radius: 0 0 calc(var(--radius) - 1px) calc(var(--radius) - 1px); border-bottom: 0; }
+.exp-mpin { position: sticky; top: var(--top-h, 58px); z-index: 6; margin: -8px -16px 0; padding: 8px 16px 10px; background: var(--bg); }
+.exp-mpin .exp-mcount { margin-bottom: 0; }
+/* Fills the page colour in behind the pinned box's rounded corners, so nothing shows through them. */
+.exp-shell::before { content: ''; position: absolute; inset: -1px; z-index: -1; background: var(--bg); }
 @media (max-width: 720px) {
   .exp-ghead { flex-wrap: wrap; row-gap: 2px; }
 }
@@ -1019,7 +1031,7 @@ li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
 }
 
 /* Expenses: search and filters across the top of the table */
-.exp-shell { padding: 0; overflow: hidden; }
+.exp-shell { padding: 0; }
 .exp-tools { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; border-bottom: 1px solid var(--line); }
 .exp-search-wrap { position: relative; flex: 1 1 200px; min-width: 0; margin: 0; font-weight: 400; }
 .exp-search-wrap .ico { position: absolute; left: 11px; top: 50%; transform: translateY(-52%); color: var(--muted); font-size: 15px; pointer-events: none; }

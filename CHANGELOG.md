@@ -12,6 +12,8 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 - Tap anywhere on an account under **Deposits this fortnight** to see its bank details, and rows light up when you point at them, like the rest of the Overview.
 - Items on the Goals page light up when you point at them, like other rows you can tap.
 - A bill's notes are shaded in its popup, so they stand out.
+- Budget → Expenses and Savings on a computer: each account or category is its own tile, with its name (tap to fold it away), deposit and total across the top, so it's easy to tell the headings from the bills.
+- The search, filters, bill count and column headings stay at the top as you scroll, on phones too, and there's a **Sort by** next to **Group by**.
 
 ### Fixed
 - The payee beside an account bubble on the Overview lines up with the account name on every computer.

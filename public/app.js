@@ -1450,13 +1450,14 @@
       </section>`;
     })}</div>`;
 
-    // Desktop: one table, sortable by its headings.
+    // Desktop: a table, sortable by its headings, with each group in its own tile under the pinned headings.
     const sortHead = (key, text, cls = '') => html`<button type="button" class="th ${cls} ${sortBy === key ? 'on' : ''}" data-action="set-filter" data-key="expenseSort" data-value="${key}">${text}${sortBy === key ? ' ↓' : ''}</button>`;
+    const head = html`<div class="exp-tr exp-th" role="row">${sortHead('az', k.one === 'saving' ? 'Saving' : 'Bill')}<span class="th">Schedule</span>${sortHead('due', 'Next due')}${sortHead('amount', 'Amount', 'r')}<span class="th r">Per ${word}</span></div>`;
     const table = html`<div class="exp-table" role="table">
-      <div class="exp-tr exp-th" role="row">${sortHead('az', k.one === 'saving' ? 'Saving' : 'Bill')}<span class="th">Schedule</span>${sortHead('due', 'Next due')}${sortHead('amount', 'Amount', 'r')}<span class="th r">Per ${word}</span></div>
       ${groups.map((g) => {
         const shut = collapsed.has(g.key);
-        return html`<div class="exp-tr exp-tg ${shut ? 'shut' : ''}" role="row" data-action="toggle-group" data-key="${g.key}" aria-expanded="${shut ? 'false' : 'true'}">
+        return html`<section class="card exp-tile ${shut ? 'shut' : ''}" role="rowgroup">
+          <div class="exp-tr exp-tg" role="row" data-action="toggle-group" data-key="${g.key}" aria-expanded="${shut ? 'false' : 'true'}">
           <span class="g-cell"><span class="chev">${shut ? '▸' : '▾'}</span><span class="dot" style="background:${g.color}"></span><span class="g-name">${g.name}</span><span class="g-count">${count(g.items.length)}</span></span>
           <span class="g-dep r">${g.deposit != null ? `${money(g.deposit)} deposit` : ''}</span>
           <span class="r g-total ${g.deposit != null && g.total > g.deposit ? 'over' : ''}">${money(g.total)}</span></div>
@@ -1465,29 +1466,31 @@
             <span class="sched">${isSplit(e) ? `${money(e.yearly_cents)} a year, spread` : shortSchedule(e)}</span>
             <span>${dueHtml(e)}</span>
             <span class="r">${updBtn(e)}${amountHtml(e)}</span>
-            <span class="r per num">${money(e.per_pay_cents)}</span></div>`)}`;
+            <span class="r per num">${money(e.per_pay_cents)}</span></div>`)}
+        </section>`;
       })}
-      <div class="exp-tr exp-tt" role="row"><span>Total</span><span class="r num">${money(total)}</span></div>
+      <div class="card exp-tile"><div class="exp-tr exp-tt" role="row"><span>Total</span><span class="r num">${money(total)}</span></div></div>
     </div>`;
 
     return html`
-      <div class="exp-mtools">
+      <div class="exp-mpin"><div class="exp-mtools">
         <label class="exp-search-wrap"><span class="ico" aria-hidden="true">⌕</span><input type="search" class="exp-search" placeholder="Search" value="${state.expenseQuery}" data-input="expense-query" aria-label="Search"></label>
         <button type="button" class="filters-btn ${filtersOn() ? 'on' : ''}" data-action="expense-filters" data-kind="${kind}">Filters${filtersOn() ? html` <span class="tab-count">${filtersOn()}</span>` : ''}</button>
       </div>
-      <p class="exp-mcount">${count(list.length)} · about ${money(Math.round(total))} ${aCycle()}</p>
+      <p class="exp-mcount">${count(list.length)} · about ${money(Math.round(total))} ${aCycle()}</p></div>
       <div class="card exp-shell">
         <div class="exp-tools">
           <label class="exp-search-wrap"><span class="ico" aria-hidden="true">⌕</span><input type="search" class="exp-search" placeholder="${k.search}" value="${state.expenseQuery}" data-input="expense-query" aria-label="Search"></label>
           ${dropdown('expenseAccount', 'Account', [['', 'All accounts'], ...accounts.map((a) => [String(a.id), a.name]), ...(noAccount ? [['none', 'No account']] : [])])}
           ${dropdown('expenseWhen', 'Due', expenseWhenOptions())}
           ${dropdown('expenseGroup', 'Group by', [['', 'Account'], ['category', 'Category']])}
+          ${dropdown('expenseSort', 'Sort by', [['due', 'Next due'], ['amount', 'Amount'], ['az', 'A–Z']])}
           <button type="button" class="exp-reset" data-action="expense-reset" ${filtersOn() || state.expenseQuery ? '' : raw('disabled')} title="Clear the search and filters">↺ Reset</button>
                   </div>
         <div class="exp-count">${count(list.length)} · about ${money(Math.round(total))} ${aCycle()}</div>
-        ${groups.length ? table : html`<p class="empty">${all.length ? `No ${k.items} match.` : k.none}</p>`}
+        ${groups.length ? head : html`<p class="empty">${all.length ? `No ${k.items} match.` : k.none}</p>`}
       </div>
-      ${groups.length ? cards : ''}
+      ${groups.length ? html`${table}${cards}` : ''}
       ${kind === 'saving' ? savingsGoalsCard() : ''}`;
   }
 
@@ -4253,6 +4256,7 @@ sudo docker compose up -d --build</pre>`;
       else out = await renderOverview();
       if (seq === renderSeq) {
         $app.innerHTML = out.s;
+        pinUnderTopbar();
         makeKeyboardReachable($app);
         scrollBillsToToday();
         if ($app.querySelector('#calc-form')) runCalc();
@@ -4264,6 +4268,13 @@ sudo docker compose up -d --build</pre>`;
       }
     }
   }
+
+  // Headings pinned while the page scrolls sit just under the top bar, whatever its height.
+  function pinUnderTopbar() {
+    const bar = document.querySelector('.topbar');
+    if (bar) document.documentElement.style.setProperty('--top-h', `${bar.offsetHeight}px`);
+  }
+  window.addEventListener('resize', pinUnderTopbar);
 
   // Rows and cards that open something when clicked aren't buttons, so give them
   // a place in the Tab order; Enter or Space then clicks them (see below).
