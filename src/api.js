@@ -80,7 +80,7 @@ const T = {
 };
 
 const LABELS = {
-  review_date: 'Review date', review_snooze: 'Reminder date',
+  review_date: 'Review date', review_snooze: 'Reminder date', from: 'Date', end_date: 'End date',
   name: 'Name', amount_cents: 'Amount', frequency: 'Frequency', after_tax_cents: 'After tax amount',
   category_id: 'Category', kind: 'Type', bsb: 'BSB', account_number: 'Account number',
   start_date: 'Start date', target_date: 'Target date', interest_rate: 'Interest rate', term_months: 'Term (months)',
@@ -199,17 +199,22 @@ const RESOURCES = {
   },
 };
 
+// One field checked on its own, with its name in the message, like clean() gives.
+function labelled(key, check, value) {
+  try {
+    return check(value);
+  } catch (err) {
+    if (err instanceof BadRequest) throw new BadRequest(`${LABELS[key] || key} ${err.message}.`);
+    throw err;
+  }
+}
+
 function clean(resource, body, { partial }) {
   if (!body || typeof body !== 'object') throw new BadRequest('Expected a JSON body.');
   let out = {};
   for (const [key, check] of Object.entries(resource.fields)) {
     if (!(key in body)) continue;
-    try {
-      out[key] = check(body[key]);
-    } catch (err) {
-      if (err instanceof BadRequest) throw new BadRequest(`${LABELS[key] || key} ${err.message}.`);
-      throw err;
-    }
+    out[key] = labelled(key, check, body[key]);
   }
   if (resource.normalize) out = resource.normalize(out);
   for (const key of resource.required) {
@@ -470,16 +475,17 @@ function createApi(db) {
   });
 
   // A new price for a bill, from a date: { amount_cents, from, review_date }. A date after
-  // today waits until then; today or earlier changes it now, logged on that date.
+  // today waits until then (replacing any future price already set); today or earlier
+  // changes it now, logged on that date, and leaves a future price in place.
   router.post('/expenses/:id/amount', (req, res) => {
     const id = Number(req.params.id);
     const e = db.prepare('SELECT * FROM expenses WHERE id = ?').get(id);
     if (!e) return res.status(404).json({ error: 'Not found.' });
     const body = req.body || {};
-    const cents = T.positiveCents(body.amount_cents);
-    if (!cents) throw new BadRequest('Enter the new amount.');
-    const from = T.date(body.from) || today();
-    const review = 'review_date' in body ? T.date(body.review_date) : e.review_date;
+    const cents = labelled('amount_cents', T.positiveCents, body.amount_cents);
+    if (cents === null) throw new BadRequest('Enter the new amount.');
+    const from = labelled('from', T.date, body.from) || today();
+    const review = 'review_date' in body ? labelled('review_date', T.date, body.review_date) : e.review_date;
     const before = { ...e };
     // A price from before one already recorded only fills in the history; the newer price stays.
     const later = from <= today() && laterChange(db, 'expense', id, 'amount_cents', from) === 'change';
@@ -490,8 +496,9 @@ function createApi(db) {
       } else if (from > today()) {
         db.prepare('UPDATE expenses SET pending_cents = ?, pending_from = ?, review_date = ?, review_snooze = NULL WHERE id = ?').run(cents, from, review, id);
       } else {
+        // A future price that's already set stays: only a new future price replaces it.
         const cols = e.yearly_cents != null ? 'yearly_cents = ?, amount_cents = ?' : 'amount_cents = ?';
-        db.prepare(`UPDATE expenses SET ${cols}, pending_cents = NULL, pending_from = NULL, review_date = ?, review_snooze = NULL WHERE id = ?`)
+        db.prepare(`UPDATE expenses SET ${cols}, review_date = ?, review_snooze = NULL WHERE id = ?`)
           .run(...(e.yearly_cents != null ? [cents, cents] : [cents]), review, id);
         logHistory(db, RESOURCES.expenses, before, { ...db.prepare('SELECT * FROM expenses WHERE id = ?').get(id) }, { loginId: req.login ? req.login.id : null, date: from });
       }
@@ -683,8 +690,7 @@ function createApi(db) {
     const checkUnique = (data, id) => {
       if (!resource.unique || !data.name) return;
       const { label, within } = resource.unique;
-      const row = id ? get(id) : {};
-      const scope = within ? (within in data ? data[within] : row[within]) : null;
+      const scope = within ? data[within] : null;
       const clash = db.prepare(`SELECT id FROM ${name} WHERE name = ? COLLATE NOCASE AND id IS NOT ?${within ? ` AND ${within} = ?` : ''}`)
         .get(...[data.name, id ?? null, ...(within ? [scope] : [])]);
       if (clash) throw new BadRequest(`${label} called "${data.name}" already exists.`);
@@ -707,8 +713,15 @@ function createApi(db) {
       if (!get(id)) return res.status(404).json({ error: 'Not found.' });
       const data = clean(resource, req.body, { partial: true });
       const before = get(id);
-      if (resource.check) resource.check({ ...before, ...data });
-      checkUnique(data, id);
+      // Checked on the row as it will be saved, so changing just one date (or just
+      // the category a sub category is in) can't get past the rules.
+      const merged = { ...before, ...data };
+      if (merged.start_date && merged.end_date && merged.start_date > merged.end_date) {
+        throw new BadRequest('The end date should be after the start date.');
+      }
+      if (resource.check) resource.check(merged);
+      const within = resource.unique && resource.unique.within;
+      if ('name' in data || (within && within in data)) checkUnique(merged, id);
       const cols = Object.keys(data);
       transaction(db, () => {
         if (cols.length) {

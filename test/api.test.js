@@ -386,6 +386,25 @@ test('no duplicate names, and payees keep their payment details', () => withServ
   const cat = (await call('GET', '/data')).body.categories[0];
   assert.equal((await call('POST', '/categories', { name: cat.name.toUpperCase() })).status, 400);
   assert.equal((await call('POST', '/subcategories', { category_id: cat.id, name: cat.subcategories[0].name })).status, 400);
+  // Moving a sub category into a category that already has one by that name.
+  const other = (await call('POST', '/categories', { name: 'Odds and ends' })).body;
+  const stray = (await call('POST', '/subcategories', { category_id: other.id, name: cat.subcategories[0].name.toLowerCase() })).body;
+  r = await call('PATCH', `/subcategories/${stray.id}`, { category_id: cat.id });
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /already exists/);
+}));
+
+test('editing just one date is checked against the saved one', () => withServer({}, async (call) => {
+  const e = (await call('POST', '/expenses', { name: 'Course', amount_cents: 20000, frequency: 'monthly', start_date: '2026-03-01', end_date: '2026-12-31' })).body;
+  let r = await call('PATCH', `/expenses/${e.id}`, { end_date: '2026-01-31' });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, 'The end date should be after the start date.');
+  r = await call('PATCH', `/expenses/${e.id}`, { start_date: '2027-01-01' });
+  assert.equal(r.status, 400);
+  r = await call('PATCH', `/expenses/${e.id}`, { end_date: '2026-06-30' });
+  assert.equal(r.status, 200);
+  const i = (await call('POST', '/incomes', { name: 'Contract', after_tax_cents: 100000, start_date: '2026-03-01' })).body;
+  assert.equal((await call('PATCH', `/incomes/${i.id}`, { end_date: '2026-02-01' })).status, 400);
 }));
 
 test('payees keep a policy number and can be paid by direct debit; bills report what has been paid', () => withServer({}, async (call) => {
@@ -815,7 +834,21 @@ test('a new price can start today, be backdated or wait for a future date', () =
   r = await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 175000, from: '2099-01-01' });
   assert.equal(r.body.amount_cents, 160000); // not yet
   assert.deepEqual([r.body.pending_cents, r.body.pending_from], [175000, '2099-01-01']);
-  assert.equal((await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 0 })).status, 400);
+  // A price dated today or earlier changes it now and keeps the future price.
+  r = await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 165000, from: '2026-01-01' });
+  assert.equal(r.body.amount_cents, 165000);
+  assert.deepEqual([r.body.pending_cents, r.body.pending_from], [175000, '2099-01-01']);
+  r = await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 166000 });
+  assert.deepEqual([r.body.amount_cents, r.body.pending_cents], [166000, 175000]);
+  // Only another future price replaces it.
+  r = await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 180000, from: '2098-06-01' });
+  assert.deepEqual([r.body.amount_cents, r.body.pending_cents, r.body.pending_from], [166000, 180000, '2098-06-01']);
+  // $0 is a price like any other (the edit form allows it too); a missing one isn't.
+  r = await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 0 });
+  assert.deepEqual([r.status, r.body.amount_cents], [200, 0]);
+  assert.equal((await call('POST', `/expenses/${e.id}/amount`, {})).body.error, 'Enter the new amount.');
+  assert.equal((await call('POST', `/expenses/${e.id}/amount`, { amount_cents: -5 })).body.error, "Amount can't be negative.");
+  assert.equal((await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 5, from: 'soon' })).body.error.startsWith('Date must be a date'), true);
 }));
 
 test('back-dated prices slot into the history, and a mistake can be removed', () => withServer({}, async (call) => {

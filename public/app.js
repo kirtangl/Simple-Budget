@@ -622,7 +622,7 @@
       title: `Update ${e.name}`,
       body: html`
         <p class="muted small" style="margin-top:0">It's ${now} now.${review ? " Leave it as is if it hasn't changed." : ''}
-          ${e.pending_from ? html` <b>${money(e.pending_cents)}</b> is already set from ${fmtDate(e.pending_from, true)}; saving replaces it.` : ''}</p>
+          ${e.pending_from ? html` <b>${money(e.pending_cents)}</b> is already set from ${fmtDate(e.pending_from, true)}. Another future date replaces it; today or earlier keeps it.` : ''}</p>
         <div class="fields">
           <div class="field"><label for="r-amount">New amount, ${isSplit(e) ? 'yearly' : (FREQ_LABELS[e.frequency] || '').toLowerCase()} ($)</label>
             <input id="r-amount" name="amount" inputmode="decimal" value="${moneyInput(e.pending_cents ?? billCents(e))}" required></div>
