@@ -2,6 +2,17 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v0.9.2 (15 October 2026)
+
+### Fixed
+- Removing a price or repayment change from a bill's or loan's history puts back how often it's paid, as well as the amount. Before, a bill changed from monthly to quarterly and then put back stayed quarterly at the old price, which threw out the deposits.
+- Restoring a downloaded backup keeps each bill's and loan's own history. Before, a restored bill could show another bill's old prices, and removing one of them changed its price.
+- Downloaded backups now include the price, repayment, balance and rate history, so restoring one brings the history back too. Older backup files still restore; their bills start a fresh history from their current amounts.
+- A future price change that's missing its amount or its date can no longer stop every page from loading.
+- Restoring the oldest of the server backups no longer deletes it.
+
+The app's tests now run before every release is published and on every pull request, so a release can't go out with failing tests.
+
 ## v0.9.1 (14 October 2026)
 
 ### Improved

@@ -5,6 +5,12 @@ const assert = require('node:assert/strict');
 const { openDatabase } = require('../src/db');
 const { createApp } = require('../src/server');
 
+// Pins the server's clock for tests whose data is tied to particular dates.
+// Only Date is faked, so timers and network calls carry on as normal.
+function onDay(t, day) {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(`${day}T12:00:00`) });
+}
+
 // Logs in with the default password and sets a new one, unless told not to.
 async function withServer(options, fn) {
   const app = createApp({ db: openDatabase(':memory:'), ...options });
@@ -118,7 +124,7 @@ test('backup round trip restores everything with the same numbers', () => withSe
   await call('POST', '/goals', { kind: 'debt', name: 'Car', target_cents: 100000 });
   const before = (await call('GET', '/cycle?offset=0')).body;
   const { body: backup } = await call('GET', '/export');
-  assert.equal(backup.format_version, 1);
+  assert.equal(backup.format_version, 2);
 
   await withServer({}, async (call2) => {
     const r = await call2('POST', '/import', backup);
@@ -278,7 +284,7 @@ test('money can be added to and taken from a goal', () => withServer({}, async (
   assert.equal((await call('POST', '/goals/999/adjust', { amount_cents: 100 })).status, 404);
 }));
 
-test('savings count towards deposits but not expenses, loans add repayments', () => withServer({}, async (call) => {
+test('savings count towards deposits but not expenses, loans add repayments', (t) => { onDay(t, '2026-10-15'); return withServer({}, async (call) => {
   await call('PUT', '/settings', { pay_anchor_date: '2026-10-06', rounding: 'exact' });
   const acct = (await call('POST', '/accounts', { name: 'Savings' })).body;
   await call('POST', '/incomes', { name: 'Pay', after_tax_cents: 300000 });
@@ -324,9 +330,9 @@ test('savings count towards deposits but not expenses, loans add repayments', ()
   await call('POST', '/import', backup);
   ({ body: d } = await call('GET', '/data'));
   assert.equal(d.loans[0].account_id, d.accounts[0].id);
-}));
+}); });
 
-test('monthly budget with fortnightly pay, yearly savings and budgeted loan repayments', () => withServer({}, async (call) => {
+test('monthly budget with fortnightly pay, yearly savings and budgeted loan repayments', (t) => { onDay(t, '2026-10-15'); return withServer({}, async (call) => {
   await call('PUT', '/settings', { pay_anchor_date: '2026-10-01', rounding: 'exact', pay_frequency: 'monthly' });
   const acct = (await call('POST', '/accounts', { name: 'Bills' })).body;
   const pay = (await call('POST', '/incomes', { name: 'Pay', after_tax_cents: 300000, frequency: 'fortnightly' })).body;
@@ -361,7 +367,7 @@ test('monthly budget with fortnightly pay, yearly savings and budgeted loan repa
   assert.equal(d.loans[0].budget_cents, 70000);
   assert.equal(d.expenses.find((e) => e.name === 'Holiday').yearly_cents, 120000);
   assert.equal(d.incomes[0].frequency, 'fortnightly');
-}));
+}); });
 
 test('no duplicate names, and payees keep their payment details', () => withServer({}, async (call) => {
   await call('POST', '/payees', { name: 'Telstra' });
@@ -632,6 +638,10 @@ test('backups: listed, made by hand, and restored without touching logins', asyn
       r = await call('GET', '/backups');
       assert.equal(r.body.backups.filter((b) => b.kind === 'restore').length, 5);
       assert.ok(r.body.backups.some((b) => b.name === manual));
+      // Restoring the oldest one kept doesn't tidy that one away.
+      const oldest = r.body.backups.filter((b) => b.kind === 'restore').at(-1).name;
+      assert.equal((await call('POST', '/backups/restore', { name: oldest })).status, 200);
+      assert.ok((await call('GET', '/backups')).body.backups.some((b) => b.name === oldest));
       // Only the main login can restore.
       await call('POST', '/logout');
       await call('POST', '/login', { password: 'sams-password' });
@@ -846,4 +856,95 @@ test('a loan balance update keeps the estimate it replaced, and a past loan can 
   assert.ok(bal.before_value > 2000000); // the estimate from the start date
   assert.deepEqual(h.filter((x) => x.field === 'interest_rate').map((x) => [x.on_date, x.value]).at(-1), ['2025-06-30', 6.5]);
   assert.equal((await call('POST', `/loans/${l.id}/balance`, { balance_cents: 1, balance_date: '2999-01-01' })).status, 400);
+}));
+
+test('a future price needs both its amount and its date, and a bad one never breaks the app', (t) => {
+  onDay(t, '2026-10-15');
+  return withServer({}, async (call) => {
+    const e = (await call('POST', '/expenses', { name: 'Insurance', amount_cents: 10000, frequency: 'monthly' })).body;
+    assert.equal((await call('PATCH', `/expenses/${e.id}`, { pending_from: '2026-01-01' })).status, 400);
+    assert.equal((await call('PATCH', `/expenses/${e.id}`, { pending_cents: 12000 })).status, 400);
+    assert.equal((await call('POST', '/expenses', { name: 'Odd', amount_cents: 1, frequency: 'monthly', pending_from: '2026-11-01' })).status, 400);
+    // A future price takes over on its day.
+    assert.equal((await call('PATCH', `/expenses/${e.id}`, { pending_cents: 12000, pending_from: '2026-10-20' })).status, 200);
+    assert.equal((await call('GET', '/data')).body.expenses[0].amount_cents, 10000);
+    t.mock.timers.setTime(Date.parse('2026-10-21T12:00:00'));
+    const now = (await call('GET', '/data')).body.expenses[0];
+    assert.deepEqual([now.amount_cents, now.pending_cents, now.pending_from], [12000, null, null]);
+    const h = (await call('GET', `/history/expense/${e.id}`)).body;
+    assert.deepEqual(h.map((x) => [x.on_date, x.value]).at(-1), ['2026-10-20', 12000]);
+    // A backup with half a future price restores the bill without it, and the app keeps working.
+    const { body: backup } = await call('GET', '/export');
+    backup.expenses[0].pending_from = '2026-01-01';
+    const r = await call('POST', '/import', backup);
+    assert.equal(r.status, 200);
+    assert.match(r.body.warnings.join(' '), /future price of expense "Insurance"/);
+    assert.equal((await call('GET', '/data')).status, 200);
+    assert.equal((await call('GET', '/cycle?offset=0')).status, 200);
+  });
+});
+
+test('removing the newest history entry puts back the amount and how often it was paid', () => withServer({}, async (call) => {
+  const e = (await call('POST', '/expenses', { name: 'Rates', amount_cents: 10000, frequency: 'monthly', day_of_month: 1 })).body;
+  await call('PATCH', `/expenses/${e.id}`, { amount_cents: 30000, frequency: 'quarterly' });
+  let h = (await call('GET', `/history/expense/${e.id}`)).body;
+  await call('DELETE', `/history/expense/${e.id}/${h.at(-1).id}`);
+  let row = (await call('GET', '/data')).body.expenses[0];
+  assert.deepEqual([row.amount_cents, row.frequency], [10000, 'monthly']);
+
+  const l = (await call('POST', '/loans', { name: 'Car', principal_cents: 3000000, interest_rate: 6, term_months: 60,
+    repayment_frequency: 'monthly', repayment_cents: 140000, start_date: '2025-01-01' })).body;
+  await call('PATCH', `/loans/${l.id}`, { repayment_cents: 65000, repayment_frequency: 'fortnightly' });
+  h = (await call('GET', `/history/loan/${l.id}`)).body.filter((x) => x.field === 'repayment_cents');
+  await call('DELETE', `/history/loan/${l.id}/${h.at(-1).id}`);
+  row = (await call('GET', '/data')).body.loans[0];
+  assert.deepEqual([row.repayment_cents, row.repayment_frequency], [140000, 'monthly']);
+}));
+
+test("restoring a backup keeps each bill's own history and never picks up another's", () => withServer({}, async (call) => {
+  const ins = (await call('POST', '/expenses', { name: 'Insurance', amount_cents: 150000, frequency: 'yearly' })).body;
+  await call('POST', `/expenses/${ins.id}/amount`, { amount_cents: 140000, from: '2025-01-01' });
+  await call('PATCH', `/expenses/${ins.id}`, { amount_cents: 160000 });
+  await call('POST', '/expenses', { name: 'Phone', amount_cents: 5000, frequency: 'monthly' });
+  await call('POST', '/loans', { name: 'Car', principal_cents: 2000000, interest_rate: 5, term_months: 60, repayment_cents: 40000, start_date: '2025-01-01' });
+  const { body: backup } = await call('GET', '/export');
+  const insHistory = (await call('GET', `/history/expense/${ins.id}`)).body.map((x) => [x.on_date, x.value]);
+  assert.ok(insHistory.length >= 3);
+
+  // Restoring a different file: its bills reuse the old ids but start with only their own amounts.
+  let r = await call('POST', '/import', { app: 'simple-budget', format_version: 1,
+    expenses: [{ id: 7, name: 'Netflix', amount_cents: 2299, frequency: 'monthly' }, { id: 8, name: 'Water', amount_cents: 9000, frequency: 'quarterly' }] });
+  assert.equal(r.status, 200);
+  let d = (await call('GET', '/data')).body;
+  for (const e of d.expenses) {
+    const h = (await call('GET', `/history/expense/${e.id}`)).body;
+    assert.deepEqual(h.map((x) => x.value), [e.amount_cents]);
+  }
+  // Loans weren't in that file, so their history stays.
+  assert.ok((await call('GET', `/history/loan/${d.loans[0].id}`)).body.length > 0);
+
+  // Restoring the real backup brings each bill's history back with it.
+  r = await call('POST', '/import', backup);
+  assert.deepEqual(r.body.warnings, []);
+  d = (await call('GET', '/data')).body;
+  const back = d.expenses.find((e) => e.name === 'Insurance');
+  assert.deepEqual((await call('GET', `/history/expense/${back.id}`)).body.map((x) => [x.on_date, x.value]), insHistory);
+  const phone = d.expenses.find((e) => e.name === 'Phone');
+  assert.deepEqual((await call('GET', `/history/expense/${phone.id}`)).body.map((x) => x.value), [5000]);
+}));
+
+test('history in a backup file is checked before it is restored', () => withServer({}, async (call) => {
+  const r = await call('POST', '/import', { app: 'simple-budget', format_version: 2,
+    expenses: [{ id: 1, name: 'Gym', amount_cents: 6000, frequency: 'monthly' }],
+    amount_history: [
+      { kind: 'expense', item_id: 1, field: 'amount_cents', on_date: '2025-01-01', value: 5000, frequency: 'monthly' },
+      { kind: 'expense', item_id: 1, field: 'amount_cents', on_date: '2025-06-01', value: 5500, frequency: 'sometimes' },
+      { kind: 'expense', item_id: 1, field: 'amount_cents', on_date: '2025-07-01', value: 1.5, frequency: 'monthly' },
+      { kind: 'expense', item_id: 9, field: 'amount_cents', on_date: '2025-07-01', value: 100, frequency: 'monthly' },
+      { kind: 'goal', item_id: 1, field: 'amount_cents', on_date: '2025-07-01', value: 100 },
+    ] });
+  assert.equal(r.status, 200);
+  assert.match(r.body.warnings.join(' '), /Left out 4 history entries/);
+  const id = (await call('GET', '/data')).body.expenses[0].id;
+  assert.deepEqual((await call('GET', `/history/expense/${id}`)).body.map((x) => [x.on_date, x.value]), [['2025-01-01', 5000]]);
 }));

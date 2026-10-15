@@ -34,14 +34,15 @@ function createBackups({ db, dataDir, keep = () => 5 }) {
   }
 
   // kind: 'update' (with the version about to be installed), 'restore' or 'manual'.
-  function create(kind, version) {
+  // `keepName` is never tidied away, so restoring the oldest backup doesn't delete it.
+  function create(kind, version, { keepName = null } = {}) {
     if (!dir) throw new BackupError(400, "This copy doesn't keep backups on the server.");
     fs.mkdirSync(dir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace('Z', '');
     const what = kind === 'manual' ? 'manual' : kind === 'restore' ? 'before-restore' : `before-v${String(version).replace(/[^\w.-]/g, '')}`;
     const name = `budget-${what}-${stamp}.db`;
     db.exec(`VACUUM INTO '${path.join(dir, name).replace(/'/g, "''")}'`);
-    for (const old of list().filter((b) => b.kind !== 'manual').slice(keep())) {
+    for (const old of list().filter((b) => b.kind !== 'manual' && b.name !== keepName).slice(keep())) {
       fs.rmSync(path.join(dir, old.name), { force: true });
     }
     return name;
@@ -69,7 +70,7 @@ function createBackups({ db, dataDir, keep = () => 5 }) {
       }
       if (!looksRight) throw new BackupError(400, "That file doesn't look like a Simple Budget backup.");
       if (theirs > ours) throw new BackupError(400, 'That backup was made by a newer version of Simple Budget. Update the app, then try again.');
-      saved = create('restore');
+      saved = create('restore', null, { keepName: name });
       db.exec('PRAGMA foreign_keys = OFF');
       db.prepare('ATTACH DATABASE ? AS r').run(work);
       try {

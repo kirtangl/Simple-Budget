@@ -142,6 +142,8 @@ docker compose up -d
 
 The test copy runs at `http://<your-server>:3001` with its own data. To try live data in it, download a backup from the live app and restore it into the test one.
 
+**Give a second copy its own address if you can.** Browsers share login cookies between everything on the same address, whatever the port. So while both copies are at the same IP or name (`<your-server>:3000` and `<your-server>:3001`), your browser sends the live copy's login to the test copy too. That's fine while the test copy only runs builds you trust. If it might run someone else's code, give it a different IP or name, for example a second IP address on the server or a separate name such as `budget-test.home.arpa` beside `budget.home.arpa`, so the two never see each other's logins. Most households only need the one copy.
+
 **Keep betas and branch builds off your real budget.** Your live copy should stay on full releases (`IMAGE_TAG=latest`, no `APP_CHANNEL`):
 
 - A beta or an unreleased branch hasn't been fully tested yet, and you rely on the live copy for real bills.

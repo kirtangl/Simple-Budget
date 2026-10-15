@@ -137,6 +137,13 @@ const RESOURCES = {
       if (row.yearly_cents != null) Object.assign(row, { amount_cents: row.yearly_cents, frequency: 'yearly' });
       return row;
     },
+    // Checked on the row as it will be saved. A future price with no amount (or no date)
+    // would have nothing to change to when its day came.
+    check: (row) => {
+      if ((row.pending_cents == null) !== (row.pending_from == null)) {
+        throw new BadRequest('A future price needs both an amount and a date.');
+      }
+    },
   },
   incomes: {
     fields: { name: T.text, payer: T.text, after_tax_cents: T.positiveCents, before_tax_cents: T.positiveCents,
@@ -279,16 +286,25 @@ function estimatedBalance(loan, date) {
   } catch { return null; }
 }
 
-// Future price changes come into effect once their day arrives.
+// Future price changes come into effect once their day arrives. This runs before every
+// request, so one bad row is logged and left alone rather than failing them all.
 function applyPendingAmounts(db) {
   const due = db.prepare('SELECT * FROM expenses WHERE pending_from IS NOT NULL AND pending_from <= ?').all(today());
   for (const row of due) {
-    const before = { ...row };
-    const change = row.yearly_cents != null ? { yearly_cents: row.pending_cents, amount_cents: row.pending_cents } : { amount_cents: row.pending_cents };
-    transaction(db, () => {
-      db.prepare(`UPDATE expenses SET ${Object.keys(change).map((k) => `${k} = ?`).join(', ')}, pending_cents = NULL, pending_from = NULL WHERE id = ?`).run(...Object.values(change), row.id);
-      logHistory(db, RESOURCES.expenses, before, { ...db.prepare('SELECT * FROM expenses WHERE id = ?').get(row.id) }, { date: row.pending_from });
-    });
+    try {
+      transaction(db, () => {
+        if (row.pending_cents == null) { // a date with no price: nothing to change to
+          db.prepare('UPDATE expenses SET pending_from = NULL WHERE id = ?').run(row.id);
+          return;
+        }
+        const before = { ...row };
+        const change = row.yearly_cents != null ? { yearly_cents: row.pending_cents, amount_cents: row.pending_cents } : { amount_cents: row.pending_cents };
+        db.prepare(`UPDATE expenses SET ${Object.keys(change).map((k) => `${k} = ?`).join(', ')}, pending_cents = NULL, pending_from = NULL WHERE id = ?`).run(...Object.values(change), row.id);
+        logHistory(db, RESOURCES.expenses, before, { ...db.prepare('SELECT * FROM expenses WHERE id = ?').get(row.id) }, { date: row.pending_from });
+      });
+    } catch (err) {
+      console.error(`Couldn't apply the new price for expense ${row.id}:`, err);
+    }
   }
 }
 
@@ -546,9 +562,12 @@ function createApi(db) {
       db.prepare('DELETE FROM amount_history WHERE id = ?').run(row.id);
       if (newest.id !== row.id) return;
       const now = latestHistory(db, kind, id, row.field);
+      // Put back everything the remaining entry recorded, including how often it was paid.
       const set = row.field === 'balance_cents' ? { balance_cents: now.value, balance_date: now.on_date }
-        : row.field === 'amount_cents' && item.yearly_cents != null ? { amount_cents: now.value, yearly_cents: now.value }
-          : { [row.field]: now.value };
+        : row.field === 'amount_cents' ? { amount_cents: now.value, ...(item.yearly_cents != null && { yearly_cents: now.value }),
+          ...(now.frequency && { frequency: now.frequency }) }
+          : row.field === 'repayment_cents' ? { repayment_cents: now.value, ...(now.frequency && { repayment_frequency: now.frequency }) }
+            : { [row.field]: now.value };
       db.prepare(`UPDATE ${table} SET ${Object.keys(set).map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...Object.values(set), id);
     });
     res.json(historyOf(db, kind, id));
@@ -674,6 +693,7 @@ function createApi(db) {
     router.post(`/${name}`, (req, res) => {
       const data = clean(resource, req.body, { partial: false });
       if (resource.owned && !(req.body && 'owner_id' in req.body) && req.login) data.owner_id = req.login.id;
+      if (resource.check) resource.check(data);
       checkUnique(data);
       const cols = Object.keys(data);
       const sql = `INSERT INTO ${name} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`;
@@ -686,9 +706,10 @@ function createApi(db) {
       const id = Number(req.params.id);
       if (!get(id)) return res.status(404).json({ error: 'Not found.' });
       const data = clean(resource, req.body, { partial: true });
+      const before = get(id);
+      if (resource.check) resource.check({ ...before, ...data });
       checkUnique(data, id);
       const cols = Object.keys(data);
-      const before = get(id);
       transaction(db, () => {
         if (cols.length) {
           db.prepare(`UPDATE ${name} SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`)
@@ -772,9 +793,10 @@ function createApi(db) {
 //   - A section missing from the file (e.g. a table added in a later version)
 //     is left as it is instead of being emptied.
 
-const BACKUP_FORMAT_VERSION = 1;
+const BACKUP_FORMAT_VERSION = 2;
 const BACKUP_UPGRADES = {
-  // 1: (data) => { ...change data to the version 2 shape...; return data; },
+  // 2 added amount_history: the price, repayment, balance and rate history of expenses and loans.
+  1: (data) => ({ ...data, amount_history: [] }),
 };
 const BACKUP_SECTIONS = ['accounts', 'payees', 'categories', 'incomes', 'expenses', 'goals', 'goal_groups', 'loans'];
 const BACKUP_SETTINGS = ['pay_anchor_date', 'pay_frequency', 'pay_custom_days', 'rounding', 'buffer_percent', 'held_basis'];
@@ -800,6 +822,9 @@ function exportBackup(db) {
     goals: all('goals'),
     goal_groups: all('goal_groups'),
     loans: all('loans'),
+    // Who made each change isn't kept: logins aren't part of a backup.
+    amount_history: db.prepare('SELECT kind, item_id, field, on_date, value, frequency, before_value FROM amount_history ORDER BY id').all()
+      .map((row) => ({ ...row })),
   };
 }
 
@@ -857,6 +882,42 @@ function importBackup(db, input) {
     counts[table] = n;
   };
 
+  // The file's history for the expenses and loans it restored, moved to their new ids.
+  // Anything restored without history starts with its current amounts, as a new item does.
+  const restoreHistory = () => {
+    const sections = { expense: 'expenses', loan: 'loans' };
+    const rows = Array.isArray(data.amount_history) ? data.amount_history : [];
+    let skipped = 0;
+    for (const h of rows) {
+      const table = h && sections[h.kind];
+      const fields = table && RESOURCES[table].history.fields;
+      const id = table && idMaps[table] && idMaps[table].get(Number(h.item_id));
+      if (!id) { if (!(table && !idMaps[table])) skipped += 1; continue; }
+      // How often it was paid is only kept for amounts and repayments, and must be one the app knows.
+      const often = { amount_cents: budget.FREQUENCIES, repayment_cents: budget.LOAN_FREQUENCIES }[h.field];
+      const ok = Object.hasOwn(fields, h.field) && budget.isValidDate(h.on_date)
+        && (h.field === 'interest_rate' ? Number.isFinite(h.value) : Number.isInteger(h.value) && h.value >= 0)
+        && (h.frequency == null || (often && Object.hasOwn(often, h.frequency)))
+        && (h.before_value == null || Number.isFinite(h.before_value));
+      if (!ok) { skipped += 1; continue; }
+      db.prepare('INSERT INTO amount_history (kind, item_id, field, on_date, value, frequency, before_value) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(h.kind, id, h.field, h.on_date, h.value, h.frequency ?? null, h.before_value ?? null);
+    }
+    if (skipped) warnings.push(`Left out ${skipped} history ${skipped === 1 ? 'entry' : 'entries'} that didn't match anything restored.`);
+    for (const [kind, table] of Object.entries(sections)) {
+      if (!idMaps[table]) continue;
+      for (const id of idMaps[table].values()) {
+        const row = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
+        for (const [field, pick] of Object.entries(RESOURCES[table].history.fields)) {
+          const [value, frequency, onDate] = pick(row);
+          if (value === null || value === undefined) continue;
+          if (db.prepare('SELECT 1 FROM amount_history WHERE kind = ? AND item_id = ? AND field = ?').get(kind, id, field)) continue;
+          addHistory(db, { kind, id, field, date: onDate || today(), value, frequency });
+        }
+      }
+    }
+  };
+
   transaction(db, () => {
     // Clear the sections the file contains. Expenses go first because they refer to the others.
     const present = BACKUP_SECTIONS.filter((s) => Array.isArray(data[s]));
@@ -864,6 +925,10 @@ function importBackup(db, input) {
       if (present.includes(section)) db.exec(`DELETE FROM ${section}`);
     }
     if (present.includes('categories')) db.exec('DELETE FROM subcategories');
+    // History belongs to the rows it describes. Restored rows get new ids, which could
+    // otherwise pick up the history of whatever row used that id before.
+    if (present.includes('expenses')) db.exec("DELETE FROM amount_history WHERE kind = 'expense'");
+    if (present.includes('loans')) db.exec("DELETE FROM amount_history WHERE kind = 'loan'");
 
     // Bank details saved before they were checked may not fit the rules. Keep the
     // row and drop just the bad detail, rather than losing the expenses that use it.
@@ -891,13 +956,22 @@ function importBackup(db, input) {
     restoreRows('loans', data.loans, 'loans', (l) => ({ ...l,
       account_id: ref('accounts', 'accounts', l.account_id), category_id: ref('categories', 'categories', l.category_id) }));
     restoreRows('goals', data.goals, 'goals', (g) => ({ ...g, account_id: ref('accounts', 'accounts', g.account_id) }));
-    restoreRows('expenses', data.expenses, 'expenses', (e) => ({
-      ...e,
-      account_id: ref('accounts', 'accounts', e.account_id),
-      payee_id: ref('payees', 'payees', e.payee_id),
-      category_id: ref('categories', 'categories', e.category_id),
-      subcategory_id: ref('subcategories', 'subcategories', e.subcategory_id),
-    }));
+    restoreRows('expenses', data.expenses, 'expenses', (e) => {
+      const out = {
+        ...e,
+        account_id: ref('accounts', 'accounts', e.account_id),
+        payee_id: ref('payees', 'payees', e.payee_id),
+        category_id: ref('categories', 'categories', e.category_id),
+        subcategory_id: ref('subcategories', 'subcategories', e.subcategory_id),
+      };
+      // A future price missing its amount or its date can't be used; keep the bill without it.
+      if ((out.pending_cents == null) !== (out.pending_from == null)) {
+        warnings.push(`Left out the future price of expense "${e.name}": it needs both an amount and a date.`);
+        out.pending_cents = null; out.pending_from = null;
+      }
+      return out;
+    });
+    restoreHistory();
 
     const s = data.settings && typeof data.settings === 'object' ? data.settings : {};
     if (budget.isValidDate(s.pay_anchor_date)) setSetting(db, 'pay_anchor_date', s.pay_anchor_date);
