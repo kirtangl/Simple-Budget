@@ -121,11 +121,39 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
   // Small bodies everywhere, except a backup being restored.
   const smallJson = express.json({ limit: '100kb' });
   app.use((req, res, next) => (req.path === '/api/import' ? next() : smallJson(req, res, next)));
-  app.use('/api/import', auth.require, express.json({ limit: '10mb' }));
+  // Restoring a backup file replaces everything, so it's main login only, like a server restore,
+  // and what was there is saved first when this copy keeps backups.
+  app.use('/api/import', auth.require, (req, res, next) => {
+    if (req.method !== 'POST') return next();
+    if (req.login.id !== 0) return res.status(403).json({ error: 'Only the main login can restore a backup.' });
+    next();
+  }, express.json({ limit: '10mb' }), (req, res, next) => {
+    if (req.method !== 'POST' || !dataDir) return next();
+    try { res.locals.safetyBackup = backups.create('restore'); } catch (err) { return next(err); }
+    next();
+  });
+
+  // Bank details shouldn't be left in a shared computer's browser cache after logging out.
+  app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
+  // Changes only come from the app's own pages. A page on another site, or on another
+  // app on the same server, can't press buttons here on a logged-in browser's behalf.
+  app.use('/api', (req, res, next) => {
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+    const site = req.get('sec-fetch-site');
+    if (site && site !== 'same-origin' && site !== 'none') return res.status(403).json({ error: "That request didn't come from this app." });
+    const origin = req.get('origin');
+    if (origin) {
+      let host = null;
+      try { host = new URL(origin).host; } catch { /* "null" or not an address */ }
+      if (host !== req.get('host')) return res.status(403).json({ error: "That request didn't come from this app." });
+    }
+    next(); // neither header: a script or the command line, which a browser page can't pretend to be
+  });
 
   app.get('/api/version', (req, res) => res.json({ version: VERSION, channel: appChannel(config.channel()) }));
   app.get('/api/session', auth.status);
-  app.post('/api/login', auth.login);
+  // Only the login form's JSON counts as a try, so a stray form post from another page can't lock anyone out.
+  app.post('/api/login', (req, res, next) => (req.is('application/json') ? next() : res.status(415).json({ error: 'Send the password as JSON.' })), auth.login);
   app.post('/api/logout', auth.logout);
   app.post('/api/password', auth.changePassword);
   app.get('/api/updates', auth.require, updates.get);
@@ -195,6 +223,11 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
   app.post('/api/backups', auth.require, backupError((req, res) => {
     const name = backups.create('manual');
     res.json({ ...backupsView(), created: name });
+  }));
+  app.delete('/api/backups/:name', auth.require, backupError((req, res) => {
+    if (req.login.id !== 0) return res.status(403).json({ error: 'Only the main login can delete a backup.' });
+    backups.remove(req.params.name);
+    res.json(backupsView());
   }));
   app.post('/api/backups/restore', auth.require, backupError((req, res) => {
     if (req.login.id !== 0) return res.status(403).json({ error: 'Only the main login can restore a backup.' });
@@ -277,10 +310,10 @@ if (require.main === module) {
   const server = app.listen(port, () => {
     console.log(`Simple Budget running on http://localhost:${port}`);
     if (getSetting(db, 'password_must_change') === '1') {
-      console.log('The password is still the default "simplebudget". You will be asked to change it when you log in.');
+      console.log('The main password is still the default "simplebudget". You will be asked to change it when you log in.');
     }
     if (process.env.APP_PASSWORD) {
-      console.warn('APP_PASSWORD is no longer used. The password is now set inside the app (Settings → General).');
+      console.warn('APP_PASSWORD is no longer used. The password is now set inside the app (Settings → Security).');
     }
   });
   // Docker asks the app to stop (an update, a restart, or `docker compose down`).

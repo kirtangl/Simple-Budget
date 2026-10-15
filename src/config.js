@@ -83,7 +83,9 @@ function createConfig(db) {
     trustProxy() {
       const v = get('trust_proxy');
       if (!v || v === 'false') return false;
-      if (v === 'true') return true;
+      // "true" trusts proxies on this machine or the home network only. Trusting any address
+      // would let a visitor pick their own address and dodge the login limit.
+      if (v === 'true') return 'loopback, linklocal, uniquelocal';
       return /^\d+$/.test(v) ? Number(v) : v;
     },
     secureCookies: () => get('secure_cookies') === 'true',

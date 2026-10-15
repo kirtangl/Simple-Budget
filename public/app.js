@@ -380,13 +380,15 @@
       <form class="card login" id="first-pw-form">
         <h1>Choose a password</h1>
         <p class="muted">You're using the default password. Pick a new one for your household to use from now on.</p>
-        <div class="field"><label for="np1">New password</label><input id="np1" name="password" ${PASSWORD_ATTRS} autocomplete="new-password" minlength="6" required>
-          <div class="hint">At least 6 characters.</div></div>
+        <div class="field"><label for="np1">New password</label><input id="np1" name="password" ${PASSWORD_ATTRS} autocomplete="new-password" minlength="8" required>
+          <div class="hint">At least 8 characters.</div></div>
         <div class="field"><label for="np2">Type it again</label><input id="np2" name="confirm" ${PASSWORD_ATTRS} autocomplete="new-password" required></div>
         <p class="error" id="pw-error"></p>
         <button class="primary" type="submit" style="width:100%">Save password</button>
+        <button type="button" class="linkish" id="first-pw-logout" style="width:100%;margin-top:10px">Log out</button>
       </form>`.s;
     const form = document.getElementById('first-pw-form');
+    document.getElementById('first-pw-logout').addEventListener('click', async () => { await api('POST', '/logout'); showLogin(); });
     form.querySelector('input').focus();
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -407,7 +409,7 @@
       body: html`
         <div class="field"><label for="cp0">Current password</label><input id="cp0" name="current" ${PASSWORD_ATTRS} autocomplete="current-password" required></div>
         <div class="field"><label for="cp1">New password</label><input id="cp1" name="password" ${PASSWORD_ATTRS} autocomplete="new-password" required>
-          <div class="hint">At least 6 characters. Other devices will need to log in again.</div></div>
+          <div class="hint">At least 8 characters. Other devices will need to log in again.</div></div>
         <div class="field"><label for="cp2">Type it again</label><input id="cp2" name="confirm" ${PASSWORD_ATTRS} autocomplete="new-password" required></div>`,
       saveLabel: 'Change password',
       onSave: async (form) => {
@@ -3140,9 +3142,10 @@
           as a file you can keep somewhere safe. Restoring a backup <b>replaces</b> what's in the app now. Your password isn't included or changed.</p>
         <div class="row">
           <a class="btn" href="api/export" download>Download backup</a>
-          <label class="btn" style="margin:0;font-size:inherit">Restore from backup…
-            <input type="file" accept="application/json,.json" data-input="restore" hidden></label>
+          ${state.me && state.me.main ? html`<label class="btn" style="margin:0;font-size:inherit">Restore from backup…
+            <input type="file" accept="application/json,.json" data-input="restore" hidden></label>` : ''}
         </div>
+        ${state.me && state.me.main ? '' : html`<p class="muted small">Only the main login can restore a backup.</p>`}
       </div>
       <div class="card">
         <h2>Password and logins</h2>
@@ -3381,13 +3384,14 @@ sudo docker compose up -d --build</pre>`;
     const label = (x) => (x.kind === 'manual' ? 'Manual backup' : x.kind === 'restore' ? 'Before a restore' : `Before v${x.version}`);
     return html`<section class="card upd-backups" id="upd-backups">
       <div class="upd-card-head"><div><h3>Backups</h3>
-        <p class="upd-card-sub">Made automatically before every update. Kept for the last ${b ? b.keep || 5 : 5}.</p></div>
+        <p class="upd-card-sub">Made automatically before every update. Kept for the last ${b ? b.keep || 5 : 5}. Up to 20 made by hand.</p></div>
         ${b && b.available ? html`<button class="linkish" data-action="backup-now">Back up now</button>` : ''}</div>
       ${!b ? html`<p class="muted small">Couldn't load the backups.</p>`
         : !b.available ? html`<p class="muted small">This copy doesn't keep backups on the server. Download one under <a href="#/settings/cycle">General</a> instead.</p>`
         : b.backups.length ? html`<ul class="upd-backup-list">${b.backups.map((x) => html`<li>
             <div><div class="upd-backup-name">${label(x)}</div><div class="upd-card-sub">${updWhen(x.created_at)} · ${fileSize(x.size)}</div></div>
-            ${main ? html`<button class="linkish" data-action="backup-restore" data-name="${x.name}" data-when="${fmtDate(localDate(new Date(x.created_at)), true)} at ${new Date(x.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}">Restore</button>` : ''}
+            ${main ? html`<div class="upd-backup-btns">${x.kind === 'manual' ? html`<button class="linkish danger-link" data-action="backup-delete" data-name="${x.name}">Delete</button>` : ''}
+              <button class="linkish" data-action="backup-restore" data-name="${x.name}" data-when="${fmtDate(localDate(new Date(x.created_at)), true)} at ${new Date(x.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}">Restore</button></div>` : ''}
           </li>`)}</ul>`
         : html`<p class="muted small upd-empty">No backups yet. One is made before every update.</p>`}
       ${b && b.available ? html`<div class="upd-folder mono">${b.folder}</div>` : ''}
@@ -3483,11 +3487,11 @@ sudo docker compose up -d --build</pre>`;
         <ul class="list logins-list">${list.map((l) => html`<li>
           <span class="login-dot" style="--c:${l.colour || 'var(--muted)'}" title="${l.colour ? 'Icon colour' : 'Icon colour: follows the theme'}"></span>
           <div class="grow"><div class="title">${l.name} ${l.you ? html`<span class="chip current">You</span>` : ''} ${l.main ? html`<span class="chip">Main</span>` : ''}</div>
-            <div class="meta">${l.main ? 'The original household password. It can be reset from the server if forgotten.' : 'Extra login'}</div></div>
+            <div class="meta">${l.main ? "Can't be removed, and only Main can change its password. It can be reset from the server if forgotten." : 'Extra login'}</div></div>
           <div class="row login-btns">
             <button type="button" class="small" data-action="rename-login" data-id="${l.id}">Edit</button>
             ${l.you ? html`<button type="button" class="small" data-action="change-password">Change password</button>`
-              : html`<button type="button" class="small" data-action="set-login-password" data-id="${l.id}" data-name="${l.name}">Set password</button>`}
+              : l.main ? '' : html`<button type="button" class="small" data-action="set-login-password" data-id="${l.id}" data-name="${l.name}">Set password</button>`}
             ${!l.main && !l.you ? html`<button type="button" class="small danger" data-action="remove-login" data-id="${l.id}" data-name="${l.name}">Remove</button>` : ''}
           </div></li>`)}</ul>
       </div>`;
@@ -3590,7 +3594,7 @@ sudo docker compose up -d --build</pre>`;
           <div class="field color-field"><label for="lg-colour">Icon colour</label><input id="lg-colour" type="color" name="colour" value="${/^#[0-9a-f]{6}$/i.test(start) ? start : '#9ca3af'}">
             <div class="hint">The account icon, top right. It stays the same whatever theme is picked.</div></div>` : ''}
         ${pw ? html`<div class="field"><label for="lg-pw">Password</label><input id="lg-pw" name="password" ${PASSWORD_ATTRS} autocomplete="new-password" required>
-          <div class="hint">At least 6 characters, and different from every other login's.</div></div>
+          <div class="hint">At least 8 characters, and different from every other login's.</div></div>
           <div class="field"><label for="lg-pw2">Type it again</label><input id="lg-pw2" name="confirm" ${PASSWORD_ATTRS} autocomplete="new-password" required></div>` : ''}
         </div>
         ${mode === 'new' ? html`<p class="hint">They log in with this password and pick their own theme. They'll see and can change the same budget as everyone else.</p>` : ''}`,
@@ -3995,6 +3999,13 @@ sudo docker compose up -d --build</pre>`;
       render();
       toast('Backup made');
     },
+    'backup-delete': async (el) => {
+      if (!confirm('Delete this backup? It can\'t be brought back.')) return;
+      el.disabled = true;
+      try { state.backups = await api('DELETE', `/backups/${encodeURIComponent(el.dataset.name)}`); } catch (err) { el.disabled = false; throw err; }
+      render();
+      toast('Backup deleted');
+    },
     'backup-restore': async (el) => {
       if (!confirm(`Restore your data to how it was on ${el.dataset.when}? Changes since then will be lost. Your current data is backed up first.\n\nLogins and passwords stay as they are now.`)) return;
       el.disabled = true; el.textContent = 'Restoring…';
@@ -4082,8 +4093,8 @@ sudo docker compose up -d --build</pre>`;
       state.offset = 0;
       render();
       const total = Object.values(result.counts).reduce((a, b) => a + b, 0);
-      toast(`Restored ${total} items`);
-      if (result.warnings.length) alert(`Restored, but some items were skipped:\n\n${result.warnings.join('\n')}`);
+      toast(result.backup ? `Restored ${total} items. What was there before is under Settings → Updates → Backups.` : `Restored ${total} items`);
+      if (result.warnings.length) alert(`Restored, with a few things to check:\n\n${result.warnings.join('\n')}`);
     } catch (err) {
       alert(`Restore failed: ${err.message}`);
     }

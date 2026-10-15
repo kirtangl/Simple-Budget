@@ -14,6 +14,8 @@ services:
     environment:
       # Your local timezone, so bills flip to "paid" on the right day.
       TZ: ${TZ:-Australia/Brisbane}
+      # The main login's starting password, for first setup and resets (see README).
+      START_PASSWORD: ${START_PASSWORD:-}
       # The rest can also be set in the app (Settings → Advanced); .env wins.
       SECURE_COOKIES: ${SECURE_COOKIES:-}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}

@@ -3,7 +3,7 @@
 // Copies of the whole database in <data>/backups, listed in Settings → Updates.
 //   budget-before-v0.7.1-<time>.db    made before an update (the newest 5, 10 or 20 kept,
 //   budget-before-restore-<time>.db   with the ones made before a restore)
-//   budget-manual-<time>.db           made with "Back up now" (kept until deleted by hand)
+//   budget-manual-<time>.db           made with "Back up now" (up to 20, kept until deleted)
 // Restoring one puts back the budget itself. Logins, passwords and the app's own
 // settings stay as they are now, so nobody is logged out or locked out.
 
@@ -12,6 +12,7 @@ const path = require('node:path');
 const { openDatabase, transaction } = require('./db');
 const { BACKUP_SETTINGS } = require('./api');
 
+const MAX_MANUAL = 20; // so a page pressing "Back up now" in a loop can't fill the disk
 const NAME = /^budget-(?:before-(v.+|restore)|manual)-(\d{4}-\d\d-\d\dT[\d-]+)\.db$/;
 
 class BackupError extends Error {
@@ -40,6 +41,9 @@ function createBackups({ db, dataDir, keep = () => 5 }) {
     fs.mkdirSync(dir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace('Z', '');
     const what = kind === 'manual' ? 'manual' : kind === 'restore' ? 'before-restore' : `before-v${String(version).replace(/[^\w.-]/g, '')}`;
+    if (kind === 'manual' && list().filter((b) => b.kind === 'manual').length >= MAX_MANUAL) {
+      throw new BackupError(409, `There are already ${MAX_MANUAL} backups made by hand. Delete an older one first.`);
+    }
     const name = `budget-${what}-${stamp}.db`;
     db.exec(`VACUUM INTO '${path.join(dir, name).replace(/'/g, "''")}'`);
     for (const old of list().filter((b) => b.kind !== 'manual' && b.name !== keepName).slice(keep())) {
@@ -100,7 +104,15 @@ function createBackups({ db, dataDir, keep = () => 5 }) {
     return { ok: true, restored: name, backup: saved };
   }
 
-  return { dir, list, create, restore };
+  // Deletes one listed backup, e.g. an old manual one.
+  function remove(name) {
+    if (!dir || typeof name !== 'string' || !NAME.test(name) || !list().some((b) => b.name === name)) {
+      throw new BackupError(404, "That backup isn't there any more.");
+    }
+    fs.rmSync(path.join(dir, name), { force: true });
+  }
+
+  return { dir, list, create, restore, remove };
 }
 
 module.exports = { createBackups, BackupError };

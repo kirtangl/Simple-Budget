@@ -2,6 +2,25 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v0.9.3 (15 October 2026)
+
+### Improved
+- Password guessing is properly limited: each guess is counted before it's checked, so sending lots at once no longer gets past the "5 tries, then wait a minute" limit. The current password box under **Change my password** has the same limit.
+- New passwords need at least 8 characters. Passwords you already have keep working.
+- The main login can't be removed, and only the main login can change its own password. Every login can still add, rename or remove the others, and set a new password for one that's been forgotten.
+- Restoring a downloaded backup is for the main login only, like restoring a server backup, and saves a copy of what was there first under Settings → Updates → **Backups**.
+- Restoring a backup file that only has some sections (for example just categories) keeps your other bills linked to them by name, and tells you about any it couldn't match.
+- Backups made with **Back up now** can be deleted, and up to 20 are kept.
+- The app refuses changes that don't come from its own pages, so another website or app on the same server can't press its buttons for you.
+- Your browser no longer keeps copies of the budget's data, so bank details don't stay on a shared computer after logging out.
+
+### Fixed
+- After a password reset, other logins carry on as normal. Before, everyone except the main login was stuck on "Choose a password".
+- The "Choose a password" screen has a **Log out** button.
+- After a password reset, the login page no longer shows the password. The reset command tells you instead.
+
+For whoever runs the server: you can now set the main login's starting password with `START_PASSWORD=...` in `.env` (at least 8 characters). It's used on first setup and when the password is reset, and it's never shown in the app. To use it, run `git pull` in the app's folder so `docker-compose.yml` passes it on, then `sudo docker compose up -d`. `TRUST_PROXY=true` now only trusts proxies on the home network.
+
 ## v0.9.2 (15 October 2026)
 
 ### Fixed
