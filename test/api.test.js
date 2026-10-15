@@ -1101,3 +1101,34 @@ test('paid this year counts each payment at the price it was then', (t) => { onD
   const d = (await call('GET', `/expenses/${e.id}/details`)).body;
   assert.deepEqual([d.paid_fytd.count, d.paid_fytd.cents], [4, 44000]); // Jul, Aug at $100; Sep, Oct at $120
 }); });
+
+test('every page gets the Overview deposit, leaving out a loan whose term has ended', (t) => { onDay(t, '2026-10-15'); return withServer({}, async (call) => {
+  await call('PUT', '/settings', { pay_anchor_date: '2026-10-06', rounding: 'exact' });
+  const acct = (await call('POST', '/accounts', { name: 'Bills' })).body;
+  await call('POST', '/expenses', { name: 'Rent', amount_cents: 100000, frequency: 'fortnightly', account_id: acct.id });
+  await call('POST', '/expenses', { name: 'Course', amount_cents: 5000, frequency: 'fortnightly', account_id: acct.id, start_date: '2026-10-16' });
+  await call('POST', '/incomes', { name: 'Pay', after_tax_cents: 300000, frequency: 'weekly' });
+  // A three-year car loan that ended in 2025 but was never ticked Paid off.
+  await call('POST', '/loans', { name: 'Car', principal_cents: 3000000, interest_rate: 7, start_date: '2022-06-01', term_months: 36, repayment_frequency: 'monthly', account_id: acct.id });
+  const d = (await call('GET', '/data')).body;
+  const c = (await call('GET', '/cycle')).body;
+  assert.equal(d.deposits[acct.id], c.accounts.find((a) => a.account_id === acct.id).deposit_cents);
+  assert.equal(d.deposits[acct.id], 105000); // rent, plus the course that starts part way through this cycle
+  assert.deepEqual([d.loans[0].in_deposit, d.loans[0].per_pay_cents], [false, 0]);
+  assert.equal(d.expenses.find((e) => e.name === 'Course').in_deposit, true);
+  assert.equal(d.incomes[0].per_cycle_cents, 600000);
+}); });
+
+test('paying extra on a loan is worked out on the server, from the same estimate', (t) => { onDay(t, '2026-10-15'); return withServer({}, async (call) => {
+  const l = (await call('POST', '/loans', { name: 'Home', principal_cents: 50000000, interest_rate: 6, start_date: '2024-01-15', term_months: 360, repayment_frequency: 'monthly' })).body;
+  const d = (await call('GET', `/loans/${l.id}/details`)).body;
+  assert.ok(d.rate_rise_cents > 0);
+  const none = (await call('GET', `/loans/${l.id}/extra?cents=0`)).body;
+  assert.equal(none.payoff_date, d.estimated_payoff_date);
+  const some = (await call('GET', `/loans/${l.id}/extra?cents=2500`)).body;
+  assert.equal(some.base.payoff_date, d.estimated_payoff_date);
+  assert.ok(some.payoff_date <= d.estimated_payoff_date); // even $25 never makes it later
+  assert.ok(some.interest_cents < some.base.interest_cents);
+  assert.match(some.points[0][0], /^\d{4}-\d{2}$/);
+  assert.equal((await call('GET', `/loans/${l.id}/extra?cents=-5`)).status, 400);
+}); });

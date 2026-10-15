@@ -265,6 +265,14 @@ function paidBetween(e, from, today, { anchor = from, payAnchor = anchor, payCyc
   return total;
 }
 
+// The rows a cycle's deposits put money aside for: active in the cycle, and still to
+// come out. A temporary bill whose last date has already passed (or never comes) isn't saved for.
+function fundedRows(rows, cycle, payAnchor = cycle.start) {
+  return rows.filter((e) => e.active && inRange(e, cycle) && (isSplit(e) || !e.end_date
+    || occurrences(e, cycle.start, e.end_date < addDays(cycle.start, 400) ? e.end_date : addDays(cycle.start, 400), payAnchor)
+      .some((d) => !(e.start_date && d < e.start_date))));
+}
+
 // Expenses can be ordinary bills (kind 'expense'), savings transfers ('saving')
 // or loan repayments ('loan'). All of them go into the account deposits.
 // Savings only count as expenses when show_as_expense is set.
@@ -290,11 +298,7 @@ function buildCycle({ anchor, payAnchor = anchor, index, today, expenses, accoun
   }
   bills.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.name.localeCompare(b.name)));
 
-  // Only put money aside for things that will still come out: a temporary bill
-  // whose last date has already passed (or never comes) isn't saved for.
-  const funded = active.filter((e) => isSplit(e) || !e.end_date
-    || occurrences(e, cycle.start, e.end_date < addDays(cycle.start, 400) ? e.end_date : addDays(cycle.start, 400), payAnchor)
-      .some((d) => !(e.start_date && d < e.start_date)));
+  const funded = fundedRows(active, cycle, payAnchor);
 
   const accountRows = accounts.map((a) => {
     const own = funded.filter((e) => e.account_id === a.id);
@@ -696,7 +700,7 @@ function loanEstimates(loan, today) {
 module.exports = {
   FREQUENCIES, CYCLE_DAYS, PAY_FREQUENCIES, DEFAULT_PAY_CYCLE, payCycle, paysPerYear, monthlyStart,
   addDays, daysBetween, isValidDate, cycleIndexFor, cycleBounds,
-  perPayCents, fortnightlyCents, occurrences, INCOME_FREQUENCIES, incomePerCycle, isSplit, perCycleCents, inRange, nextDate, movedFrom, spreadsEachCycle, yearStart, paidBetween,
+  perPayCents, fortnightlyCents, occurrences, INCOME_FREQUENCIES, incomePerCycle, isSplit, perCycleCents, inRange, nextDate, movedFrom, spreadsEachCycle, yearStart, paidBetween, fundedRows,
   LOAN_FREQUENCIES, amortisedRepayment, maxPrincipal, addMonths, loanAsExpense, scheduleAsExpense,
   scheduledRepayment, budgetedRepayment, nextDue, loanEndDate, calculatedRepayment, minimumBalance,
   loanRepayment, simulateLoan, loanEstimates, loanTimeline, loanHistory, ROUNDING, DEFAULT_DEPOSIT_RULES, roundUp, depositCents, buildCycle,

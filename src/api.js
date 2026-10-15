@@ -80,7 +80,7 @@ const T = {
 };
 
 const LABELS = {
-  review_date: 'Review date', review_snooze: 'Reminder date', from: 'Date', end_date: 'End date',
+  review_date: 'Review date', review_snooze: 'Reminder date', from: 'Date', end_date: 'End date', extra: 'Extra',
   name: 'Name', amount_cents: 'Amount', frequency: 'Frequency', after_tax_cents: 'After tax amount',
   category_id: 'Category', kind: 'Type', bsb: 'BSB', account_number: 'Account number',
   start_date: 'Start date', target_date: 'Target date', interest_rate: 'Interest rate', term_months: 'Term (months)',
@@ -375,20 +375,33 @@ function createApi(db) {
   // A price change dated today or earlier takes over before anything is worked out.
   router.use((req, res, next) => { applyPendingAmounts(db); next(); });
 
-  // Everything the app needs to draw its lists, in one request.
+  // Everything the app needs to draw its lists, in one request. The deposits, and which rows
+  // they cover (in_deposit), are the Overview's own numbers, so every page shows the same.
   router.get('/data', (req, res) => {
     const pc = payCycleOf(db);
+    const now = today();
+    const anchor = payAnchor(db);
+    const accounts = list('accounts');
+    const expenses = list('expenses');
+    const loans = loansWithEstimates();
+    const loanRows = loans.map((l) => budget.loanAsExpense(l, anchor));
+    const incomes = list('incomes');
+    const cycle = budget.buildCycle({ anchor, index: budget.cycleIndexFor(anchor, now, pc), today: now, expenses: [...expenses, ...loanRows],
+      accounts, incomes, rules: depositRules(db), payCycle: pc });
+    const funded = new Set(budget.fundedRows([...expenses, ...loanRows], cycle.cycle, anchor));
     res.json({
       settings: settings(),
-      accounts: list('accounts'),
+      accounts,
       payees: list('payees'),
       categories: categoriesWithSubs(),
-      expenses: list('expenses').map((e) => ({ ...e, next_date: budget.nextDate(e, today(), payAnchor(db)), per_pay_cents: Math.round(budget.perCycleCents(e, pc)), per_pay_exact_cents: budget.perCycleCents(e, pc) })),
-      loans: loansWithEstimates().map((l) => {
-        const row = budget.loanAsExpense(l, payAnchor(db));
-        return { ...l, per_pay_cents: row.active ? Math.round(budget.perPayCents(row, pc)) : 0, per_pay_exact_cents: row.active ? budget.perPayCents(row, pc) : 0 };
+      expenses: expenses.map((e) => ({ ...e, next_date: budget.nextDate(e, now, anchor), in_deposit: funded.has(e),
+        per_pay_cents: Math.round(budget.perCycleCents(e, pc)), per_pay_exact_cents: budget.perCycleCents(e, pc) })),
+      loans: loans.map((l, i) => {
+        const per = funded.has(loanRows[i]) ? budget.perPayCents(loanRows[i], pc) : 0;
+        return { ...l, in_deposit: funded.has(loanRows[i]), per_pay_cents: Math.round(per), per_pay_exact_cents: per };
       }),
-      incomes: list('incomes'),
+      incomes: incomes.map((i) => ({ ...i, per_cycle_cents: Math.round(budget.incomePerCycle(i, pc)) })),
+      deposits: Object.fromEntries(cycle.accounts.map((a) => [a.account_id, a.deposit_cents])),
       goals: list('goals'),
       goal_groups: list('goal_groups'),
     });
@@ -601,13 +614,41 @@ function createApi(db) {
       ? budget.simulateLoan({ ...l, balance_cents: null, balance_date: null }, null,
         (date, balance) => planPoints.push([budget.addDays(date, -1).slice(0, 7), Math.round(Math.max(0, balance))]))
       : null;
+    // What a 0.25% rate rise would add to the bank's monthly repayment over the months left.
+    const monthsLeft = est.end_date ? (Number(est.end_date.slice(0, 4)) - Number(now.slice(0, 4))) * 12 + Number(est.end_date.slice(5, 7)) - Number(now.slice(5, 7)) : null;
+    const rateRise = monthsLeft != null && est.estimated_balance_cents > 0 && l.interest_rate != null
+      ? Math.round(budget.amortisedRepayment(est.estimated_balance_cents, Number(l.interest_rate) + 0.25, 12, Math.max(1, monthsLeft))
+        - budget.amortisedRepayment(est.estimated_balance_cents, Number(l.interest_rate), 12, Math.max(1, monthsLeft))) : null;
     // Interest charged since 1 July (whole months so far).
     const fy = budget.yearStart(now, 'financial').slice(0, 7);
     const interestFy = timeline ? timeline.points.filter((p) => p.month >= fy && p.month < now.slice(0, 7)).reduce((t, p) => t + p.interest_cents, 0) : null;
     res.json({ ...l, ...est, timeline,
       bank: bank ? { points: bankPoints, interest_cents: bank.interest_cents, payoff_date: bank.paid_off ? bank.date : null } : null,
       plan: plan ? { points: planPoints, payoff_date: plan.paid_off ? plan.date : null } : null,
-      interest_fy_cents: interestFy, history: historyOf(db, 'loan', l.id) });
+      interest_fy_cents: interestFy, rate_rise_cents: rateRise, history: historyOf(db, 'loan', l.id) });
+  });
+
+  // "What if I pay extra?": the loan from today's estimated balance with `cents` more on each
+  // budgeted repayment, worked out the same way as every other loan estimate.
+  router.get('/loans/:id/extra', (req, res) => {
+    const loan = db.prepare('SELECT * FROM loans WHERE id = ?').get(Number(req.params.id));
+    if (!loan) return res.status(404).json({ error: 'Not found.' });
+    const extra = labelled('extra', T.range(0, 100000000), req.query.cents ?? 0) || 0;
+    const now = today();
+    const l = { ...loan };
+    const est = budget.loanEstimates(l, now);
+    if (!(est.estimated_balance_cents > 0)) return res.json({ extra_cents: extra, points: [], paid_off: true, payoff_date: null, interest_cents: 0 });
+    const b = budget.budgetedRepayment(l);
+    const run = (more) => {
+      const points = [];
+      // With nothing extra it's exactly the pay-off estimate shown everywhere else.
+      const repay = more ? { budget_cents: b.amount_cents + more, budget_frequency: b.frequency, budget_date: b.date } : {};
+      const r = budget.simulateLoan({ ...l, balance_cents: est.estimated_balance_cents, balance_date: now, ...repay },
+      null, (date, balance) => points.push([budget.addDays(date, -1).slice(0, 7), Math.round(Math.max(0, balance))]));
+      return { points, paid_off: r.paid_off, payoff_date: r.paid_off ? r.date : null, interest_cents: r.interest_cents };
+    };
+    const base = run(0);
+    res.json({ extra_cents: extra, ...run(extra), base: { payoff_date: base.payoff_date, interest_cents: base.interest_cents } });
   });
 
   router.get('/loan-calculator', (req, res) => {
