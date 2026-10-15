@@ -38,7 +38,7 @@ function createBackups({ db, dataDir, keep = () => 5 }) {
   // `keepName` is never tidied away, so restoring the oldest backup doesn't delete it.
   function create(kind, version, { keepName = null } = {}) {
     if (!dir) throw new BackupError(400, "This copy doesn't keep backups on the server.");
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace('Z', '');
     const what = kind === 'manual' ? 'manual' : kind === 'restore' ? 'before-restore' : `before-v${String(version).replace(/[^\w.-]/g, '')}`;
     if (kind === 'manual' && list().filter((b) => b.kind === 'manual').length >= MAX_MANUAL) {
@@ -46,6 +46,8 @@ function createBackups({ db, dataDir, keep = () => 5 }) {
     }
     const name = `budget-${what}-${stamp}.db`;
     db.exec(`VACUUM INTO '${path.join(dir, name).replace(/'/g, "''")}'`);
+    // A backup holds the logins' password hashes, so only the app can read it.
+    try { fs.chmodSync(path.join(dir, name), 0o600); } catch { /* e.g. a share that has no file permissions */ }
     for (const old of list().filter((b) => b.kind !== 'manual' && b.name !== keepName).slice(keep())) {
       fs.rmSync(path.join(dir, old.name), { force: true });
     }

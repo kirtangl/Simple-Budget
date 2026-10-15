@@ -8,7 +8,8 @@ const { createApp, hostAllowed } = require('../src/server');
 const { createUpdates } = require('../src/updates');
 
 async function withServer(fn) {
-  const app = createApp({ db: openDatabase(':memory:') });
+  const db = openDatabase(':memory:');
+  const app = createApp({ db });
   const server = app.listen(0);
   await new Promise((r) => server.once('listening', r));
   const port = server.address().port;
@@ -31,7 +32,7 @@ async function withServer(fn) {
   try {
     await call('POST', '/login', { password: 'simplebudget' });
     await call('POST', '/password', { password: 'household-pw' });
-    await fn(call, { withHost, logout: () => { cookie = ''; } });
+    await fn(call, { withHost, db, logout: () => { cookie = ''; }, getCookie: () => cookie, useCookie: (c) => { cookie = c; } });
   } finally { server.close(); }
 }
 
@@ -191,3 +192,88 @@ const advancedTest = () => withServer(async (call, { withHost, logout }) => {
   assert.equal((await call('GET', '/advanced')).body.can_edit, false);
   assert.equal((await call('PUT', '/advanced', { app_channel: '' })).status, 403);
 });
+
+// A cookie signed the way the server signs them, for a login whose hash is known.
+function forgeCookie(db, name, id, expires, hash, gen = 0) {
+  const crypto = require('node:crypto');
+  const { getSetting } = require('../src/db');
+  const value = `${id}.${expires}`;
+  const sig = crypto.createHmac('sha256', `${getSetting(db, 'session_secret')}:${hash}${gen ? `:${gen}` : ''}`).update(value).digest('base64url');
+  return `${name}=${value}.${sig}`;
+}
+
+test('log out everywhere ends other devices, and keeps this one logged in', () => withServer(async (call, { getCookie, useCookie, logout }) => {
+  const phone = getCookie();
+  const laptop = getCookie();
+  useCookie(laptop);
+  const r = await call('POST', '/logins/0/logout-everywhere');
+  assert.equal(r.status, 200);
+  assert.notEqual(getCookie(), laptop, 'this device gets a fresh cookie');
+  assert.equal((await call('GET', '/me')).status, 200, 'this device stays logged in');
+  useCookie(phone);
+  assert.equal((await call('GET', '/me')).status, 401, 'the old cookie no longer works');
+  logout();
+  assert.equal((await call('POST', '/login', { password: 'household-pw' })).status, 200, 'logging in again works');
+  assert.equal((await call('GET', '/me')).status, 200);
+}));
+
+test("log out everywhere on someone else's login ends all of theirs", () => withServer(async (call, { getCookie, useCookie, logout }) => {
+  const mainCookie = getCookie();
+  const added = await call('POST', '/logins', { name: 'Sam', password: 'sam-password-1' });
+  assert.equal(added.status, 201);
+  logout();
+  await call('POST', '/login', { password: 'sam-password-1' });
+  const sam = getCookie();
+  assert.equal((await call('GET', '/me')).body.name, 'Sam');
+  useCookie(mainCookie);
+  assert.equal((await call('POST', `/logins/${added.body.id}/logout-everywhere`)).status, 200);
+  assert.equal(getCookie(), mainCookie, "Main's own cookie is left alone");
+  assert.equal((await call('GET', '/me')).status, 200);
+  useCookie(sam);
+  assert.equal((await call('GET', '/me')).status, 401);
+  assert.equal((await call('POST', '/logins/999/logout-everywhere')).status, 401, 'needs a login');
+  useCookie(mainCookie);
+  assert.equal((await call('POST', '/logins/999/logout-everywhere')).status, 404);
+}));
+
+test('logins last 30 days and are renewed while in use', () => withServer(async (call, { db, getCookie, useCookie }) => {
+  const { getSetting } = require('../src/db');
+  const r = await call('POST', '/password', { current: 'household-pw', password: 'household-pw-2' });
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('set-cookie'), /Max-Age=2592000/);
+  const name = getCookie().split('=')[0];
+  const hash = getSetting(db, 'password_hash');
+  const day = 24 * 60 * 60 * 1000;
+  // A cookie set today isn't sent again on every request.
+  assert.equal((await call('GET', '/me')).headers.get('set-cookie'), null);
+  // One a few days old is renewed for another 30 days.
+  useCookie(forgeCookie(db, name, 0, Date.now() + 25 * day, hash));
+  const renewed = await call('GET', '/me');
+  assert.equal(renewed.status, 200);
+  assert.match(renewed.headers.get('set-cookie') || '', /Max-Age=2592000/);
+  // A year-long cookie from before 0.9.5 still works, and is swapped for a 30-day one.
+  useCookie(forgeCookie(db, name, 0, Date.now() + 300 * day, hash));
+  const old = await call('GET', '/me');
+  assert.equal(old.status, 200);
+  const expires = Number(getCookie().split('=')[1].split('.')[1]);
+  assert.ok(expires <= Date.now() + 30 * day + 1000);
+  // An expired one doesn't work.
+  useCookie(forgeCookie(db, name, 0, Date.now() - 1000, hash));
+  assert.equal((await call('GET', '/me')).status, 401);
+}));
+
+test('passwords are stored with stronger hashing, and older ones are upgraded at login', () => withServer(async (call, { db, logout }) => {
+  const crypto = require('node:crypto');
+  const { getSetting, setSetting } = require('../src/db');
+  assert.match(getSetting(db, 'password_hash'), /^scrypt\$14\.8\.5\$/);
+  // A password saved by 0.9.4 or earlier.
+  const salt = crypto.randomBytes(16).toString('base64url');
+  setSetting(db, 'password_hash', `scrypt$${salt}$${crypto.scryptSync('household-pw', salt, 64).toString('base64url')}`);
+  logout();
+  assert.equal((await call('POST', '/login', { password: 'wrong-password' })).status, 401);
+  assert.equal((await call('POST', '/login', { password: 'household-pw' })).status, 200);
+  assert.match(getSetting(db, 'password_hash'), /^scrypt\$14\.8\.5\$/, 'upgraded');
+  assert.equal((await call('GET', '/me')).status, 200, 'the new cookie matches the new hash');
+  logout();
+  assert.equal((await call('POST', '/login', { password: 'household-pw' })).status, 200, 'still logs in after the upgrade');
+}));

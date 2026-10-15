@@ -623,6 +623,17 @@ test('updates: the releases offered follow IMAGE_TAG, so Update now can install 
   assert.deepEqual([u.view().track, u.view().latest.version], ['beta', '1.1.0-beta.1']);
 });
 
+test('Settings → Updates warns while the updater still has the starting password', () => {
+  const { createUpdates } = require('../src/updates');
+  const make = (url, token) => createUpdates({ version: '0.9.0', settings: () => ({ channel: '', repo: 'x/y', token: '' }), updater: () => ({ url, token, imageTag: 'latest' }) });
+  assert.equal(make('http://updater:8080', 'simple-budget-updater').view().default_token, true);
+  assert.equal(make('http://updater:8080', '').view().default_token, true);
+  assert.equal(make('http://updater:8080', 'a-long-random-token').view().default_token, false);
+  assert.equal(make('', '').view().default_token, false, 'no updater, nothing to warn about');
+  const ignored = createUpdates({ version: '0.9.0', settings: () => ({ channel: '', repo: 'x/y', token: '' }), updater: () => ({ url: 'http://updater:8080', token: '' }), prefs: () => ({ tokenIgnored: true }) });
+  assert.deepEqual([ignored.view().default_token, ignored.view().token_ignored], [true, true], 'ignoring keeps the warning, only marked');
+});
+
 test('backups: listed, made by hand, and restored without touching logins', async () => {
   const fs = require('node:fs');
   const os = require('node:os');
@@ -640,6 +651,8 @@ test('backups: listed, made by hand, and restored without touching logins', asyn
       assert.equal(r.body.backups[0].kind, 'manual');
       assert.ok(r.body.backups[0].size > 0);
       const manual = r.body.created;
+      // Only the app can read a backup: it holds the password hashes.
+      assert.equal(fs.statSync(path.join(dataDir, 'backups', manual)).mode & 0o777, 0o600);
       // Changes after the backup, including a new login, which a restore leaves alone.
       await call('POST', '/payees', { name: 'After' });
       await call('PUT', '/settings', { buffer_percent: 10 });
@@ -676,8 +689,7 @@ test('updates: preferences, versions behind, and the welcome after an update', a
     { tag_name: 'v99.2.0-beta.1', name: 'b', body: '', html_url: 'https://github.com/x/y', draft: false, prerelease: true },
     { tag_name: 'v99.0.0', name: '99.0', body: 'Fixed: one', html_url: 'https://github.com/x/y', draft: false, prerelease: false },
   ];
-  let calls = 0;
-  const fetchImpl = async () => { calls += 1; return { ok: true, status: 200, json: async () => releases }; };
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => releases });
   const url = process.env.UPDATER_URL;
   delete process.env.UPDATER_URL;
   try {
@@ -694,6 +706,9 @@ test('updates: preferences, versions behind, and the welcome after an update', a
       r = await call('PUT', '/updates/prefs', { auto_check: false });
       assert.equal(r.body.auto_check, false);
       assert.equal((await call('PUT', '/updates/prefs', { beta: 'yes' })).status, 400);
+      assert.equal((await call('PUT', '/updates/prefs', { token_ignored: true })).body.token_ignored, true);
+      assert.equal((await call('PUT', '/updates/prefs', { token_ignored: false })).body.token_ignored, false);
+      assert.equal((await call('PUT', '/updates/prefs', { token_ignored: 'yes' })).status, 400);
     });
     // With the updater, IMAGE_TAG decides and the switch is locked.
     process.env.UPDATER_URL = 'http://updater:8080';
@@ -728,7 +743,7 @@ test('updates: a release whose image is still being built is shown, but not inst
   const { createUpdates } = require('../src/updates');
   let built = false;
   const asked = [];
-  const fetchImpl = async (url, opts = {}) => {
+  const fetchImpl = async (url) => {
     asked.push(url);
     if (url.startsWith('https://ghcr.io/token')) return { ok: true, status: 200, json: async () => ({ token: 'anon' }) };
     if (url.startsWith('https://ghcr.io/v2/')) return { ok: built, status: built ? 200 : 404 };

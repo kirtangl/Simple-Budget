@@ -2325,7 +2325,6 @@
     const sch = l.scheduled;
     const bud = l.budgeted;
     const a = account(l.account_id);
-    const today = state.data.settings.today;
     const off = payoffVsEnd(l);
     const unit = (r) => html` <span class="unit">/ ${FREQ_UNIT[r.frequency]}</span>`;
     const cell = (label, value, sub, cls = '') => html`<div class="lc-cell"><div class="lc-label">${label}</div><div class="lc-value num">${value}</div><div class="lc-sub ${cls}">${sub}</div></div>`;
@@ -2548,7 +2547,6 @@
     const cell = (label, value, sub, color = '') => html`<div class="lc-cell"><div class="lc-label">${label}</div><div class="lc-value big num" style="${color ? `color:${color}` : ''}">${value}</div><div class="lc-sub">${sub}</div></div>`;
     const ppy = state.data.settings.pays_per_year;
     const freqYear = { weekly: 52, fortnightly: 26, monthly: 12 }[freq];
-    const word = cycleWord();
     // Room under the limit each pay, after what's already committed.
     const room = r ? Math.round(((r.income_per_year_cents * r.limit_percent) / 100 - r.committed_per_year_cents) / ppy) : null;
     if (!r) {
@@ -2783,7 +2781,7 @@
     return html`
       <div class="page-head"><h1>Settings</h1></div>
       <nav class="sec-tabs settings-tabs" aria-label="Settings">${SETTINGS_GROUPS.map((keys, i) => html`${i ? html`<span class="st-sep" aria-hidden="true"></span>` : ''}<div class="st-group st-${keys.length}">
-        ${keys.map((k) => html`<a href="#/settings/${k}" ${k === tab ? raw('aria-current="page"') : ''} class="${k === tab ? 'active' : ''} ${k === 'advanced' ? 'st-advanced' : ''}">${SETTINGS_TABS.find(([x]) => x === k)[1]}${k === 'updates' ? html`<span class="st-dot" ${state.updates && state.updates.available ? '' : raw('hidden')}></span>` : ''}</a>`)}</div>`)}</nav>
+        ${keys.map((k) => html`<a href="#/settings/${k}" ${k === tab ? raw('aria-current="page"') : ''} class="${k === tab ? 'active' : ''} ${k === 'advanced' ? 'st-advanced' : ''}">${SETTINGS_TABS.find(([x]) => x === k)[1]}${k === 'updates' ? updTabDot() : ''}</a>`)}</div>`)}</nav>
       ${body}`;
   }
 
@@ -3140,7 +3138,10 @@
     const item = document.getElementById('menu-update');
     item.hidden = !on;
     if (on) item.textContent = `Update to v${u.latest.version}`;
-    for (const dot of document.querySelectorAll('.st-dot')) dot.hidden = !on;
+    // Red until the updater has its own password (only the main login runs the server).
+    const fix = needsToken(u);
+    for (const dot of document.querySelectorAll('.st-dot')) { dot.hidden = !on && !fix; dot.classList.toggle('st-dot-warn', fix); }
+    document.getElementById('settings-dot').hidden = !fix;
   }
 
   // Just enough Markdown for release notes: headings, bullets, bold and code.
@@ -3193,12 +3194,53 @@
     if (!u) return html`<div class="card"><p class="muted">Couldn't load update details.</p></div>`;
     const main = Boolean(state.me && state.me.main);
     return html`
+      ${u.default_token ? updTokenCard() : ''}
       ${updMainCard(u, main)}
       <div class="upd-grid">
         ${updNotesCard(u)}
         <div class="upd-side">${updBackupsCard(main)}${updPrefsCard(u, main)}</div>
       </div>`;
   }
+
+  // The Updates tab's dot: brand-coloured for a new version, red while the updater needs its own password.
+  function updTabDot() {
+    const u = state.updates;
+    const fix = needsToken(u);
+    return html`<span class="st-dot ${fix ? 'st-dot-warn' : ''}" ${(u && u.available) || fix ? '' : raw('hidden')}></span>`;
+  }
+
+  // Red dots for the updater password: main login only (it runs the server), and not once ignored.
+  const needsToken = (u) => Boolean(u && u.default_token && !u.token_ignored && state.me && state.me.main);
+
+  // This copy still uses the updater password every copy starts with. Ignoring it folds
+  // the card to its heading (+ opens it again) and hides the red dots.
+  function updTokenCard() {
+    const u = state.updates;
+    const main = Boolean(state.me && state.me.main);
+    const open = !u.token_ignored || state.tokenOpen;
+    const head = u.token_ignored
+      ? html`<button type="button" class="upd-token-head" data-action="toggle-token-card" aria-expanded="${open ? 'true' : 'false'}">
+          <h2>Give the updater its own password</h2><span class="upd-token-plus" aria-hidden="true">${open ? '−' : '+'}</span></button>`
+      : html`<h2>Give the updater its own password</h2>`;
+    if (!open) return html`<div class="card adv-warning upd-token folded">${head}</div>`;
+    return html`<div class="card adv-warning upd-token">
+      ${head}
+      <p class="small">This copy's updater still has the password every copy of Simple Budget starts with. The updater can restart the app
+        and install new versions, and its password is how it knows a request really came from your copy. Its port is never opened, so
+        only something already running on the server could use it.</p>
+      <ul class="small upd-risk">
+        <li><b>Only you on your home network:</b> low risk, but still recommended.</li>
+        <li><b>Others use your network or the server</b> (housemates, guests, other apps or containers on it): higher risk. Change it now.</li>
+        <li><b>Opened to the internet</b> (port forwarding): strongly advised against, whatever this password. Use a VPN such as WireGuard or Tailscale to reach it from outside instead.</li>
+      </ul>
+      <p class="small">In the app's folder on the server, run these two commands once. Updating works the same way afterwards.</p>
+      <pre class="upd-cmd">${TOKEN_CMD}</pre>
+      <div class="row"><button data-action="copy-token-cmd">Copy commands</button>
+        ${main ? html`<button data-action="ignore-token" data-on="${u.token_ignored ? '0' : '1'}">${u.token_ignored ? 'Stop ignoring' : 'Ignore'}</button>` : ''}</div>
+    </div>`;
+  }
+  // printf starts a new line first, in case .env doesn't end with one.
+  const TOKEN_CMD = 'printf \'\\nUPDATER_TOKEN=%s\\n\' "$(openssl rand -hex 24)" | sudo tee -a .env\nsudo docker compose up -d';
 
   // The one card at the top, which changes with what's happening.
   function updMainCard(u, main) {
@@ -3446,8 +3488,10 @@ sudo docker compose up -d --build</pre>`;
     return html`
       <div class="card">
         <h2>Your password</h2>
-        <p class="muted small">You're logged in as <b>${state.me ? state.me.name : ''}</b>. Changing your password logs this login out on your other devices.</p>
-        <div class="row"><button data-action="change-password">Change my password</button><button data-action="logout">Log out on this device</button></div>
+        <p class="muted small">You're logged in as <b>${state.me ? state.me.name : ''}</b>. Changing your password logs this login out on your other devices.
+          Logins last 30 days from when the device was last used.</p>
+        <div class="row"><button data-action="change-password">Change my password</button><button data-action="logout">Log out on this device</button>
+          ${state.me ? html`<button data-action="logout-everywhere" data-id="${state.me.id}" data-you="1">Log out my other devices</button>` : ''}</div>
       </div>
       <div class="card">
         <div class="card-head"><div><h2>Logins</h2>
@@ -3462,6 +3506,7 @@ sudo docker compose up -d --build</pre>`;
             <button type="button" class="small" data-action="rename-login" data-id="${l.id}">Edit</button>
             ${l.you ? html`<button type="button" class="small" data-action="change-password">Change password</button>`
               : l.main ? '' : html`<button type="button" class="small" data-action="set-login-password" data-id="${l.id}" data-name="${l.name}">Set password</button>`}
+            ${l.you ? '' : html`<button type="button" class="small" data-action="logout-everywhere" data-id="${l.id}" data-name="${l.name}">Log out everywhere</button>`}
             ${!l.main && !l.you ? html`<button type="button" class="small danger" data-action="remove-login" data-id="${l.id}" data-name="${l.name}">Remove</button>` : ''}
           </div></li>`)}</ul>
       </div>`;
@@ -3890,6 +3935,13 @@ sudo docker compose up -d --build</pre>`;
     'new-login': () => loginForm(),
     'rename-login': (el) => { const l = (state.logins || []).find((x) => String(x.id) === el.dataset.id); if (l) loginForm({ ...l, mode: 'rename' }); },
     'set-login-password': (el) => loginForm({ id: el.dataset.id, name: el.dataset.name, mode: 'password' }),
+    'logout-everywhere': async (el) => {
+      const you = Boolean(el.dataset.you);
+      if (!confirm(you ? 'Log out your login on every other device? This device stays logged in.'
+        : `Log out "${el.dataset.name}" on every device? They'll need their password to log in again.`)) return;
+      await api('POST', `/logins/${el.dataset.id}/logout-everywhere`);
+      toast(you ? 'Logged out on your other devices' : `${el.dataset.name} is logged out everywhere`);
+    },
     'remove-login': async (el) => {
       if (!confirm(`Remove the login "${el.dataset.name}"? Anyone using it will be logged out. The budget isn't affected.`)) return;
       await api('DELETE', `/logins/${el.dataset.id}`);
@@ -3993,6 +4045,14 @@ sudo docker compose up -d --build</pre>`;
     },
     'copy-update-cmd': async () => {
       await copyText('git pull\nsudo docker compose up -d --build', 'Commands');
+    },
+    'copy-token-cmd': async () => { await copyText(TOKEN_CMD, 'Commands'); },
+    'toggle-token-card': () => { state.tokenOpen = !state.tokenOpen; render(); },
+    'ignore-token': async (el) => {
+      state.updates = await api('PUT', '/updates/prefs', { token_ignored: el.dataset.on === '1' });
+      state.tokenOpen = false;
+      showUpdateBadge();
+      render();
     },
   };
 
