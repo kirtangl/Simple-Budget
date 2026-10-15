@@ -1,3 +1,9 @@
+/* Screen widths the layout changes at. Use these, not new ones:
+     900px and up  desktop: side navigation, tables (899px and below is phones and tablets)
+     720px         phones (app.js matches this with max-width: 720px / min-width: 721px)
+     560px         narrow phones: tables hide minor columns, summary cards go two-up
+     400px         the smallest phones: the header drops the cycle dates
+   A few one-off tweaks also use 520px and 600px. */
 :root {
   --bg: #f6f7f9;
   --card: #ffffff;
@@ -278,9 +284,9 @@ main { max-width: 1100px; margin: 0 auto; padding: 16px 16px 40px; }
 /* Summary stats */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .stat { padding: 14px 16px; }
-.stat .label { color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; }
-.stat .value { font-size: 1.45rem; font-weight: 700; margin-top: 2px; }
-.stat .sub { font-size: .8rem; color: var(--muted); }
+.stat .label { color: var(--muted); font-size: 12px; font-weight: 600; }
+.stat .value { font-size: 22px; font-weight: 700; margin-top: 2px; }
+.stat .sub { font-size: 12px; color: var(--muted); }
 /* Coloured summary cards on the Overview */
 .stat[class*="tint-"] { background: color-mix(in srgb, var(--tint) 11%, var(--card)); border-color: color-mix(in srgb, var(--tint) 30%, var(--line)); }
 .stat[class*="tint-"] .label { color: var(--tint); font-weight: 600; }
@@ -410,11 +416,6 @@ input::-webkit-date-and-time-value { text-align: left; }
 }
 }
 
-.tags { display: flex; flex-wrap: wrap; gap: 6px; }
-.tag {
-  display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border-radius: 999px;
-  background: var(--inset); border: 1px solid var(--line); font-size: .85rem;
-}
 .tag button { min-height: 0; padding: 0 6px; border: 0; background: none; color: var(--muted); font-size: 1rem; }
 
 /* Dialogs */
@@ -511,6 +512,8 @@ button.linkish {
   --tag: var(--muted);
   display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: .78rem; font-weight: 600;
   color: var(--text); background: color-mix(in srgb, var(--tag) 14%, transparent); border: 1px solid color-mix(in srgb, var(--tag) 35%, transparent);
+  /* Same height for every tag. */
+  height: 24px; line-height: 1; box-sizing: border-box;
 }
 .tag .dot { width: 8px; height: 8px; }
 .tag.plain { background: none; border-color: transparent; padding-left: 0; color: var(--muted); font-weight: 500; }
@@ -518,11 +521,9 @@ button.linkish {
 .tag.alert b { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--danger); color: var(--card); font-size: .7rem; }
 .tag.firm { --tag: var(--firm); color: var(--firm); }
 .tag.firm b { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--firm); color: var(--card); font-size: .7rem; }
-.tag.alert.solid { background: var(--danger); border-color: var(--danger); color: var(--card); text-transform: uppercase; letter-spacing: .03em; font-size: .72rem; }
-/* Same height for every tag, and nudge the all-caps Overdue text down so it looks centred
-   (capitals have no descenders, so they sit high in the line box). */
-.tag { height: 24px; line-height: 1; box-sizing: border-box; }
-.tag.alert.solid { padding-top: 2px; }
+.tag.alert.solid { background: var(--danger); border-color: var(--danger); color: var(--card); text-transform: uppercase; letter-spacing: .03em; font-size: .72rem;
+  /* Nudge the all-caps Overdue text down so it looks centred (capitals sit high in the line box). */
+  padding-top: 2px; }
 /* On phones the three summary cards wrap to two columns; let the last one fill its row. */
 @media (max-width: 560px) { .stats > .stat:last-child:nth-child(odd) { grid-column: 1 / -1; } }
 .field[hidden], .fields[hidden] { display: none !important; }
@@ -812,14 +813,16 @@ li.bill.paid .num .tick { opacity: 1; }
 .bills-card { display: flex; flex-direction: column; }
 
 /* Goals and debts on the Overview */
-.pill { display: inline-block; margin-top: 4px; padding: 2px 9px; border-radius: 999px; font-size: .74rem; font-weight: 600;
-  background: var(--upcoming-soft); color: var(--muted); }
+.pill { display: inline-block; margin-top: 4px; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600;
+  color: var(--text); background: color-mix(in srgb, var(--text) 9%, var(--card)); }
 .pill.bad { background: color-mix(in srgb, var(--danger) 18%, var(--card)); color: var(--danger); }
-.nudge { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; padding: 7px 10px;
-  border-radius: 8px; font-size: .82rem; background: color-mix(in srgb, var(--paid) 10%, var(--card)); }
+.nudge { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; padding: 6px 10px;
+  border-radius: 6px; font-size: 12px; color: var(--muted); background: color-mix(in srgb, var(--paid) 10%, var(--card)); }
 .nudge b { color: var(--paid); }
 .nudge.bad { background: color-mix(in srgb, var(--danger) 10%, var(--card)); }
 .nudge.bad b { color: var(--danger); }
+.nudge.plain { background: color-mix(in srgb, var(--text) 6%, var(--card)); }
+.nudge.good b { color: var(--paid); }
 .bar-row { display: flex; align-items: center; gap: 10px; }
 .bar-row .bar { flex: 1; margin: 6px 0; }
 .overview-pair { align-items: stretch; }
@@ -841,10 +844,6 @@ button.linkish:hover { text-decoration: underline; }
 .soft-debt .card-head h2 { color: var(--danger); }
 
 /* Summary cards: neutral, with coloured figures */
-.stats .stat { padding: 14px 16px; }
-.stat .label { font-size: 12px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--muted); }
-.stat .value { font-size: 22px; }
-.stat .sub { font-size: 12px; }
 .stat .bar { height: 4px; margin-top: 8px; }
 
 /* Expenses card: fixed head, scrolling list, fixed totals */
@@ -884,8 +883,6 @@ li.goal-sum { padding: 10px 0; }
 li.goal-sum .dep-amt .muted { font-size: 12px; }
 li.goal-sum .bar { height: 4px; }
 li.goal-sum .bar-row .meta { font-size: 12px; }
-.nudge { padding: 6px 10px; border-radius: 6px; font-size: 12px; color: var(--muted); }
-.pill { font-size: 11px; border-radius: 10px; padding: 2px 8px; color: var(--text); background: color-mix(in srgb, var(--text) 9%, var(--card)); }
 /* Every goal and debt row is the same height: one date line, then a bar or a banner of equal height. */
 li.goal-sum .goal-when { height: 22px; margin-top: 4px; display: flex; align-items: center; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -893,9 +890,6 @@ li.goal-sum .goal-when > * { margin: 0; overflow: hidden; text-overflow: ellipsi
 li.goal-sum .bar-row, li.goal-sum .nudge { height: 25px; margin-top: 5px; box-sizing: border-box; }
 li.goal-sum .nudge { padding: 0 10px; white-space: nowrap; overflow: hidden; }
 li.goal-sum .nudge span { overflow: hidden; text-overflow: ellipsis; }
-.nudge.plain { background: color-mix(in srgb, var(--text) 6%, var(--card)); }
-.nudge.good b { color: var(--paid); }
-
 @media (max-width: 899px) { .bills-cell > .bills-card { position: static; } }
 .acct-btn { min-height: 0; }
 
