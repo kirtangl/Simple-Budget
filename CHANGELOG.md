@@ -2,6 +2,24 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v0.9.4 (15 October 2026)
+
+### Improved
+- Every page shows the same deposit for each account as the Overview: Budget, Settings → Accounts and Analytics used to work it out their own way, and could count a loan whose term had ended, or leave out a bill starting part way through this cycle.
+- **What if I pay extra?** on a loan now uses the same maths as the loan's other estimates, so even a small extra amount never moves the pay-off date later.
+- "Paid this year" on a bill counts each payment at the price it was then. A bill that went from $100 to $120 in September now shows $440 paid since July, not $480.
+- Loan estimates are worked out about five times faster, and remembered until something changes, so pages load quicker on a NAS or Raspberry Pi.
+- Saving a goal with a new category (or a new colour for one) saves both together. Renaming or removing a category that only existed on its goals is done in one step too.
+- Moving a goal category between Saving for and Paying back takes its goals with it.
+- **Update amount** accepts $0, and its error messages say which box is wrong.
+
+### Fixed
+- Entering a price dated today or earlier under **Update amount** keeps a future price you'd already set. Only a new future price replaces it.
+- Changing just a bill's end date (or start date) is checked against the other date, so a bill can't end before it starts and disappear. Moving a sub category into a category that already has one with the same name is refused.
+- A loan whose term has ended, but isn't ticked Paid off, no longer shows a next repayment.
+
+For whoever runs the server: loan dates more than 60 years ago are refused, and each list has a generous size limit (for example 2,000 bills and 500 loans), so a damaged backup file can't make the app crawl. The app finishes sending a backup download before it stops for an update, and a password reset waits a moment if the app is saving rather than failing.
+
 ## v0.9.3 (15 October 2026)
 
 ### Improved

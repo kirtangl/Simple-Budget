@@ -531,7 +531,9 @@ function nextDue(loan, today) {
   const row = scheduleAsExpense(loan, s.date);
   const ahead = occurrences(row, today, addDays(today, 62), s.date).filter((d) => d >= s.date);
   const due = ahead[0];
-  if (!due) return null;
+  // Nothing is due once the term is over (a loan that wasn't ticked Paid off).
+  const end = loanEndDate(loan);
+  if (!due || (end && due > end)) return null;
   const before = occurrences(row, addDays(due, -62), addDays(due, -1), s.date).filter((d) => d >= s.date);
   const from = before.length ? addDays(before[before.length - 1], 1) : (s.date < due ? s.date : addDays(due, -30));
   const b = budgetedRepayment(loan);

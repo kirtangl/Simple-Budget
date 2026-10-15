@@ -1114,7 +1114,7 @@ test('every page gets the Overview deposit, leaving out a loan whose term has en
   const c = (await call('GET', '/cycle')).body;
   assert.equal(d.deposits[acct.id], c.accounts.find((a) => a.account_id === acct.id).deposit_cents);
   assert.equal(d.deposits[acct.id], 105000); // rent, plus the course that starts part way through this cycle
-  assert.deepEqual([d.loans[0].in_deposit, d.loans[0].per_pay_cents], [false, 0]);
+  assert.deepEqual([d.loans[0].in_deposit, d.loans[0].per_pay_cents, d.loans[0].next_due], [false, 0, null]);
   assert.equal(d.expenses.find((e) => e.name === 'Course').in_deposit, true);
   assert.equal(d.incomes[0].per_cycle_cents, 600000);
 }); });

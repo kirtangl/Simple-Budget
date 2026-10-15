@@ -414,7 +414,6 @@ input::-webkit-date-and-time-value { text-align: left; }
   .settings-tabs .st-group a { padding: 7px 2px; gap: 5px; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .st-sep { width: auto; height: 1px; margin: 2px 6px; }
 }
-}
 
 .tag button { min-height: 0; padding: 0 6px; border: 0; background: none; color: var(--muted); font-size: 1rem; }
 
