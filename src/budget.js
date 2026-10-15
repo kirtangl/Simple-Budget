@@ -546,10 +546,13 @@ function nextDue(loan, today) {
   return { date: due, from, due_cents: s.amount_cents, budgeted_cents: paid.length * b.amount_cents, payments: paid.length, full_period: full };
 }
 
-// Steps the loan forward day by day from a known balance. Stops at `until`, or
-// when the loan is paid off if `until` is null (giving up after 50 years).
+// Steps the loan forward from a known balance. Stops at `until`, or when the loan
+// is paid off if `until` is null (giving up after 50 years).
 // `sample(date, balance, month)` is called on the first of each month, for
 // charts, with what was repaid and charged in interest over the month just gone.
+// Interest builds up daily, but the balance only changes on a few days a month (a
+// repayment, the interest day), so it jumps from one of those days to the next and
+// adds the days between at once. The result is the same as going day by day.
 function simulateLoan(loan, until, sample) {
   const known = loan.balance_cents != null && loan.balance_date;
   let date = known ? loan.balance_date : loan.start_date;
@@ -560,10 +563,8 @@ function simulateLoan(loan, until, sample) {
   const b = budgetedRepayment(loan);
   const s = scheduledRepayment(loan);
   const firstPay = b.date || loan.start_date;
-  // The due dates are an anchor for the rhythm: repayments were also made between the start and them.
-  const back = (row) => (loan.start_date && row.start_date && row.start_date > loan.start_date ? { ...row, start_date: loan.start_date } : row);
-  const asExpense = back(loanAsExpense(loan, firstPay || date));
-  const asScheduled = back(scheduleAsExpense(loan, s.date || loan.start_date || date));
+  const asExpense = loanAsExpense(loan, firstPay || date);
+  const asScheduled = scheduleAsExpense(loan, s.date || loan.start_date || date);
   const daily = (Number(loan.interest_rate) || 0) / 100 / 365;
   const offset = Number(loan.offset_cents) || 0;
   const interestDay = Math.min(Math.max(Number(loan.interest_day) || Number((loan.start_date || date).slice(8)), 1), 31);
@@ -571,40 +572,45 @@ function simulateLoan(loan, until, sample) {
   let accrued = 0;
   let interestTotal = 0;
   let paidTotal = 0;
-  // Repayment dates in yearly chunks, to keep the day loop simple.
-  let chunkEnd = date;
-  let due = new Set();
-  let dueScheduled = new Set();
   let monthPaid = 0;
   let monthInterest = 0;
   while (date < limit && balance > 0) {
-    date = addDays(date, 1);
-    if (date > chunkEnd) {
-      chunkEnd = addDays(date, 366);
-      due = new Set(occurrences(asExpense, date, chunkEnd, firstPay || date));
-      dueScheduled = b.custom && b.date ? new Set(occurrences(asScheduled, date, chunkEnd, s.date || loan.start_date || date)) : new Set();
+    // The days that matter over the next year or so (repayments, interest days, month starts).
+    const from = addDays(date, 1);
+    const chunkEnd = addDays(from, 366) < limit ? addDays(from, 366) : limit;
+    const due = new Set(occurrences(asExpense, from, chunkEnd, firstPay || from));
+    const dueScheduled = b.custom && b.date ? new Set(occurrences(asScheduled, from, chunkEnd, s.date || loan.start_date || from)) : new Set();
+    const days = new Set([...due, ...dueScheduled, chunkEnd]);
+    for (let [y, m] = from.split('-').map(Number); `${y}-${String(m).padStart(2, '0')}` <= chunkEnd.slice(0, 7); m === 12 ? (y += 1, m = 1) : (m += 1)) {
+      const month = `${y}-${String(m).padStart(2, '0')}`;
+      days.add(`${month}-${String(Math.min(interestDay, lastDayOfMonth(y, m - 1))).padStart(2, '0')}`);
+      if (sample) days.add(`${month}-01`);
     }
-    if (sample && date.endsWith('-01')) {
-      sample(date, balance, { paid_cents: Math.round(monthPaid), interest_cents: Math.round(monthInterest) });
-      monthPaid = 0;
-      monthInterest = 0;
-    }
-    // Money in an offset account isn't charged interest.
-    accrued += Math.max(0, balance - offset) * daily;
-    const [y, m, d] = date.split('-').map(Number);
-    if (d === Math.min(interestDay, lastDayOfMonth(y, m - 1))) {
-      balance += accrued;
-      interestTotal += accrued;
-      monthInterest += accrued;
-      accrued = 0;
-    }
-    const budgeted = !b.custom || !b.date || date >= b.date;
-    const isDue = budgeted ? due.has(date) : dueScheduled.has(date);
-    if (isDue && (!loan.start_date || date > loan.start_date)) {
-      const pay = Math.min(budgeted ? b.amount_cents : s.amount_cents, balance + accrued);
-      balance -= pay;
-      paidTotal += pay;
-      monthPaid += pay;
+    for (const day of [...days].filter((d) => d >= from && d <= chunkEnd).sort()) {
+      if (sample && day.endsWith('-01')) {
+        sample(day, balance, { paid_cents: Math.round(monthPaid), interest_cents: Math.round(monthInterest) });
+        monthPaid = 0;
+        monthInterest = 0;
+      }
+      // Money in an offset account isn't charged interest. Every day up to and including this one.
+      accrued += Math.max(0, balance - offset) * daily * daysBetween(date, day);
+      date = day;
+      const [y, m, d] = day.split('-').map(Number);
+      if (d === Math.min(interestDay, lastDayOfMonth(y, m - 1))) {
+        balance += accrued;
+        interestTotal += accrued;
+        monthInterest += accrued;
+        accrued = 0;
+      }
+      const budgeted = !b.custom || !b.date || day >= b.date;
+      const isDue = budgeted ? due.has(day) : dueScheduled.has(day);
+      if (isDue && (!loan.start_date || day > loan.start_date)) {
+        const pay = Math.min(budgeted ? b.amount_cents : s.amount_cents, balance + accrued);
+        balance -= pay;
+        paidTotal += pay;
+        monthPaid += pay;
+      }
+      if (balance <= 0) break;
     }
   }
   // The last part-month of a loan run to pay-off.
@@ -673,8 +679,19 @@ function loanTimeline(loan, today) {
   };
 }
 
-// Estimates shown on the Loans tab.
+// Estimates shown on the Loans tab. Every page load asks for them, so each loan's are
+// kept until the loan (or the day) changes.
+const estimateCache = new Map();
 function loanEstimates(loan, today) {
+  const key = `${today}|${JSON.stringify(loan)}`;
+  if (!estimateCache.has(key)) {
+    if (estimateCache.size >= 1000) estimateCache.clear();
+    estimateCache.set(key, workOutEstimates(loan, today));
+  }
+  return structuredClone(estimateCache.get(key));
+}
+
+function workOutEstimates(loan, today) {
   const now = simulateLoan(loan, today);
   const h = loanHistory(loan);
   const before = h ? simulateLoan(h.fresh, h.to) : null;

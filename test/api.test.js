@@ -1132,3 +1132,30 @@ test('paying extra on a loan is worked out on the server, from the same estimate
   assert.match(some.points[0][0], /^\d{4}-\d{2}$/);
   assert.equal((await call('GET', `/loans/${l.id}/extra?cents=-5`)).status, 400);
 }); });
+
+test('loan dates and list sizes are kept within reason', (t) => { onDay(t, '2026-10-15'); return withServer({}, async (call) => {
+  let r = await call('POST', '/loans', { name: 'Ancient', principal_cents: 100000, start_date: '1900-01-01', term_months: 600 });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "Start date can't be more than 60 years ago.");
+  const l = (await call('POST', '/loans', { name: 'Car', principal_cents: 100000, start_date: '1967-01-01', term_months: 12 })).body;
+  assert.equal((await call('PATCH', `/loans/${l.id}`, { balance_cents: 5, balance_date: '1950-01-01' })).status, 400);
+  assert.equal((await call('POST', `/loans/${l.id}/balance`, { balance_cents: 5, balance_date: '1950-01-01' })).status, 400);
+  assert.equal((await call('POST', '/loans/estimate-balance', { principal_cents: 5, start_date: '1901-01-01' })).status, 400);
+  // A backup with too many rows is refused before anything changes.
+  const many = Array.from({ length: 501 }, (_, i) => ({ id: i + 1, name: `Loan ${i}` }));
+  r = await call('POST', '/import', { app: 'simple-budget', format_version: 2, loans: many });
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /^That backup has more loans than Simple Budget can keep \(500\)/);
+  assert.equal((await call('GET', '/loans')).body.length, 1);
+  // A loan in a backup dated too far back is left out with a warning.
+  r = await call('POST', '/import', { app: 'simple-budget', format_version: 2, loans: [{ id: 1, name: 'Old', start_date: '1901-01-01' }, { id: 2, name: 'New' }] });
+  assert.equal(r.body.counts.loans, 1);
+  assert.match(r.body.warnings.join(' '), /Old.*60 years/);
+}); });
+
+test('a list that is full says so', () => withServer({}, async (call) => {
+  for (let i = 0; i < 200; i += 1) await call('POST', '/incomes', { name: `Pay ${i}`, after_tax_cents: 100 });
+  const r = await call('POST', '/incomes', { name: 'One more', after_tax_cents: 100 });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "That's more incomes than Simple Budget can keep (200).");
+}));

@@ -85,7 +85,15 @@ const LABELS = {
   category_id: 'Category', kind: 'Type', bsb: 'BSB', account_number: 'Account number',
   start_date: 'Start date', target_date: 'Target date', interest_rate: 'Interest rate', term_months: 'Term (months)',
   interest_day: 'Interest day', principal_cents: 'Amount borrowed', repayment_cents: 'Repayment', balance_cents: 'Balance',
+  balance_date: 'Balance date', scheduled_date: 'First repayment date', budget_date: 'First budgeted payment date',
 };
+
+// The most rows each list can hold. Far more than a household needs, but it stops a
+// bad backup file from making every page slow.
+const MAX_ROWS = { accounts: 200, payees: 2000, categories: 500, subcategories: 2000, expenses: 2000,
+  incomes: 200, goals: 2000, loans: 500, goal_groups: 500 };
+const ROW_WORDS = { subcategories: 'sub categories', expenses: 'expenses and savings', goal_groups: 'goal categories' };
+const tooMany = (name) => `That's more ${ROW_WORDS[name] || name} than Simple Budget can keep (${MAX_ROWS[name]}).`;
 
 // Each resource: table name, its fields with validators, and which are required.
 const RESOURCES = {
@@ -170,6 +178,13 @@ const RESOURCES = {
       budget_frequency: T.enumOf(...Object.keys(budget.LOAN_FREQUENCIES)), budget_cents: T.positiveCents, budget_date: T.date,
       rate_type: T.enumOf('variable', 'fixed'), fixed_until: T.date, offset_cents: T.positiveCents, monthly_fee_cents: T.positiveCents, break_fees: T.text },
     required: ['name'],
+    // The estimates step through a loan's whole life, so its dates are kept to a working lifetime.
+    check: (row) => {
+      const oldest = `${Number(today().slice(0, 4)) - 60}${today().slice(4)}`;
+      for (const key of ['start_date', 'balance_date', 'scheduled_date', 'budget_date']) {
+        if (row[key] && row[key] < oldest) throw new BadRequest(`${LABELS[key]} can't be more than 60 years ago.`);
+      }
+    },
     // Repayments, statement balances and rates over time. A balance is logged on its statement date.
     history: { kind: 'loan', fields: {
       repayment_cents: (r) => [r.repayment_cents, r.repayment_frequency],
@@ -532,6 +547,7 @@ function createApi(db) {
     if (data.balance_cents == null) throw new BadRequest('Enter the balance.');
     if (!data.balance_date) data.balance_date = today();
     if (data.balance_date > today()) throw new BadRequest("The balance date can't be in the future.");
+    RESOURCES.loans.check(data);
     const before = { ...l };
     // An older statement than the one already saved goes in the history only; the newer balance stays.
     const older = l.balance_cents != null && l.balance_date && data.balance_date < l.balance_date;
@@ -553,6 +569,7 @@ function createApi(db) {
   // What a new loan's balance should be today if only the minimum (scheduled) repayments were made.
   router.post('/loans/estimate-balance', (req, res) => {
     const data = clean({ ...RESOURCES.loans, required: [] }, req.body, { partial: true });
+    RESOURCES.loans.check(data);
     const min = budget.minimumBalance(data, today());
     if (min) return res.json({ ...min, balance_date: today() });
     // No term: step through the repayment entered instead.
@@ -739,6 +756,7 @@ function createApi(db) {
     };
 
     router.post(`/${name}`, (req, res) => {
+      if (db.prepare(`SELECT count(*) AS n FROM ${name}`).get().n >= MAX_ROWS[name]) throw new BadRequest(tooMany(name));
       const data = clean(resource, req.body, { partial: false });
       if (resource.owned && !(req.body && 'owner_id' in req.body) && req.login) data.owner_id = req.login.id;
       if (resource.check) resource.check(data);
@@ -926,6 +944,7 @@ function importBackup(db, input) {
       }
       try {
         const row = clean(RESOURCES[table], prepare ? prepare(raw) : raw, { partial: false });
+        if (RESOURCES[table].check) RESOURCES[table].check(row);
         map.set(Number(raw.id), insert(table, row));
         n += 1;
       } catch (err) {
@@ -999,6 +1018,12 @@ function importBackup(db, input) {
       }
     }
   };
+
+  for (const section of BACKUP_SECTIONS) {
+    if (Array.isArray(data[section]) && data[section].length > MAX_ROWS[section]) throw new BadRequest(`That backup has ${tooMany(section).slice(7)}`);
+  }
+  const subCount = Array.isArray(data.categories) ? data.categories.reduce((n, c) => n + (Array.isArray(c && c.subcategories) ? c.subcategories.length : 0), 0) : 0;
+  if (subCount > MAX_ROWS.subcategories) throw new BadRequest(`That backup has ${tooMany('subcategories').slice(7)}`);
 
   transaction(db, () => {
     // Clear the sections the file contains. Expenses go first because they refer to the others.
