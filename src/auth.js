@@ -5,10 +5,11 @@
 // DEFAULT_PASSWORD, and then the app asks for a new one on first login. Extra logins (e.g. one each) live in the `logins`
 // table, each with its own password and theme. Everyone sees the same budget.
 //
-// A successful login sets a long-lived, HMAC-signed cookie naming the login,
-// so nobody has to log in again on the same device. Changing a password logs
-// that login out on every other device, because the signature includes its
-// password hash. Removing a login does the same.
+// A successful login sets an HMAC-signed cookie naming the login. It lasts 30
+// days and is renewed as the app is used, so a device in use stays logged in.
+// Changing a password logs that login out on every other device, because the
+// signature includes its password hash. So does "Log out everywhere", which
+// bumps the login's session_gen, also in the signature. Removing a login does the same.
 
 const crypto = require('node:crypto');
 const { getSetting, setSetting, transaction } = require('./db');
@@ -16,7 +17,8 @@ const { getSetting, setSetting, transaction } = require('./db');
 const DEFAULT_PASSWORD = 'simplebudget';
 const MIN_LENGTH = 8;
 const LEGACY_COOKIE = 'sb_session'; // before each copy had its own cookie name
-const MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_AGE_MS = 30 * DAY_MS;
 const MAIN = 0; // the main household login
 
 // Themes a login can pick, and the colours a custom theme can set.
@@ -24,32 +26,50 @@ const THEMES = ['system', 'light', 'dark', 'warm', 'ocean', 'slate', 'midnight',
 const THEME_COLOURS = ['bg', 'card', 'inset', 'text', 'muted', 'line', 'brand', 'brand-soft', 'on-brand', 'info', 'paid', 'paid-soft',
   'due', 'due-soft', 'firm', 'danger', 'danger-soft', 'upcoming', 'upcoming-soft'];
 
+// Passwords are hashed with scrypt at a strength OWASP recommends (N=2^14, r=8, p=5,
+// the same work as N=2^17 with an eighth of the memory, which suits a NAS or Raspberry Pi).
+// Stored as "scrypt$14.8.5$salt$hash". Older hashes ("scrypt$salt$hash") used Node's
+// lighter defaults; they still work and are upgraded the next time that password is used.
+const SCRYPT = { logN: 14, r: 8, p: 5 };
+const LEGACY_SCRYPT = { logN: 14, r: 8, p: 1 };
+
+function parseHash(stored) {
+  if (typeof stored !== 'string') return null;
+  const parts = stored.split('$');
+  if (parts[0] !== 'scrypt') return null;
+  if (parts.length === 3 && parts[1] && parts[2]) return { ...LEGACY_SCRYPT, salt: parts[1], hash: parts[2], legacy: true };
+  if (parts.length !== 4) return null;
+  const [logN, r, p] = parts[1].split('.').map(Number);
+  if (![logN, r, p].every(Number.isInteger) || logN < 10 || logN > 20 || r < 1 || r > 32 || p < 1 || p > 16 || !parts[2] || !parts[3]) return null;
+  return { logN, r, p, salt: parts[2], hash: parts[3], legacy: false };
+}
+const scryptOptions = (h) => ({ N: 2 ** h.logN, r: h.r, p: h.p, maxmem: 256 * 1024 * 1024 });
+
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('base64url');
-  const hash = crypto.scryptSync(password, salt, 64).toString('base64url');
-  return `scrypt$${salt}$${hash}`;
+  const hash = crypto.scryptSync(password, salt, 64, scryptOptions(SCRYPT)).toString('base64url');
+  return `scrypt$${SCRYPT.logN}.${SCRYPT.r}.${SCRYPT.p}$${salt}$${hash}`;
+}
+// The same, without blocking the server while it hashes.
+async function hashPasswordAsync(password) {
+  const salt = crypto.randomBytes(16).toString('base64url');
+  const key = await new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, scryptOptions(SCRYPT), (err, k) => (err ? reject(err) : resolve(k)));
+  });
+  return `scrypt$${SCRYPT.logN}.${SCRYPT.r}.${SCRYPT.p}$${salt}$${key.toString('base64url')}`;
 }
 
-function checkPassword(stored, given) {
-  if (typeof given !== 'string' || typeof stored !== 'string') return false;
-  const [scheme, salt, hash] = stored.split('$');
-  if (scheme !== 'scrypt' || !salt || !hash) return false;
-  const expected = Buffer.from(hash, 'base64url');
-  const actual = crypto.scryptSync(given, salt, expected.length);
-  return crypto.timingSafeEqual(expected, actual);
-}
-
-// The same check without blocking the server while it hashes, for the login page.
-async function checkPasswordAsync(stored, given) {
-  if (typeof given !== 'string' || typeof stored !== 'string') return false;
-  const [scheme, salt, hash] = stored.split('$');
-  if (scheme !== 'scrypt' || !salt || !hash) return false;
-  const expected = Buffer.from(hash, 'base64url');
+// Checks a password without blocking the server while it hashes.
+async function checkPassword(stored, given) {
+  const h = parseHash(stored);
+  if (typeof given !== 'string' || !h) return false;
+  const expected = Buffer.from(h.hash, 'base64url');
   const actual = await new Promise((resolve, reject) => {
-    crypto.scrypt(given, salt, expected.length, (err, key) => (err ? reject(err) : resolve(key)));
+    crypto.scrypt(given, h.salt, expected.length, scryptOptions(h), (err, key) => (err ? reject(err) : resolve(key)));
   });
   return crypto.timingSafeEqual(expected, actual);
 }
+const needsRehash = (stored) => { const h = parseHash(stored); return Boolean(h && (h.legacy || h.logN !== SCRYPT.logN || h.r !== SCRYPT.r || h.p !== SCRYPT.p)); };
 
 // The main login's starting password: START_PASSWORD from .env if it's long enough, else the default.
 function startPassword(env = process.env) {
@@ -173,7 +193,8 @@ function createAuth({ db, secret, secureCookies }) {
     let custom = null;
     try { custom = JSON.parse(getSetting(db, 'main_custom_theme') || 'null'); } catch { /* ignore a bad value */ }
     return { id: MAIN, name: getSetting(db, 'main_login_name') || 'Main', password_hash: getSetting(db, 'password_hash'),
-      theme: getSetting(db, 'main_theme') || null, custom_theme: custom, colour: getSetting(db, 'main_colour') || null, main: true };
+      theme: getSetting(db, 'main_theme') || null, custom_theme: custom, colour: getSetting(db, 'main_colour') || null, main: true,
+      session_gen: Number(getSetting(db, 'main_session_gen')) || 0 };
   };
   const loginById = (id) => {
     if (id === MAIN) return main();
@@ -190,17 +211,26 @@ function createAuth({ db, secret, secureCookies }) {
   // one would overwrite its login. Each copy's name comes from its own secret.
   const COOKIE = `sb_session_${crypto.createHash('sha256').update(String(secret)).digest('hex').slice(0, 8)}`;
 
-  const sign = (value, hash) => crypto.createHmac('sha256', `${secret}:${hash}`).update(value).digest('base64url');
+  // Signed with the login's password hash and session_gen, so changing either ends its other cookies.
+  // (A login that has never logged out everywhere signs as it always has, so nobody is logged out by the update.)
+  const sign = (value, login) => crypto.createHmac('sha256', `${secret}:${login.password_hash}${login.session_gen ? `:${login.session_gen}` : ''}`)
+    .update(value).digest('base64url');
 
   function makeToken(id) {
     const value = `${id}.${Date.now() + MAX_AGE_MS}`;
-    return `${value}.${sign(value, loginById(id).password_hash)}`;
+    return `${value}.${sign(value, loginById(id))}`;
   }
 
   // The login this request is from, or null. Cookies from before extra logins
   // existed ("expires.signature") belong to the main login.
   function currentLogin(req) {
     return loginFromToken(readCookie(req, COOKIE)) || loginFromToken(readCookie(req, LEGACY_COOKIE));
+  }
+  // When this request's cookie runs out (ms since 1970), or null.
+  function expiresAt(req) {
+    const token = readCookie(req, COOKIE);
+    const parts = typeof token === 'string' ? token.split('.') : [];
+    return parts.length === 3 ? Number(parts[1]) : null;
   }
   // Was this request logged in only by the old shared cookie name?
   const usedLegacy = (req) => !loginFromToken(readCookie(req, COOKIE)) && Boolean(loginFromToken(readCookie(req, LEGACY_COOKIE)));
@@ -216,7 +246,7 @@ function createAuth({ db, secret, secureCookies }) {
     if (!Number.isInteger(id) || !expires || !sig) return null;
     const login = loginById(id);
     if (!login) return null;
-    const expected = Buffer.from(sign(value, login.password_hash));
+    const expected = Buffer.from(sign(value, login));
     const actual = Buffer.from(sig);
     if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) return null;
     return Number(expires) > Date.now() ? login : null;
@@ -228,13 +258,16 @@ function createAuth({ db, secret, secureCookies }) {
 
   // A new password must be long enough, not the default, and not one another login already uses.
   // Being told it's taken reveals another login's password, so that counts as a wrong guess.
-  function checkNewPassword(password, exceptId, ip) {
+  async function checkNewPassword(password, exceptId, ip) {
     if (typeof password !== 'string' || password.length < MIN_LENGTH) return `Please use at least ${MIN_LENGTH} characters.`;
+    if (password.length > 1024) return 'Please use a shorter password.';
     if (password === DEFAULT_PASSWORD) return 'Please choose something other than the default password.';
     if (blocked(ip)) return TOO_MANY;
-    if (allLogins().some((l) => l.id !== exceptId && checkPassword(l.password_hash, password))) {
-      recordFailure(ip);
-      return 'Another login already uses that password. Each login needs its own.';
+    for (const l of allLogins()) {
+      if (l.id !== exceptId && await checkPassword(l.password_hash, password)) {
+        recordFailure(ip);
+        return 'Another login already uses that password. Each login needs its own.';
+      }
     }
     return null;
   }
@@ -246,20 +279,68 @@ function createAuth({ db, secret, secureCookies }) {
   };
   const cleanName = (name) => (typeof name === 'string' ? name.trim().slice(0, 40) : '');
 
-  function finishChange(req, res, me, password) {
-    const problem = checkNewPassword(password, me.id, req.ip);
+  // Saves a login's password hash (the main login's is a setting).
+  function storeHash(id, hash) {
+    if (id === MAIN) setSetting(db, 'password_hash', hash);
+    else db.prepare('UPDATE logins SET password_hash = ? WHERE id = ?').run(hash, id);
+  }
+
+  async function finishChange(req, res, me, password) {
+    const problem = await checkNewPassword(password, me.id, req.ip);
     if (problem) return res.status(problem === TOO_MANY ? 429 : 400).json({ error: problem });
+    const hash = await hashPasswordAsync(password);
     if (me.id === MAIN) {
       transaction(db, () => {
-        setSetting(db, 'password_hash', hashPassword(password));
+        setSetting(db, 'password_hash', hash);
         setSetting(db, 'password_must_change', '0');
         setSetting(db, 'password_hint', '0');
       });
     } else {
-      db.prepare('UPDATE logins SET password_hash = ? WHERE id = ?').run(hashPassword(password), me.id);
+      db.prepare('UPDATE logins SET password_hash = ? WHERE id = ?').run(hash, me.id);
     }
     setCookie(res, me.id); // the old cookie stopped working when the hash changed
     return res.json({ ok: true });
+  }
+
+  // Rename or recolour any login, or set a new password for another login (e.g. if it's been forgotten).
+  // Logins only tell the household apart, so anyone can do this, except set the main login's
+  // password: only Main can, or anyone could take over what only Main can change.
+  async function changeLogin(req, res) {
+    const id = Number(req.params.id);
+    const login = Number.isInteger(id) ? loginById(id) : null;
+    if (!login) return res.status(404).json({ error: 'Not found.' });
+    const { name, password, colour } = req.body || {};
+    // Check everything first, so a bad field doesn't leave the others half saved.
+    let c; let n;
+    if (colour !== undefined) {
+      try { c = cleanColour(colour); } catch (err) { return res.status(400).json({ error: err.message }); }
+    }
+    if (name !== undefined) {
+      n = cleanName(name);
+      if (!n) return res.status(400).json({ error: 'Give the login a name.' });
+    }
+    if (password !== undefined) {
+      if (id === req.login.id) return res.status(400).json({ error: 'Use "Change password" to change your own.' });
+      if (id === MAIN) return res.status(403).json({ error: "Only the main login can change the main login's password." });
+      const problem = await checkNewPassword(password, id, req.ip);
+      if (problem) return res.status(problem === TOO_MANY ? 429 : 400).json({ error: problem });
+    }
+    const hash = password !== undefined ? await hashPasswordAsync(password) : null;
+    transaction(db, () => {
+      if (colour !== undefined) {
+        if (id === MAIN) setSetting(db, 'main_colour', c || '');
+        else db.prepare('UPDATE logins SET colour = ? WHERE id = ?').run(c, id);
+      }
+      if (name !== undefined) {
+        if (id === MAIN) setSetting(db, 'main_login_name', n);
+        else db.prepare('UPDATE logins SET name = ? WHERE id = ?').run(n, id);
+      }
+      if (password !== undefined) {
+        if (id === MAIN) setSetting(db, 'password_hash', hash);
+        else db.prepare('UPDATE logins SET password_hash = ? WHERE id = ?').run(hash, id);
+      }
+    });
+    res.json(publicLogin(loginById(id), req.login.id));
   }
 
   return {
@@ -279,13 +360,15 @@ function createAuth({ db, secret, secureCookies }) {
         const r = await guarded(req.ip, async () => {
           if (typeof given !== 'string' || given.length > 1024) return false;
           for (const l of allLogins()) {
-            // eslint-disable-next-line no-await-in-loop
-            if (await checkPasswordAsync(l.password_hash, given)) { match = l; return true; }
+            if (await checkPassword(l.password_hash, given)) { match = l; return true; }
           }
           return false;
         });
         if (r.tooMany) return res.status(429).json({ error: TOO_MANY });
         if (!match) return res.status(401).json({ error: 'That password is not right.' });
+        // A password saved with the older, lighter hashing is upgraded now that it's known.
+        // The cookie is signed with the hash, so other devices log in again once.
+        if (needsRehash(match.password_hash)) storeHash(match.id, await hashPasswordAsync(given));
         setCookie(res, match.id);
         res.json({ ok: true, mustChangePassword: mustChangeFor(match) });
       } catch (err) { next(err); }
@@ -305,11 +388,11 @@ function createAuth({ db, secret, secureCookies }) {
         if (!me) return res.status(401).json({ error: 'Please log in.' });
         const { current, password } = req.body || {};
         if (!mustChangeFor(me)) {
-          const r = await guarded(req.ip, () => checkPasswordAsync(me.password_hash, current));
+          const r = await guarded(req.ip, () => checkPassword(me.password_hash, current));
           if (r.tooMany) return res.status(429).json({ error: TOO_MANY });
           if (!r.ok) return res.status(400).json({ error: 'Your current password is not right.' });
         }
-        finishChange(req, res, me, password);
+        await finishChange(req, res, me, password);
       } catch (err) { next(err); }
     },
 
@@ -320,6 +403,12 @@ function createAuth({ db, secret, secureCookies }) {
       req.login = me;
       // Move a login from the old shared cookie onto this copy's own.
       if (usedLegacy(req)) { setCookie(res, me.id); res.clearCookie(LEGACY_COOKIE, { path: '/' }); }
+      // Keep a device in use logged in: renew the cookie at most once a day. Cookies
+      // from before logins lasted 30 days are swapped for a 30-day one too.
+      else {
+        const left = expiresAt(req) - Date.now();
+        if (left < MAX_AGE_MS - DAY_MS || left > MAX_AGE_MS) setCookie(res, me.id);
+      }
       next();
     },
 
@@ -353,56 +442,35 @@ function createAuth({ db, secret, secureCookies }) {
       res.json(allLogins().map((l) => publicLogin(l, req.login.id)));
     },
 
-    addLogin(req, res) {
-      const { name, password, colour } = req.body || {};
-      const n = cleanName(name);
-      if (!n) return res.status(400).json({ error: 'Give the login a name, like "Sam".' });
-      let c;
-      try { c = cleanColour(colour); } catch (err) { return res.status(400).json({ error: err.message }); }
-      const problem = checkNewPassword(password, null, req.ip);
-      if (problem) return res.status(problem === TOO_MANY ? 429 : 400).json({ error: problem });
-      const { lastInsertRowid } = db.prepare('INSERT INTO logins (name, password_hash, colour) VALUES (?, ?, ?)').run(n, hashPassword(password), c);
-      res.status(201).json(publicLogin(loginById(Number(lastInsertRowid)), req.login.id));
+    async addLogin(req, res, next) {
+      try {
+        const { name, password, colour } = req.body || {};
+        const n = cleanName(name);
+        if (!n) return res.status(400).json({ error: 'Give the login a name, like "Sam".' });
+        let c;
+        try { c = cleanColour(colour); } catch (err) { return res.status(400).json({ error: err.message }); }
+        const problem = await checkNewPassword(password, null, req.ip);
+        if (problem) return res.status(problem === TOO_MANY ? 429 : 400).json({ error: problem });
+        const { lastInsertRowid } = db.prepare('INSERT INTO logins (name, password_hash, colour) VALUES (?, ?, ?)').run(n, await hashPasswordAsync(password), c);
+        res.status(201).json(publicLogin(loginById(Number(lastInsertRowid)), req.login.id));
+      } catch (err) { next(err); }
     },
 
-    // Rename or recolour any login, or set a new password for another login (e.g. if it's been forgotten).
-    // Logins only tell the household apart, so anyone can do this, except set the main login's
-    // password: only Main can, or anyone could take over what only Main can change.
-    updateLogin(req, res) {
+    async updateLogin(req, res, next) {
+      try { await changeLogin(req, res); } catch (err) { next(err); }
+    },
+
+    // Ends every cookie this login has, on every device. For your own login, this
+    // device stays logged in (with a fresh cookie); for another, all of theirs end.
+    logoutEverywhere(req, res) {
       const id = Number(req.params.id);
       const login = Number.isInteger(id) ? loginById(id) : null;
       if (!login) return res.status(404).json({ error: 'Not found.' });
-      const { name, password, colour } = req.body || {};
-      // Check everything first, so a bad field doesn't leave the others half saved.
-      let c; let n;
-      if (colour !== undefined) {
-        try { c = cleanColour(colour); } catch (err) { return res.status(400).json({ error: err.message }); }
-      }
-      if (name !== undefined) {
-        n = cleanName(name);
-        if (!n) return res.status(400).json({ error: 'Give the login a name.' });
-      }
-      if (password !== undefined) {
-        if (id === req.login.id) return res.status(400).json({ error: 'Use "Change password" to change your own.' });
-        if (id === MAIN) return res.status(403).json({ error: "Only the main login can change the main login's password." });
-        const problem = checkNewPassword(password, id, req.ip);
-        if (problem) return res.status(problem === TOO_MANY ? 429 : 400).json({ error: problem });
-      }
-      transaction(db, () => {
-        if (colour !== undefined) {
-          if (id === MAIN) setSetting(db, 'main_colour', c || '');
-          else db.prepare('UPDATE logins SET colour = ? WHERE id = ?').run(c, id);
-        }
-        if (name !== undefined) {
-          if (id === MAIN) setSetting(db, 'main_login_name', n);
-          else db.prepare('UPDATE logins SET name = ? WHERE id = ?').run(n, id);
-        }
-        if (password !== undefined) {
-          if (id === MAIN) setSetting(db, 'password_hash', hashPassword(password));
-          else db.prepare('UPDATE logins SET password_hash = ? WHERE id = ?').run(hashPassword(password), id);
-        }
-      });
-      res.json(publicLogin(loginById(id), req.login.id));
+      const gen = (login.session_gen || 0) + 1;
+      if (id === MAIN) setSetting(db, 'main_session_gen', String(gen));
+      else db.prepare('UPDATE logins SET session_gen = ? WHERE id = ?').run(gen, id);
+      if (id === req.login.id) setCookie(res, id);
+      res.json({ ok: true });
     },
 
     removeLogin(req, res) {

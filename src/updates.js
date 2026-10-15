@@ -7,6 +7,7 @@
 // hours, or straight away when someone presses "Check now".
 
 const HOUR = 60 * 60 * 1000;
+const DEFAULT_UPDATER_TOKEN = 'simple-budget-updater'; // docker-compose.yml's fallback
 
 // An install problem, with the HTTP status to answer with.
 class UpdateError extends Error {
@@ -101,7 +102,7 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
 
   async function check() {
     if (running) return running;
-    const { channel, repo, token } = current();
+    const { repo, token } = current();
     const gen = generation;
     const p = (async () => {
       try {
@@ -183,6 +184,9 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
       beta_locked: Boolean(updater().url),
       available: Boolean(latest && newer(latest)),
       can_install: Boolean(updater().url) && track() !== 'pinned',
+      // Still on the updater password everyone's copy starts with, which anything on the
+      // server's network could use to make the updater restart the app.
+      default_token: Boolean(updater().url) && (!updater().token || updater().token === DEFAULT_UPDATER_TOKEN),
       // Published on GitHub, but its image is still being built.
       building: Boolean(latest && state.imageReady === false && state.imageFor === latest.version),
       track: track(),

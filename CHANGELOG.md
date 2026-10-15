@@ -2,6 +2,18 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v0.9.5 (15 October 2026)
+
+### New
+- **Log out everywhere**: under Settings → Security, **Log out my other devices** ends your login on every device but this one, and **Log out everywhere** beside another login ends all of theirs, for example after a phone goes missing.
+
+### Improved
+- A device stays logged in for 30 days from when it was last used, instead of a year from when it logged in. A device you use regularly never asks again; one left behind stops working by itself.
+- Passwords are stored with stronger protection. Each one is upgraded the next time it's used to log in, which logs that login out once on its other devices.
+- Settings → Updates warns if this copy's updater still has the password every copy starts with, and gives the two commands that fix it.
+
+For whoever runs the server: give the updater its own password if Settings → Updates asks (see "How the updater works" in the README). Then run `git pull` and `sudo docker compose up -d` once, so the updater runs the exact version this release names. Server backups are now readable only by the app. The build pins Node and every GitHub action to an exact version, Dependabot proposes updates to them, and only the publishing step can write images. The README now covers HTTPS at home, checking a branch's `.github` folder before releasing it, and the image name for forks.
+
 ## v0.9.4 (15 October 2026)
 
 ### Improved

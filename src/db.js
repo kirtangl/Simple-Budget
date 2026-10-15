@@ -238,6 +238,10 @@ const MIGRATIONS = [
   `
   UPDATE amount_history SET login_id = NULL;
   `,
+  // 17: "Log out everywhere" bumps a login's session_gen, which every login cookie is signed with.
+  `
+  ALTER TABLE logins ADD COLUMN session_gen INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 function openDatabase(file) {

@@ -1,6 +1,6 @@
 {
   "name": "simple-budget",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "description": "A simple, self-hosted 'deposit X into each account every payday' budgeting app.",
   "private": true,
   "main": "src/server.js",
@@ -9,9 +9,15 @@
   },
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning src/server.js",
-    "test": "node --disable-warning=ExperimentalWarning --test"
+    "test": "node --disable-warning=ExperimentalWarning --test",
+    "lint": "eslint ."
   },
   "dependencies": {
     "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.4",
+    "eslint": "9.39.4",
+    "globals": "16.5.0"
   }
 }

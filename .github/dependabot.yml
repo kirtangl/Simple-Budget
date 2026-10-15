@@ -1,0 +1,32 @@
+# Proposes a pull request when something the app is built with has a new version:
+# the GitHub actions, the Node image in the Dockerfile, the updater image in
+# docker-compose.yml, and the npm packages. Each one is pinned to an exact
+# version, so nothing changes until one of these is merged.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    ignore:
+      # Stay on Node 22 until the app is moved on deliberately.
+      - dependency-name: node
+        update-types: [version-update:semver-major]
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      npm:
+        patterns: ['*']

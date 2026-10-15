@@ -46,6 +46,7 @@ You need [Docker](https://docs.docker.com/get-docker/) with Docker Compose.
 git clone https://github.com/kirtangl/Simple-Budget.git
 cd Simple-Budget
 cp .env.example .env        # optional: change TZ if you're not in Queensland
+printf '\nUPDATER_TOKEN=%s\n' "$(openssl rand -hex 24)" >> .env   # the updater's own password
 docker compose up -d
 ```
 
@@ -67,6 +68,8 @@ To update, press **Update now** in Settings → Updates (see [Updating](#updatin
 ### Passwords and logins
 
 The first password is the **main** login. Add a login for each person under **Settings → Security**, each with its own password (at least 8 characters). Logins only tell the household apart: everyone sees the same budget. Change your own password there too; doing that logs your login out on every other device.
+
+A device stays logged in for 30 days after it was last used, so one you use every week never asks again, and one left behind stops working on its own. **Log out my other devices** (under Your password) ends your login everywhere but the device you're on, and **Log out everywhere** beside another login ends all of theirs, for example after a phone is lost. They log back in with their password.
 
 - Any login can add, rename or remove the other logins, and set a new password for one that's been forgotten.
 - The main login can't be removed, and only the main login can change its own password. Installing updates, restoring backups and Settings → Advanced are main login only too.
@@ -125,9 +128,18 @@ The app only offers what `IMAGE_TAG` can install, so a `latest` copy is never of
 
 **From the terminal** (or if you'd rather not run the updater): `git pull`, then `sudo docker compose pull && sudo docker compose up -d`. To build from the code instead, `sudo docker compose up -d --build`.
 
-**How the updater works:** it's [Watchtower](https://github.com/nicholas-fedor/watchtower), which needs the Docker socket to restart containers. It only acts when the app asks (no schedule), only touches this copy (its scope is `CONTAINER_NAME`), and its port isn't published, so only the app can reach it. `UPDATER_TOKEN` in `.env` sets the password between the two if you'd like your own. To do without it, remove the `updater` service from `docker-compose.yml`; the app then shows the terminal commands instead.
+**How the updater works:** it's [Watchtower](https://github.com/nicholas-fedor/watchtower), which needs the Docker socket to restart containers. It only acts when the app asks (no schedule), only touches this copy (its scope is `CONTAINER_NAME`), and its port isn't published, so only the app can reach it. `UPDATER_TOKEN` in `.env` is the password between the two. Give each copy its own (the setup commands above do), or anything on your network that can reach the server could ask the updater to restart the app; Settings → Updates warns while a copy still has the starting one. To set it on a copy you already run, in its folder:
+
+```sh
+printf '\nUPDATER_TOKEN=%s\n' "$(openssl rand -hex 24)" | sudo tee -a .env
+sudo docker compose up -d
+```
+
+To do without the updater, remove the `updater` service from `docker-compose.yml`; the app then shows the terminal commands instead.
 
 **Writing release notes:** Settings → Updates shows each release's notes as **New**, **Improved** and **Fixed** items, written for the household rather than for developers. Write them in `CHANGELOG.md` under `### New`, `### Improved` and `### Fixed` headings, then publish the release with its notes left empty: the release workflow copies that version's section in. Notes typed into the release by hand are kept, and notes without those headings are shown as written.
+
+**Running your own fork?** The image name `ghcr.io/kirtangl/simple-budget` is written into `.github/workflows/release-image.yml` and `docker-compose.yml`. Change it in both to your own (`ghcr.io/<you>/<repo>`, lower case) so your releases build, and your copies install, your image rather than this one.
 
 No setup is needed for update checks. GitHub allows about 60 checks an hour without a login, far more than the app uses. If you run a private fork, add a fine-grained token with read-only **Contents** access as `GITHUB_TOKEN=...` and set `UPDATE_REPO=owner/name` (or set both in Settings → Advanced).
 
@@ -143,6 +155,7 @@ echo "CONTAINER_NAME=simple-budget-test" >> .env
 echo "HOST_PORT=3001" >> .env
 echo "APP_CHANNEL=test" >> .env
 echo "IMAGE_TAG=beta" >> .env
+printf '\nUPDATER_TOKEN=%s\n' "$(openssl rand -hex 24)" >> .env
 docker compose up -d
 ```
 
@@ -165,7 +178,7 @@ The two test settings do different jobs:
 | `APP_CHANNEL=test` | The **Test** tag in the header and page title, so you can tell the copies apart. Only a label. | `.env`, or Build tag in Settings → Advanced if it isn't in `.env` |
 | `IMAGE_TAG=beta` | Which versions it's offered and installs: pre-releases too. Also keeps it from sharing an image with the live copy. | `.env` only (Docker reads it before the app starts) |
 
-**To try a pull request without the terminal**, publish a pre-release from its branch: on GitHub, **Releases → Draft a new release**, choose the branch as the target, type a new tag like `v0.8.0-beta.1`, tick **Set as a pre-release**, and publish. The image is built in a few minutes, then the test copy (on `IMAGE_TAG=beta`) offers it under **Update now**. The live copy on `latest` never sees it. When the pull request is merged, publish the full release (`v0.8.0`) from `main` and both copies are offered it.
+**To try a pull request without the terminal**, publish a pre-release from its branch: on GitHub, **Releases → Draft a new release**, choose the branch as the target, type a new tag like `v0.8.0-beta.1`, tick **Set as a pre-release**, and publish. If someone else wrote the branch, first look at what it changes in the `.github` folder: a release runs the build steps as they are on that branch, with permission to publish images, so only release a branch whose `.github` changes you understand. To be asked before any image is published, add a required reviewer to the **release** environment under the repository's Settings → Environments on GitHub. The image is built in a few minutes, then the test copy (on `IMAGE_TAG=beta`) offers it under **Update now**. The live copy on `latest` never sees it. When the pull request is merged, publish the full release (`v0.8.0`) from `main` and both copies are offered it.
 
 Or from the terminal: `git checkout <branch> && git pull`, then `sudo docker compose up -d --build`. **Update now** later puts it back on the newest release.
 
@@ -174,6 +187,8 @@ To turn a test copy into a normal one, remove the `APP_CHANNEL` and `IMAGE_TAG` 
 ### Using it away from home
 
 The app is meant to run on your home network. To reach it from outside, put it behind something that adds HTTPS, such as [Tailscale](https://tailscale.com/), a Cloudflare Tunnel, or a reverse proxy like Caddy, and turn on **Secure cookies** in Settings → Advanced (or set `SECURE_COOKIES=true`). If it's reached through your own domain, add it there too (or to `ALLOWED_HOSTS`). Don't expose port 3000 directly to the internet.
+
+HTTPS is worth having at home too. Without it, passwords and the login cookie cross your Wi-Fi as plain text. If you use Tailscale, `sudo tailscale serve --bg 3000` on the server gives the app an `https://<server>.<tailnet>.ts.net` address; Caddy can do the same with a local certificate. Then turn on **Secure cookies**.
 
 ## Running without Docker
 
@@ -194,6 +209,7 @@ The database is created at `data/budget.db`. Log in with `simplebudget` (or `STA
 - **Frontend**: plain HTML, CSS and JavaScript in `public/`, with no build step.
 - **API**: everything the app does goes through a JSON API under `/api` (`/api/data`, which includes each account's deposit, `/api/cycle?offset=N`, and CRUD endpoints for `accounts`, `payees`, `categories`, `subcategories`, `expenses`, `incomes`, `goals`, `loans`, plus `me` and `logins`). That keeps the door open for native phone apps later.
 - **Backups**: the format is documented in `src/api.js`. If you change it, bump `BACKUP_FORMAT_VERSION` and add an upgrade step so older files still restore.
+- **Checks**: `npm run lint` looks for likely mistakes (unused or misspelled names) with ESLint. GitHub runs it with the tests on every pull request.
 - **Tests**: `npm test` runs them. They include a made-up household whose deposits were worked out by hand.
 
 ```

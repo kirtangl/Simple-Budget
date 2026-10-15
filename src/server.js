@@ -241,6 +241,7 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
   app.post('/api/logins', auth.require, auth.addLogin);
   app.patch('/api/logins/:id', auth.require, auth.updateLogin);
   app.delete('/api/logins/:id', auth.require, auth.removeLogin);
+  app.post('/api/logins/:id/logout-everywhere', auth.require, auth.logoutEverywhere);
 
   // Settings → Advanced: server settings. Anyone can look; only the main login can change them.
   const isHttps = (req) => req.secure || String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';

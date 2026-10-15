@@ -40,7 +40,8 @@ services:
   # budget-data volume. It only does anything when the app asks, and its port
   # isn't published, so only the app can reach it.
   updater:
-    image: nickfedor/watchtower:1
+    # An exact version (and its digest), since it can restart containers. Dependabot proposes updates.
+    image: nickfedor/watchtower:1.23.1@sha256:3175c006eb20112f3a70f7002f82dbf4a4078c97e7033735a4d153668fc3dfb1
     container_name: ${CONTAINER_NAME:-simple-budget}-updater
     restart: unless-stopped
     environment:

@@ -2325,7 +2325,6 @@
     const sch = l.scheduled;
     const bud = l.budgeted;
     const a = account(l.account_id);
-    const today = state.data.settings.today;
     const off = payoffVsEnd(l);
     const unit = (r) => html` <span class="unit">/ ${FREQ_UNIT[r.frequency]}</span>`;
     const cell = (label, value, sub, cls = '') => html`<div class="lc-cell"><div class="lc-label">${label}</div><div class="lc-value num">${value}</div><div class="lc-sub ${cls}">${sub}</div></div>`;
@@ -2548,7 +2547,6 @@
     const cell = (label, value, sub, color = '') => html`<div class="lc-cell"><div class="lc-label">${label}</div><div class="lc-value big num" style="${color ? `color:${color}` : ''}">${value}</div><div class="lc-sub">${sub}</div></div>`;
     const ppy = state.data.settings.pays_per_year;
     const freqYear = { weekly: 52, fortnightly: 26, monthly: 12 }[freq];
-    const word = cycleWord();
     // Room under the limit each pay, after what's already committed.
     const room = r ? Math.round(((r.income_per_year_cents * r.limit_percent) / 100 - r.committed_per_year_cents) / ppy) : null;
     if (!r) {
@@ -3193,12 +3191,27 @@
     if (!u) return html`<div class="card"><p class="muted">Couldn't load update details.</p></div>`;
     const main = Boolean(state.me && state.me.main);
     return html`
+      ${u.default_token ? updTokenCard() : ''}
       ${updMainCard(u, main)}
       <div class="upd-grid">
         ${updNotesCard(u)}
         <div class="upd-side">${updBackupsCard(main)}${updPrefsCard(u, main)}</div>
       </div>`;
   }
+
+  // This copy still uses the updater password every copy starts with.
+  function updTokenCard() {
+    return html`<div class="card adv-warning upd-token">
+      <h2>Give the updater its own password</h2>
+      <p class="small">This copy still uses the updater password every copy of Simple Budget starts with, so anything on your network that
+        can reach the server could ask the updater to restart the app. In the app's folder on the server, run these two commands once.
+        Updating works the same way afterwards.</p>
+      <pre class="upd-cmd">${TOKEN_CMD}</pre>
+      <div class="row"><button data-action="copy-token-cmd">Copy commands</button></div>
+    </div>`;
+  }
+  // printf starts a new line first, in case .env doesn't end with one.
+  const TOKEN_CMD = 'printf \'\\nUPDATER_TOKEN=%s\\n\' "$(openssl rand -hex 24)" | sudo tee -a .env\nsudo docker compose up -d';
 
   // The one card at the top, which changes with what's happening.
   function updMainCard(u, main) {
@@ -3446,8 +3459,10 @@ sudo docker compose up -d --build</pre>`;
     return html`
       <div class="card">
         <h2>Your password</h2>
-        <p class="muted small">You're logged in as <b>${state.me ? state.me.name : ''}</b>. Changing your password logs this login out on your other devices.</p>
-        <div class="row"><button data-action="change-password">Change my password</button><button data-action="logout">Log out on this device</button></div>
+        <p class="muted small">You're logged in as <b>${state.me ? state.me.name : ''}</b>. Changing your password logs this login out on your other devices.
+          Logins last 30 days from when the device was last used.</p>
+        <div class="row"><button data-action="change-password">Change my password</button><button data-action="logout">Log out on this device</button>
+          ${state.me ? html`<button data-action="logout-everywhere" data-id="${state.me.id}" data-you="1">Log out my other devices</button>` : ''}</div>
       </div>
       <div class="card">
         <div class="card-head"><div><h2>Logins</h2>
@@ -3462,6 +3477,7 @@ sudo docker compose up -d --build</pre>`;
             <button type="button" class="small" data-action="rename-login" data-id="${l.id}">Edit</button>
             ${l.you ? html`<button type="button" class="small" data-action="change-password">Change password</button>`
               : l.main ? '' : html`<button type="button" class="small" data-action="set-login-password" data-id="${l.id}" data-name="${l.name}">Set password</button>`}
+            ${l.you ? '' : html`<button type="button" class="small" data-action="logout-everywhere" data-id="${l.id}" data-name="${l.name}">Log out everywhere</button>`}
             ${!l.main && !l.you ? html`<button type="button" class="small danger" data-action="remove-login" data-id="${l.id}" data-name="${l.name}">Remove</button>` : ''}
           </div></li>`)}</ul>
       </div>`;
@@ -3890,6 +3906,13 @@ sudo docker compose up -d --build</pre>`;
     'new-login': () => loginForm(),
     'rename-login': (el) => { const l = (state.logins || []).find((x) => String(x.id) === el.dataset.id); if (l) loginForm({ ...l, mode: 'rename' }); },
     'set-login-password': (el) => loginForm({ id: el.dataset.id, name: el.dataset.name, mode: 'password' }),
+    'logout-everywhere': async (el) => {
+      const you = Boolean(el.dataset.you);
+      if (!confirm(you ? 'Log out your login on every other device? This device stays logged in.'
+        : `Log out "${el.dataset.name}" on every device? They'll need their password to log in again.`)) return;
+      await api('POST', `/logins/${el.dataset.id}/logout-everywhere`);
+      toast(you ? 'Logged out on your other devices' : `${el.dataset.name} is logged out everywhere`);
+    },
     'remove-login': async (el) => {
       if (!confirm(`Remove the login "${el.dataset.name}"? Anyone using it will be logged out. The budget isn't affected.`)) return;
       await api('DELETE', `/logins/${el.dataset.id}`);
@@ -3994,6 +4017,7 @@ sudo docker compose up -d --build</pre>`;
     'copy-update-cmd': async () => {
       await copyText('git pull\nsudo docker compose up -d --build', 'Commands');
     },
+    'copy-token-cmd': async () => { await copyText(TOKEN_CMD, 'Commands'); },
   };
 
   function closeMenu() {
