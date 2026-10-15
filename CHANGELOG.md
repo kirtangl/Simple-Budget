@@ -10,7 +10,7 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 ### Improved
 - A device stays logged in for 30 days from when it was last used, instead of a year from when it logged in. A device you use regularly never asks again; one left behind stops working by itself.
 - Passwords are stored with stronger protection. Each one is upgraded the next time it's used to log in, which logs that login out once on its other devices.
-- Settings → Updates warns if this copy's updater still has the password every copy starts with, explains how much that matters, and gives the two commands that fix it. Until then, a red dot on Settings and on the Updates tab points the way (main login only).
+- Settings → Updates warns if this copy's updater still has the password every copy starts with, explains how much that matters, and gives the two commands that fix it. Until then, a red dot on Settings and on the Updates tab points the way (main login only). **Ignore** hides the dots and folds the warning to its heading, with a + to open it again.
 
 For whoever runs the server: give the updater its own password if Settings → Updates asks (see "How the updater works" in the README). Then run `git pull` and `sudo docker compose up -d` once, so the updater runs the exact version this release names. Server backups are now readable only by the app. The build pins Node and every GitHub action to an exact version, Dependabot proposes updates to them, and only the publishing step can write images. The README now covers HTTPS at home, checking a branch's `.github` folder before releasing it, and the image name for forks.
 

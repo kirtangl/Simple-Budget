@@ -630,6 +630,8 @@ test('Settings → Updates warns while the updater still has the starting passwo
   assert.equal(make('http://updater:8080', '').view().default_token, true);
   assert.equal(make('http://updater:8080', 'a-long-random-token').view().default_token, false);
   assert.equal(make('', '').view().default_token, false, 'no updater, nothing to warn about');
+  const ignored = createUpdates({ version: '0.9.0', settings: () => ({ channel: '', repo: 'x/y', token: '' }), updater: () => ({ url: 'http://updater:8080', token: '' }), prefs: () => ({ tokenIgnored: true }) });
+  assert.deepEqual([ignored.view().default_token, ignored.view().token_ignored], [true, true], 'ignoring keeps the warning, only marked');
 });
 
 test('backups: listed, made by hand, and restored without touching logins', async () => {
@@ -704,6 +706,9 @@ test('updates: preferences, versions behind, and the welcome after an update', a
       r = await call('PUT', '/updates/prefs', { auto_check: false });
       assert.equal(r.body.auto_check, false);
       assert.equal((await call('PUT', '/updates/prefs', { beta: 'yes' })).status, 400);
+      assert.equal((await call('PUT', '/updates/prefs', { token_ignored: true })).body.token_ignored, true);
+      assert.equal((await call('PUT', '/updates/prefs', { token_ignored: false })).body.token_ignored, false);
+      assert.equal((await call('PUT', '/updates/prefs', { token_ignored: 'yes' })).status, 400);
     });
     // With the updater, IMAGE_TAG decides and the switch is locked.
     process.env.UPDATER_URL = 'http://updater:8080';

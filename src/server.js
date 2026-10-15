@@ -93,6 +93,7 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
         autoCheck: getSetting(db, 'updates_auto_check') !== '0',
         intervalHours: numSetting('updates_interval_hours', INTERVALS, 6),
         waitDay: getSetting(db, 'updates_wait_day') === '1',
+        tokenIgnored: getSetting(db, 'updater_token_ignored') === '1',
         beta: beta === '1' ? true : beta === '0' ? false : null,
       };
     },
@@ -189,6 +190,11 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
     if ('wait_day' in body) {
       if (typeof body.wait_day !== 'boolean') return res.status(400).json({ error: 'wait_day should be true or false.' });
       setSetting(db, 'updates_wait_day', body.wait_day ? '1' : '0');
+    }
+    // "Ignore" on the updater password warning: it stays, folded up, without the red dots.
+    if ('token_ignored' in body) {
+      if (typeof body.token_ignored !== 'boolean') return res.status(400).json({ error: 'token_ignored should be true or false.' });
+      setSetting(db, 'updater_token_ignored', body.token_ignored ? '1' : '0');
     }
     if ('interval_hours' in body) {
       if (!INTERVALS.includes(body.interval_hours)) return res.status(400).json({ error: `interval_hours should be one of ${INTERVALS.join(', ')}.` });

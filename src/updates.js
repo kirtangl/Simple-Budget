@@ -187,6 +187,7 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
       // Still on the updater password everyone's copy starts with, which anything on the
       // server's network could use to make the updater restart the app.
       default_token: Boolean(updater().url) && (!updater().token || updater().token === DEFAULT_UPDATER_TOKEN),
+      token_ignored: Boolean(p.tokenIgnored),
       // Published on GitHub, but its image is still being built.
       building: Boolean(latest && state.imageReady === false && state.imageFor === latest.version),
       track: track(),

@@ -3139,7 +3139,7 @@
     item.hidden = !on;
     if (on) item.textContent = `Update to v${u.latest.version}`;
     // Red until the updater has its own password (only the main login runs the server).
-    const fix = Boolean(u && u.default_token && state.me && state.me.main);
+    const fix = needsToken(u);
     for (const dot of document.querySelectorAll('.st-dot')) { dot.hidden = !on && !fix; dot.classList.toggle('st-dot-warn', fix); }
     document.getElementById('settings-dot').hidden = !fix;
   }
@@ -3205,14 +3205,26 @@
   // The Updates tab's dot: brand-coloured for a new version, red while the updater needs its own password.
   function updTabDot() {
     const u = state.updates;
-    const fix = Boolean(u && u.default_token && state.me && state.me.main);
+    const fix = needsToken(u);
     return html`<span class="st-dot ${fix ? 'st-dot-warn' : ''}" ${(u && u.available) || fix ? '' : raw('hidden')}></span>`;
   }
 
-  // This copy still uses the updater password every copy starts with.
+  // Red dots for the updater password: main login only (it runs the server), and not once ignored.
+  const needsToken = (u) => Boolean(u && u.default_token && !u.token_ignored && state.me && state.me.main);
+
+  // This copy still uses the updater password every copy starts with. Ignoring it folds
+  // the card to its heading (+ opens it again) and hides the red dots.
   function updTokenCard() {
+    const u = state.updates;
+    const main = Boolean(state.me && state.me.main);
+    const open = !u.token_ignored || state.tokenOpen;
+    const head = u.token_ignored
+      ? html`<button type="button" class="upd-token-head" data-action="toggle-token-card" aria-expanded="${open ? 'true' : 'false'}">
+          <h2>Give the updater its own password</h2><span class="upd-token-plus" aria-hidden="true">${open ? '−' : '+'}</span></button>`
+      : html`<h2>Give the updater its own password</h2>`;
+    if (!open) return html`<div class="card adv-warning upd-token folded">${head}</div>`;
     return html`<div class="card adv-warning upd-token">
-      <h2>Give the updater its own password</h2>
+      ${head}
       <p class="small">This copy's updater still has the password every copy of Simple Budget starts with. The updater can restart the app
         and install new versions, and its password is how it knows a request really came from your copy. Its port is never opened, so
         only something already running on the server could use it.</p>
@@ -3223,7 +3235,8 @@
       </ul>
       <p class="small">In the app's folder on the server, run these two commands once. Updating works the same way afterwards.</p>
       <pre class="upd-cmd">${TOKEN_CMD}</pre>
-      <div class="row"><button data-action="copy-token-cmd">Copy commands</button></div>
+      <div class="row"><button data-action="copy-token-cmd">Copy commands</button>
+        ${main ? html`<button data-action="ignore-token" data-on="${u.token_ignored ? '0' : '1'}">${u.token_ignored ? 'Stop ignoring' : 'Ignore'}</button>` : ''}</div>
     </div>`;
   }
   // printf starts a new line first, in case .env doesn't end with one.
@@ -4034,6 +4047,13 @@ sudo docker compose up -d --build</pre>`;
       await copyText('git pull\nsudo docker compose up -d --build', 'Commands');
     },
     'copy-token-cmd': async () => { await copyText(TOKEN_CMD, 'Commands'); },
+    'toggle-token-card': () => { state.tokenOpen = !state.tokenOpen; render(); },
+    'ignore-token': async (el) => {
+      state.updates = await api('PUT', '/updates/prefs', { token_ignored: el.dataset.on === '1' });
+      state.tokenOpen = false;
+      showUpdateBadge();
+      render();
+    },
   };
 
   function closeMenu() {

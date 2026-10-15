@@ -403,6 +403,11 @@ input::-webkit-date-and-time-value { text-align: left; }
 .upd-risk { margin: 8px 0; padding-left: 20px; }
 .upd-risk li { margin: 4px 0; }
 .st-dot.st-dot-warn { background: var(--danger); }
+.upd-token-head { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; }
+.upd-token-head:focus-visible { outline: 2px solid var(--danger); outline-offset: 4px; border-radius: 6px; }
+.upd-token-head h2 { margin: 0; }
+.upd-token-plus { font-size: 1.4rem; line-height: 1; color: var(--danger); font-weight: 600; }
+.upd-token:not(.folded) .upd-token-head { margin-bottom: 8px; }
 .adv-agree { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); }
 .adv-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
 .adv-fields[disabled] { opacity: .55; }
