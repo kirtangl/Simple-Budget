@@ -4089,6 +4089,7 @@ sudo docker compose up -d --build</pre>`;
       let data;
       try { data = JSON.parse(await file.text()); } catch { throw new Error("That file isn't a valid backup."); }
       const result = await api('POST', '/import', data);
+      state.backups = null; // the copy saved before the restore is new, so load the list again
       await reload();
       state.offset = 0;
       render();
