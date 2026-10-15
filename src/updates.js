@@ -96,10 +96,13 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
   }
   let state = EMPTY;
   let running = null;
+  // Goes up on every reset, so a check that started before it can't write its old answer.
+  let generation = 0;
 
   async function check() {
     if (running) return running;
     const { channel, repo, token } = current();
+    const gen = generation;
     const p = (async () => {
       try {
         const res = await fetchImpl(`https://api.github.com/repos/${repo}/releases?per_page=30`, {
@@ -128,20 +131,23 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
         // The installed version's notes too, even if it's a beta no longer offered.
         const mine = releases.find((r) => !r.draft && parseVersion(r.tag_name) && compareVersions(r.tag_name, version) === 0);
         if (mine && !list.some((r) => r.version === tidy(mine).version)) list.push(tidy(mine));
-        state = {
+        const found = {
           checkedAt: new Date().toISOString(),
           error: null,
           latest: list[0] || null,
           releases: list,
           imageReady: null,
         };
-        if (updater().url && state.latest && compareVersions(state.latest.version, version) > 0) {
-          state.imageReady = await imageReady(repo, state.latest.version);
-          state.imageFor = state.latest.version;
+        if (updater().url && found.latest && compareVersions(found.latest.version, version) > 0) {
+          found.imageReady = await imageReady(repo, found.latest.version);
+          found.imageFor = found.latest.version;
         }
+        if (gen === generation) state = found;
       } catch (err) {
         const timedOut = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
-        state = { ...state, checkedAt: new Date().toISOString(), error: timedOut ? 'GitHub took too long to answer. Try again later.' : (err.message || 'Could not reach GitHub.') };
+        if (gen === generation) {
+          state = { ...state, checkedAt: new Date().toISOString(), error: timedOut ? 'GitHub took too long to answer. Try again later.' : (err.message || 'Could not reach GitHub.') };
+        }
       }
       return state;
     })();
@@ -222,7 +228,8 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
     view,
     install,
     // Forget the last result, e.g. after the repository or token changes.
-    reset() { state = EMPTY; },
+    // A check already under way is left to finish, but its answer is ignored.
+    reset() { state = EMPTY; running = null; generation += 1; },
     // Check soon after starting, then every few hours (Preferences), unless that's turned off.
     start() {
       const auto = () => {
@@ -233,13 +240,18 @@ function createUpdates({ version, channel, repo, token, settings, updater = () =
       setTimeout(auto, 5000).unref();
       setInterval(auto, 5 * 60 * 1000).unref();
     },
-    async get(req, res) {
-      if (!state.checkedAt && prefs().autoCheck !== false) await check();
-      res.json(view());
+    // Express 4 doesn't catch a failed promise, so these hand any error on themselves.
+    async get(req, res, next) {
+      try {
+        if (!state.checkedAt && prefs().autoCheck !== false) await check();
+        res.json(view());
+      } catch (err) { next(err); }
     },
-    async checkNow(req, res) {
-      await check();
-      res.json(view());
+    async checkNow(req, res, next) {
+      try {
+        await check();
+        res.json(view());
+      } catch (err) { next(err); }
     },
   };
 }

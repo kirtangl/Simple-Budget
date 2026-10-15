@@ -233,12 +233,19 @@ const MIGRATIONS = [
   ALTER TABLE expenses ADD COLUMN pending_from TEXT;
   ALTER TABLE amount_history ADD COLUMN before_value NUMERIC;
   `,
+  // 16: who made each history change was recorded but never shown, and wasn't cleared when
+  // a login was removed. It's no longer kept (the column stays, empty).
+  `
+  UPDATE amount_history SET login_id = NULL;
+  `,
 ];
 
 function openDatabase(file) {
   if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec('PRAGMA foreign_keys = ON;');
+  // reset-password.js opens its own connection while the app runs: wait for a save to finish rather than fail.
+  db.exec('PRAGMA busy_timeout = 5000;');
   if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL;');
 
   const { user_version: version } = db.prepare('PRAGMA user_version').get();
@@ -284,20 +291,31 @@ function transaction(db, fn) {
     db.exec('COMMIT');
     return result;
   } catch (err) {
-    db.exec('ROLLBACK');
+    // SQLite may have rolled back already (a full disk, say); the first error is the one that matters.
+    try { db.exec('ROLLBACK'); } catch { /* nothing left to roll back */ }
     throw err;
   }
 }
 
+// Settings are read many times a request, so their statements are prepared once per database.
+const settingStatements = new WeakMap();
+function settingStatement(db, which) {
+  if (!settingStatements.has(db)) {
+    settingStatements.set(db, {
+      get: db.prepare('SELECT value FROM settings WHERE key = ?'),
+      set: db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'),
+    });
+  }
+  return settingStatements.get(db)[which];
+}
+
 function getSetting(db, key) {
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  const row = settingStatement(db, 'get').get(key);
   return row ? row.value : undefined;
 }
 
 function setSetting(db, key, value) {
-  db.prepare(
-    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
-  ).run(key, value);
+  settingStatement(db, 'set').run(key, value);
 }
 
 module.exports = { openDatabase, transaction, getSetting, setSetting };

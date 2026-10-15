@@ -418,4 +418,4 @@ function createAuth({ db, secret, secureCookies }) {
   };
 }
 
-module.exports = { createAuth, resetPassword, startPassword, DEFAULT_PASSWORD, MIN_LENGTH, THEME_COLOURS };
+module.exports = { createAuth, resetPassword };

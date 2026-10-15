@@ -1,17 +1,15 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
 const { openDatabase, getSetting, setSetting } = require('./db');
 const { createAuth } = require('./auth');
 const { createApi } = require('./api');
-const { createUpdates, UpdateError, compareVersions } = require('./updates');
+const { createUpdates, UpdateError, compareVersions, parseVersion } = require('./updates');
 const { createBackups, BackupError } = require('./backups');
 const { createConfig, ConfigError, splitHosts } = require('./config');
 const { version: PACKAGE_VERSION } = require('../package.json');
-const { parseVersion } = require('./updates');
 
 // A release image is stamped with its release's version (APP_VERSION, set when
 // it's built), so a pre-release like 0.8.0-beta.1 knows it's that, not 0.8.0.
@@ -150,6 +148,9 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
     next(); // neither header: a script or the command line, which a browser page can't pretend to be
   });
 
+  // Express 4 doesn't catch a failed promise: pass the error on, so it's a 500, not a crash.
+  const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
   app.get('/api/version', (req, res) => res.json({ version: VERSION, channel: appChannel(config.channel()) }));
   app.get('/api/session', auth.status);
   // Only the login form's JSON counts as a try, so a stray form post from another page can't lock anyone out.
@@ -172,7 +173,7 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
     res.json(updates.view());
   });
   // Settings → Updates → Preferences. Main login only, like installing.
-  app.put('/api/updates/prefs', auth.require, async (req, res) => {
+  app.put('/api/updates/prefs', auth.require, asyncRoute(async (req, res) => {
     if (req.login.id !== 0) return res.status(403).json({ error: 'Only the main login can change these.' });
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     if ('beta' in body) {
@@ -199,7 +200,7 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
     }
     if (!updates.view().checkedAt && updates.view().auto_check) await updates.check();
     res.json(updates.view());
-  });
+  }));
 
   // Backups of the whole database, kept on the server. Anyone can make one; only the main login can restore.
   const backupError = (fn) => async (req, res, next) => {
@@ -317,8 +318,14 @@ if (require.main === module) {
     }
   });
   // Docker asks the app to stop (an update, a restart, or `docker compose down`).
-  // Stop at once instead of waiting to be killed, closing the database cleanly.
-  const stop = () => { server.close(); try { db.close(); } catch { /* already closed */ } process.exit(0); };
+  // Stop taking new requests, let the ones under way finish (a backup download, say),
+  // then close the database cleanly. Docker waits 10 seconds, so give up after 8.
+  const stop = () => {
+    const done = () => { try { db.close(); } catch { /* already closed */ } process.exit(0); };
+    server.close(done);
+    server.closeIdleConnections();
+    setTimeout(done, 8000).unref();
+  };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
 }

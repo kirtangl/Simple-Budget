@@ -97,24 +97,13 @@
   const subcategory = (id) => state.data.categories.flatMap((c) => c.subcategories).find((s) => s.id === id);
   const bankTip = (a) => [a.institution, a.bsb && `BSB ${a.bsb}`, a.account_number && `Acc ${a.account_number}`].filter(Boolean).join('\n');
 
-  // Mirrors src/budget.js: round the account's whole total up, then add the buffer %.
-  const ROUNDING_STEP = { exact: 1, up5: 500, up10: 1000 };
   const HELD_LABELS = { year: 'Over the next 12 months', financial: 'Up to the end of the financial year (30 June)', calendar: 'Up to the end of the calendar year (31 December)' };
   const ROUNDING_LABELS = { exact: 'Exact (no rounding)', up5: 'Round up to the next $5', up10: 'Round up to the next $10' };
-  function roundUp(cents) {
-    const step = ROUNDING_STEP[state.data.settings.rounding] || 1;
-    return Math.max(0, Math.ceil(cents / step - 1e-9) * step);
-  }
-  const withBuffer = (cents) => Math.round((cents * (100 + (state.data.settings.buffer_percent || 0))) / 100);
 
-  // Rows that count today: active, and not a temporary one that has ended or not started.
-  const current = (e) => e.active !== 0 && (!e.end_date || e.end_date >= state.data.settings.today) && (!e.start_date || e.start_date <= state.data.settings.today);
-
-  function depositFor(accountId) {
-    const avg = [...state.data.expenses.filter(current), ...state.data.loans]
-      .filter((e) => e.account_id === accountId).reduce((s, e) => s + e.per_pay_exact_cents, 0);
-    return withBuffer(roundUp(avg));
-  }
+  // The server works out the deposits, and which bills and loans they cover this cycle,
+  // the same way the Overview does, so every page shows the same numbers.
+  const inDeposit = (e) => Boolean(e.in_deposit);
+  const depositFor = (accountId) => (state.data.deposits && state.data.deposits[accountId]) || 0;
 
   function depositNote() {
     const s = state.data.settings;
@@ -429,9 +418,8 @@
   const aCycle = () => `a ${cycleWord()}`;
   const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
   const INCOME_FREQ = { weekly: 'Weekly', fortnightly: 'Fortnightly', monthly: 'Monthly' };
-  const INCOME_PER_YEAR = { weekly: 52, fortnightly: 26, monthly: 12 };
-  // An income's after-tax pay, averaged per budget cycle ($3,000 fortnightly is $6,500 a month).
-  const incomePerCycle = (i) => Math.round((i.after_tax_cents * (INCOME_PER_YEAR[i.frequency] || 26)) / state.data.settings.pays_per_year);
+  // An income's after-tax pay, averaged per budget cycle ($3,000 fortnightly is $6,500 a month), from the server.
+  const incomePerCycle = (i) => i.per_cycle_cents ?? 0;
   // "($3,000 fortnightly)" beside a per-cycle amount, only when it is paid on a different rhythm to the budget.
   const rhythm = (cents, freq) => (freq && freq !== state.data.settings.pay_frequency && FREQ_LABELS[freq]
     ? html` <span class="rhythm">(${money(cents)} ${FREQ_LABELS[freq].toLowerCase()})</span>` : '');
@@ -622,7 +610,7 @@
       title: `Update ${e.name}`,
       body: html`
         <p class="muted small" style="margin-top:0">It's ${now} now.${review ? " Leave it as is if it hasn't changed." : ''}
-          ${e.pending_from ? html` <b>${money(e.pending_cents)}</b> is already set from ${fmtDate(e.pending_from, true)}; saving replaces it.` : ''}</p>
+          ${e.pending_from ? html` <b>${money(e.pending_cents)}</b> is already set from ${fmtDate(e.pending_from, true)}. Another future date replaces it; today or earlier keeps it.` : ''}</p>
         <div class="fields">
           <div class="field"><label for="r-amount">New amount, ${isSplit(e) ? 'yearly' : (FREQ_LABELS[e.frequency] || '').toLowerCase()} ($)</label>
             <input id="r-amount" name="amount" inputmode="decimal" value="${moneyInput(e.pending_cents ?? billCents(e))}" required></div>
@@ -795,7 +783,7 @@
   // send each to where it's fixed: the Loans page for loans, Expenses for the rest.
   function unassignedNote(cents) {
     const items = [
-      ...state.data.expenses.filter((e) => current(e) && !e.account_id).map((e) => ({ name: e.name, action: 'edit-expense', id: e.id })),
+      ...state.data.expenses.filter((e) => inDeposit(e) && !e.account_id).map((e) => ({ name: e.name, action: 'edit-expense', id: e.id })),
       ...state.data.loans.filter((l) => !l.account_id && l.per_pay_cents).map((l) => ({ name: l.name, action: 'edit-loan', id: l.id })),
     ];
     const loans = items.filter((i) => i.action === 'edit-loan').length;
@@ -969,7 +957,7 @@
     const months = state.trends;
     const k = ANA_PERIODS[anaPeriod()].factor();
     const sc = (v) => Math.round(v * k);
-    const perPayRows = [...state.data.expenses.filter(current), ...state.data.loans.filter((l) => l.per_pay_cents)];
+    const perPayRows = [...state.data.expenses.filter(inDeposit), ...state.data.loans.filter((l) => l.per_pay_cents)];
     const spend = perPayRows.filter((e) => kindOf(e) === 'expense' || e.show_as_expense || e.repayment_frequency);
 
     // Spending by category (loans count under their category, or "Loans"). These colours are shared by the cash flow and the donut.
@@ -1022,7 +1010,7 @@
     const outside = incomes.filter((i) => i.include_in_budget === 0);
     const incomeOf = (i) => sc(incomePerCycle(i));
     const income = inBudget.reduce((s, i) => s + incomeOf(i), 0);
-    const savings = sc(state.data.expenses.filter((e) => current(e) && kindOf(e) === 'saving' && !e.show_as_expense).reduce((s, e) => s + e.per_pay_cents, 0));
+    const savings = sc(state.data.expenses.filter((e) => inDeposit(e) && kindOf(e) === 'saving' && !e.show_as_expense).reduce((s, e) => s + e.per_pay_cents, 0));
     const spending = categorySegments.reduce((s, x) => s + x.value, 0);
     if (!income && !spending) return html`<p class="empty">Add income and expenses to see the flow.</p>`;
 
@@ -1415,7 +1403,7 @@
     const sortBy = state.expenseSort || 'due';
     const byCategory = state.expenseGroup === 'category';
     const { all, list, accounts, noAccount } = expenseRows(kind);
-    const perCycle = (items) => items.filter(current).reduce((s, e) => s + e.per_pay_cents, 0);
+    const perCycle = (items) => items.filter(inDeposit).reduce((s, e) => s + e.per_pay_cents, 0);
 
     const groups = (byCategory
       ? [...state.data.categories.map((c) => ({ id: c.id, name: c.name })), { id: null, name: 'No category' }]
@@ -1940,15 +1928,6 @@
     }
   });
 
-  // Saves a category's colour, creating the category if it's new. Returns its name as saved.
-  async function saveGroup(kind, name, color) {
-    if (!name) return null;
-    const existing = findGroup(kind, name);
-    if (!existing) return (await api('POST', '/goal_groups', { kind, name, color })).name;
-    if (existing.color !== color) await api('PATCH', `/goal_groups/${existing.id}`, { color });
-    return existing.name;
-  }
-
   function goalForm(kind, g = { kind, current_cents: 0 }) {
     const k = KIND[kind];
     const accounts = state.data.accounts;
@@ -2001,7 +1980,8 @@
           if (body.start_date && body.target_date && body.target_date < body.start_date) throw new Error('The pay off date is before the start date.');
         }
         if (!body.name) throw new Error('Please give it a name.');
-        body.group_name = await saveGroup(kind, body.group_name, val(form, 'group_color'));
+        // A new category, or a new colour for one, is saved with the goal.
+        if (body.group_name) body.group_color = val(form, 'group_color');
         await (g.id ? api('PATCH', `/goals/${g.id}`, body) : api('POST', '/goals', body));
         await reload();
       },
@@ -2027,12 +2007,8 @@
         if (existing) {
           await api('PATCH', `/goal_groups/${existing.id}`, body);
         } else {
-          // A category that only existed as a name on its goals: save it, then move the goals.
-          await api('POST', '/goal_groups', { kind, ...body });
-          if (newName !== name) {
-            const moving = state.data.goals.filter((g) => g.kind === kind && (g.group_name || '').toLowerCase() === name.toLowerCase());
-            for (const g of moving) await api('PATCH', `/goals/${g.id}`, { group_name: newName });
-          }
+          // A category that only existed as a name on its goals: save it, and its goals move with it.
+          await api('POST', '/goal_groups', { kind, ...body, from_name: name });
         }
         await reload();
       },
@@ -2040,8 +2016,7 @@
         if (existing) {
           await api('DELETE', `/goal_groups/${existing.id}`);
         } else {
-          const moving = state.data.goals.filter((g) => g.kind === kind && (g.group_name || '').toLowerCase() === name.toLowerCase());
-          for (const g of moving) await api('PATCH', `/goals/${g.id}`, { group_name: null });
+          await api('POST', '/goal_groups/clear', { kind, name });
         }
         await reload();
       },
@@ -2135,24 +2110,6 @@
   const monthName = (i) => `${MONTHS[i % 12]} ${Math.floor(i / 12)}`;
   const spanText = (m) => [Math.floor(m / 12) ? `${Math.floor(m / 12)} yr${Math.floor(m / 12) === 1 ? '' : 's'}` : '', m % 12 ? `${m % 12} mo` : ''].filter(Boolean).join(' ') || 'Under a month';
 
-  // Month-by-month from today's balance: interest on what's not offset, then the monthly repayment (plus any extra).
-  function payExtraSim(l, extra) {
-    const b = l.budgeted;
-    const perMonth = b.per_month_cents + (extra * LOAN_PER_YEAR[b.frequency]) / 12;
-    const rate = (Number(l.interest_rate) || 0) / 100 / 12;
-    const offset = Number(l.offset_cents) || 0;
-    let bal = l.estimated_balance_cents || 0;
-    let interest = 0;
-    const points = [];
-    while (bal > 0 && points.length < 600) {
-      const i = Math.max(0, bal - offset) * rate;
-      interest += i;
-      bal = Math.max(0, bal + i - perMonth);
-      points.push(bal);
-    }
-    return { months: points.length, interest, points, paidOff: bal <= 0 };
-  }
-
   // Balance over time: your plan (history plus projection), the bank's schedule from today, and with extra.
   function loanChart(l, extraPoints) {
     const t = l.timeline;
@@ -2172,7 +2129,7 @@
       ...t.points.map((p) => [monthIdx(p.month), p.balance_cents]).filter(([i]) => i > lastI)] : [];
     const bal = l.estimated_balance_cents || 0;
     const bank = l.bank ? [[todayI, bal], ...l.bank.points.map(([m, v]) => [monthIdx(m), v])] : [];
-    const extra = extraPoints ? [[todayI, bal], ...extraPoints.map((v, k) => [monthIdx(today) + k + 1, v])] : [];
+    const extra = extraPoints ? [[todayI, bal], ...extraPoints.map(([m, v]) => [monthIdx(m), v])] : [];
     const endI = Math.max(l.end_date ? monthIdx(l.end_date) : 0, plan.at(-1)[0], bank.length ? bank.at(-1)[0] : 0, actual.length ? actual.at(-1)[0] : 0);
     const top = Math.max(l.principal_cents || 0, ...plan.map((p) => p[1]), ...actual.map((p) => p[1]), 1);
     const W = 560; const H = 180;
@@ -2298,23 +2255,21 @@
     chart.querySelector('.ld-cursor').setAttribute('opacity', '0');
   });
 
-  // "What if I pay extra?": the slider's results, and the chart with the extra line.
+  // "What if I pay extra?": the slider's results, and the chart with the extra line. The server
+  // works them out (`sim`) the same way as the loan's other estimates; with no extra there's nothing to ask.
   let openLoan = null;
-  function payExtraResults(l, extra) {
-    const base = payExtraSim(l, 0);
+  function payExtraResults(l, extra, sim = null) {
     const b = l.budgeted;
     const unit = FREQ_UNIT[b.frequency];
-    const nowI = monthIdx(state.data.settings.today);
-    let off; let sooner = '—'; let saved = '—'; let soonerCls = ''; let extraPts = null;
+    let off = '…'; let sooner = '—'; let saved = '—'; let soonerCls = ''; let extraPts = null;
     if (!extra) {
       off = l.estimated_payoff_date ? monthName(monthIdx(l.estimated_payoff_date)) : '—';
-    } else {
-      const sim = payExtraSim(l, extra);
+    } else if (sim) {
       extraPts = sim.points;
-      off = sim.paidOff ? monthName(nowI + sim.months) : 'Not in 50 years';
-      if (sim.paidOff && base.paidOff) {
-        sooner = spanText(Math.max(0, base.months - sim.months));
-        saved = `~${money(Math.max(0, Math.round((base.interest - sim.interest) / 100) * 100))}`;
+      off = sim.paid_off ? monthName(monthIdx(sim.payoff_date)) : 'Not in 50 years';
+      if (sim.paid_off && sim.base.payoff_date) {
+        sooner = spanText(Math.max(0, monthIdx(sim.base.payoff_date) - monthIdx(sim.payoff_date)));
+        saved = `~${money(Math.max(0, Math.round((sim.base.interest_cents - sim.interest_cents) / 100) * 100))}`;
         soonerCls = 'good';
       }
     }
@@ -2326,16 +2281,37 @@
         <div><span>Interest saved</span><b class="num ${soonerCls}">${saved}</b></div>`,
     };
   }
-  document.addEventListener('input', (ev) => {
-    if (!ev.target.matches || !ev.target.matches('#ld-extra') || !openLoan) return;
-    const extra = Number(ev.target.value) * 100;
-    const r = payExtraResults(openLoan, extra);
-    const root = ev.target.closest('.ld');
+  // Answers are kept per loan and amount, and only the newest one asked for is shown.
+  const extraCache = new Map();
+  let extraAsked = 0;
+  let extraTimer = null;
+  function showExtra(root, l, extra, sim) {
+    const r = payExtraResults(l, extra, sim);
     root.querySelector('.ld-x-amt').innerHTML = r.head.s;
     root.querySelector('.ld-x-cells').innerHTML = r.cells.s;
-    root.querySelector('.ld-chart-wrap').innerHTML = loanChart(openLoan, r.extraPts).s;
-    root.querySelector('.ld-key-extra').hidden = !extra;
+    if (!extra || sim) {
+      root.querySelector('.ld-chart-wrap').innerHTML = loanChart(l, r.extraPts).s;
+      root.querySelector('.ld-key-extra').hidden = !extra;
+    }
+  }
+  document.addEventListener('input', (ev) => {
+    if (!ev.target.matches || !ev.target.matches('#ld-extra') || !openLoan) return;
+    const l = openLoan;
+    const extra = Number(ev.target.value) * 100;
+    const root = ev.target.closest('.ld');
     ev.target.style.setProperty('--fill', `${(Number(ev.target.value) / Number(ev.target.max)) * 100}%`);
+    const key = `${l.id}:${l.estimated_balance_cents}:${extra}`;
+    const asked = ++extraAsked;
+    clearTimeout(extraTimer);
+    showExtra(root, l, extra, extraCache.get(key));
+    if (!extra || extraCache.has(key)) return;
+    extraTimer = setTimeout(async () => {
+      try {
+        const sim = await api('GET', `/loans/${l.id}/extra?cents=${extra}`);
+        extraCache.set(key, sim);
+        if (asked === extraAsked && openLoan === l && root.isConnected) showExtra(root, l, extra, sim);
+      } catch (err) { if (asked === extraAsked) toast(err.message); }
+    }, 120);
   });
 
   // Detail popup: balance and pay-off, how it's paid, what it costs, the balance over time and what paying extra would do.
@@ -2344,6 +2320,7 @@
   async function loanDetails(id) {
     const l = await api('GET', `/loans/${id}/details`);
     openLoan = l;
+    extraCache.clear();
     const t = l.timeline;
     const sch = l.scheduled;
     const bud = l.budgeted;
@@ -2371,9 +2348,7 @@
     const x = payExtraResults(l, 0);
     const row = (k, v, cls = '') => html`<li><span>${k}</span><b class="${cls}">${v}</b></li>`;
     const fees = l.monthly_fee_cents && l.term_months ? l.monthly_fee_cents * l.term_months : 0;
-    const remainingMonths = l.end_date ? Math.max(1, monthIdx(l.end_date) - monthIdx(today)) : null;
-    const rateRise = remainingMonths && l.estimated_balance_cents > 0 && l.interest_rate != null
-      ? Math.round(amortised(l.estimated_balance_cents, Number(l.interest_rate) + 0.25, 12, remainingMonths) - amortised(l.estimated_balance_cents, Number(l.interest_rate), 12, remainingMonths)) : null;
+    const rateRise = l.rate_rise_cents;
 
     openForm({
       title: null,
@@ -2442,11 +2417,6 @@
         <div class="ld-btns">${popFoot(loanBtns(l))}</div>
       </div>`,
     });
-  }
-  // The usual repayment for a balance over a number of periods.
-  function amortised(cents, ratePercent, perYear, periods) {
-    const r = ratePercent / 100 / perYear;
-    return r ? (cents * r) / (1 - (1 + r) ** -periods) : cents / periods;
   }
 
   // A bill on the Overview: this payment, what's come out so far this year, and how it's paid.

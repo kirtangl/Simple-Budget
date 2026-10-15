@@ -386,6 +386,25 @@ test('no duplicate names, and payees keep their payment details', () => withServ
   const cat = (await call('GET', '/data')).body.categories[0];
   assert.equal((await call('POST', '/categories', { name: cat.name.toUpperCase() })).status, 400);
   assert.equal((await call('POST', '/subcategories', { category_id: cat.id, name: cat.subcategories[0].name })).status, 400);
+  // Moving a sub category into a category that already has one by that name.
+  const other = (await call('POST', '/categories', { name: 'Odds and ends' })).body;
+  const stray = (await call('POST', '/subcategories', { category_id: other.id, name: cat.subcategories[0].name.toLowerCase() })).body;
+  r = await call('PATCH', `/subcategories/${stray.id}`, { category_id: cat.id });
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /already exists/);
+}));
+
+test('editing just one date is checked against the saved one', () => withServer({}, async (call) => {
+  const e = (await call('POST', '/expenses', { name: 'Course', amount_cents: 20000, frequency: 'monthly', start_date: '2026-03-01', end_date: '2026-12-31' })).body;
+  let r = await call('PATCH', `/expenses/${e.id}`, { end_date: '2026-01-31' });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, 'The end date should be after the start date.');
+  r = await call('PATCH', `/expenses/${e.id}`, { start_date: '2027-01-01' });
+  assert.equal(r.status, 400);
+  r = await call('PATCH', `/expenses/${e.id}`, { end_date: '2026-06-30' });
+  assert.equal(r.status, 200);
+  const i = (await call('POST', '/incomes', { name: 'Contract', after_tax_cents: 100000, start_date: '2026-03-01' })).body;
+  assert.equal((await call('PATCH', `/incomes/${i.id}`, { end_date: '2026-02-01' })).status, 400);
 }));
 
 test('payees keep a policy number and can be paid by direct debit; bills report what has been paid', () => withServer({}, async (call) => {
@@ -815,7 +834,21 @@ test('a new price can start today, be backdated or wait for a future date', () =
   r = await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 175000, from: '2099-01-01' });
   assert.equal(r.body.amount_cents, 160000); // not yet
   assert.deepEqual([r.body.pending_cents, r.body.pending_from], [175000, '2099-01-01']);
-  assert.equal((await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 0 })).status, 400);
+  // A price dated today or earlier changes it now and keeps the future price.
+  r = await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 165000, from: '2026-01-01' });
+  assert.equal(r.body.amount_cents, 165000);
+  assert.deepEqual([r.body.pending_cents, r.body.pending_from], [175000, '2099-01-01']);
+  r = await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 166000 });
+  assert.deepEqual([r.body.amount_cents, r.body.pending_cents], [166000, 175000]);
+  // Only another future price replaces it.
+  r = await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 180000, from: '2098-06-01' });
+  assert.deepEqual([r.body.amount_cents, r.body.pending_cents, r.body.pending_from], [166000, 180000, '2098-06-01']);
+  // $0 is a price like any other (the edit form allows it too); a missing one isn't.
+  r = await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 0 });
+  assert.deepEqual([r.status, r.body.amount_cents], [200, 0]);
+  assert.equal((await call('POST', `/expenses/${e.id}/amount`, {})).body.error, 'Enter the new amount.');
+  assert.equal((await call('POST', `/expenses/${e.id}/amount`, { amount_cents: -5 })).body.error, "Amount can't be negative.");
+  assert.equal((await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 5, from: 'soon' })).body.error.startsWith('Date must be a date'), true);
 }));
 
 test('back-dated prices slot into the history, and a mistake can be removed', () => withServer({}, async (call) => {
@@ -1060,3 +1093,119 @@ test('backups: a file restore saves what was there first, and manual backups are
     });
   } finally { fs.rmSync(dataDir, { recursive: true, force: true }); }
 });
+
+test('paid this year counts each payment at the price it was then', (t) => { onDay(t, '2026-10-15'); return withServer({}, async (call) => {
+  const e = (await call('POST', '/expenses', { name: 'Gym', amount_cents: 10000, frequency: 'monthly', day_of_month: 1 })).body;
+  await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 10000, from: '2026-01-01' });
+  await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 12000, from: '2026-09-01' });
+  const d = (await call('GET', `/expenses/${e.id}/details`)).body;
+  assert.deepEqual([d.paid_fytd.count, d.paid_fytd.cents], [4, 44000]); // Jul, Aug at $100; Sep, Oct at $120
+}); });
+
+test('every page gets the Overview deposit, leaving out a loan whose term has ended', (t) => { onDay(t, '2026-10-15'); return withServer({}, async (call) => {
+  await call('PUT', '/settings', { pay_anchor_date: '2026-10-06', rounding: 'exact' });
+  const acct = (await call('POST', '/accounts', { name: 'Bills' })).body;
+  await call('POST', '/expenses', { name: 'Rent', amount_cents: 100000, frequency: 'fortnightly', account_id: acct.id });
+  await call('POST', '/expenses', { name: 'Course', amount_cents: 5000, frequency: 'fortnightly', account_id: acct.id, start_date: '2026-10-16' });
+  await call('POST', '/incomes', { name: 'Pay', after_tax_cents: 300000, frequency: 'weekly' });
+  // A three-year car loan that ended in 2025 but was never ticked Paid off.
+  await call('POST', '/loans', { name: 'Car', principal_cents: 3000000, interest_rate: 7, start_date: '2022-06-01', term_months: 36, repayment_frequency: 'monthly', account_id: acct.id });
+  const d = (await call('GET', '/data')).body;
+  const c = (await call('GET', '/cycle')).body;
+  assert.equal(d.deposits[acct.id], c.accounts.find((a) => a.account_id === acct.id).deposit_cents);
+  assert.equal(d.deposits[acct.id], 105000); // rent, plus the course that starts part way through this cycle
+  assert.deepEqual([d.loans[0].in_deposit, d.loans[0].per_pay_cents, d.loans[0].next_due], [false, 0, null]);
+  assert.equal(d.expenses.find((e) => e.name === 'Course').in_deposit, true);
+  assert.equal(d.incomes[0].per_cycle_cents, 600000);
+}); });
+
+test('paying extra on a loan is worked out on the server, from the same estimate', (t) => { onDay(t, '2026-10-15'); return withServer({}, async (call) => {
+  const l = (await call('POST', '/loans', { name: 'Home', principal_cents: 50000000, interest_rate: 6, start_date: '2024-01-15', term_months: 360, repayment_frequency: 'monthly' })).body;
+  const d = (await call('GET', `/loans/${l.id}/details`)).body;
+  assert.ok(d.rate_rise_cents > 0);
+  const none = (await call('GET', `/loans/${l.id}/extra?cents=0`)).body;
+  assert.equal(none.payoff_date, d.estimated_payoff_date);
+  const some = (await call('GET', `/loans/${l.id}/extra?cents=2500`)).body;
+  assert.equal(some.base.payoff_date, d.estimated_payoff_date);
+  assert.ok(some.payoff_date <= d.estimated_payoff_date); // even $25 never makes it later
+  assert.ok(some.interest_cents < some.base.interest_cents);
+  assert.match(some.points[0][0], /^\d{4}-\d{2}$/);
+  assert.equal((await call('GET', `/loans/${l.id}/extra?cents=-5`)).status, 400);
+}); });
+
+test('loan dates and list sizes are kept within reason', (t) => { onDay(t, '2026-10-15'); return withServer({}, async (call) => {
+  let r = await call('POST', '/loans', { name: 'Ancient', principal_cents: 100000, start_date: '1900-01-01', term_months: 600 });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "Start date can't be more than 60 years ago.");
+  const l = (await call('POST', '/loans', { name: 'Car', principal_cents: 100000, start_date: '1967-01-01', term_months: 12 })).body;
+  assert.equal((await call('PATCH', `/loans/${l.id}`, { balance_cents: 5, balance_date: '1950-01-01' })).status, 400);
+  assert.equal((await call('POST', `/loans/${l.id}/balance`, { balance_cents: 5, balance_date: '1950-01-01' })).status, 400);
+  assert.equal((await call('POST', '/loans/estimate-balance', { principal_cents: 5, start_date: '1901-01-01' })).status, 400);
+  // A backup with too many rows is refused before anything changes.
+  const many = Array.from({ length: 501 }, (_, i) => ({ id: i + 1, name: `Loan ${i}` }));
+  r = await call('POST', '/import', { app: 'simple-budget', format_version: 2, loans: many });
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /^That backup has more loans than Simple Budget can keep \(500\)/);
+  assert.equal((await call('GET', '/loans')).body.length, 1);
+  // A loan in a backup dated too far back is left out with a warning.
+  r = await call('POST', '/import', { app: 'simple-budget', format_version: 2, loans: [{ id: 1, name: 'Old', start_date: '1901-01-01' }, { id: 2, name: 'New' }] });
+  assert.equal(r.body.counts.loans, 1);
+  assert.match(r.body.warnings.join(' '), /Old.*60 years/);
+}); });
+
+test('a list that is full says so', () => withServer({}, async (call) => {
+  for (let i = 0; i < 200; i += 1) await call('POST', '/incomes', { name: `Pay ${i}`, after_tax_cents: 100 });
+  const r = await call('POST', '/incomes', { name: 'One more', after_tax_cents: 100 });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "That's more incomes than Simple Budget can keep (200).");
+}));
+
+test('updates: a check that started before the repository changed is ignored', async () => {
+  const { createUpdates } = require('../src/updates');
+  let repo = 'Old/Repo';
+  let answer;
+  const fetchImpl = (url) => new Promise((resolve) => { answer = () => resolve({ ok: true, status: 200,
+    json: async () => [{ tag_name: url.includes('Old') ? 'v9.0.0' : 'v1.0.0', name: 'r', html_url: 'https://github.com/x/y', draft: false, prerelease: false }] }); });
+  const u = createUpdates({ version: '0.9.0', fetchImpl, settings: () => ({ channel: '', repo, token: '' }) });
+  const slow = u.check();
+  repo = 'New/Repo';
+  u.reset();
+  const oldAnswer = answer;
+  const fresh = u.check(); // not handed the old check
+  answer();
+  oldAnswer();
+  await Promise.all([slow, fresh]);
+  assert.equal(u.view().latest.version, '1.0.0');
+  // An error inside a route goes to Express instead of crashing the app.
+  let passed = null;
+  await u.get({}, { json: () => { throw new Error('boom'); } }, (err) => { passed = err; });
+  assert.equal(passed.message, 'boom');
+});
+
+test('goal categories: saved with a goal, moved between goals and debts, and named-only ones', () => withServer({}, async (call) => {
+  // A goal with a new category creates it, with its colour, in the same save.
+  let g = (await call('POST', '/goals', { kind: 'goal', name: 'Bike', group_name: 'toys', group_color: '#00aa00' })).body;
+  let d = (await call('GET', '/data')).body;
+  const toys = d.goal_groups.find((x) => x.name === 'toys');
+  assert.equal(toys.color, '#00aa00');
+  // An existing one keeps its spelling, and a new colour is saved with the goal.
+  g = (await call('PATCH', `/goals/${g.id}`, { group_name: 'TOYS', group_color: '#0000aa' })).body;
+  assert.equal(g.group_name, 'toys');
+  assert.equal((await call('GET', '/goal_groups')).body.find((x) => x.id === toys.id).color, '#0000aa');
+  // A bad goal saves nothing, category included.
+  assert.equal((await call('POST', '/goals', { kind: 'goal', group_name: 'Never', target_cents: -1 })).status, 400);
+  assert.equal((await call('GET', '/goal_groups')).body.some((x) => x.name === 'Never'), false);
+  // Moving the category to Debts takes its goals with it.
+  await call('PATCH', `/goal_groups/${toys.id}`, { kind: 'debt' });
+  d = (await call('GET', '/data')).body;
+  assert.deepEqual([d.goals[0].kind, d.goals[0].group_name], ['debt', 'toys']);
+  // Goals in a category that only exists as a name (from an old backup) move when it's saved under a new name...
+  await call('POST', '/import', { app: 'simple-budget', goals: [{ id: 1, kind: 'goal', name: 'Couch', group_name: 'Home' }, { id: 2, kind: 'goal', name: 'Rug', group_name: 'home' }] });
+  await call('POST', '/goal_groups', { kind: 'goal', name: 'House', from_name: 'Home' });
+  d = (await call('GET', '/data')).body;
+  assert.deepEqual(d.goals.map((x) => x.group_name), ['House', 'House']);
+  // ...and are left without one when it's deleted.
+  await call('POST', '/import', { app: 'simple-budget', goals: [{ id: 1, kind: 'goal', name: 'Couch', group_name: 'Home' }] });
+  await call('POST', '/goal_groups/clear', { kind: 'goal', name: 'home' });
+  assert.equal((await call('GET', '/data')).body.goals[0].group_name, null);
+}));
