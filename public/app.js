@@ -2781,7 +2781,7 @@
     return html`
       <div class="page-head"><h1>Settings</h1></div>
       <nav class="sec-tabs settings-tabs" aria-label="Settings">${SETTINGS_GROUPS.map((keys, i) => html`${i ? html`<span class="st-sep" aria-hidden="true"></span>` : ''}<div class="st-group st-${keys.length}">
-        ${keys.map((k) => html`<a href="#/settings/${k}" ${k === tab ? raw('aria-current="page"') : ''} class="${k === tab ? 'active' : ''} ${k === 'advanced' ? 'st-advanced' : ''}">${SETTINGS_TABS.find(([x]) => x === k)[1]}${k === 'updates' ? html`<span class="st-dot" ${state.updates && state.updates.available ? '' : raw('hidden')}></span>` : ''}</a>`)}</div>`)}</nav>
+        ${keys.map((k) => html`<a href="#/settings/${k}" ${k === tab ? raw('aria-current="page"') : ''} class="${k === tab ? 'active' : ''} ${k === 'advanced' ? 'st-advanced' : ''}">${SETTINGS_TABS.find(([x]) => x === k)[1]}${k === 'updates' ? updTabDot() : ''}</a>`)}</div>`)}</nav>
       ${body}`;
   }
 
@@ -3138,7 +3138,10 @@
     const item = document.getElementById('menu-update');
     item.hidden = !on;
     if (on) item.textContent = `Update to v${u.latest.version}`;
-    for (const dot of document.querySelectorAll('.st-dot')) dot.hidden = !on;
+    // Red until the updater has its own password (only the main login runs the server).
+    const fix = Boolean(u && u.default_token && state.me && state.me.main);
+    for (const dot of document.querySelectorAll('.st-dot')) { dot.hidden = !on && !fix; dot.classList.toggle('st-dot-warn', fix); }
+    document.getElementById('settings-dot').hidden = !fix;
   }
 
   // Just enough Markdown for release notes: headings, bullets, bold and code.
@@ -3199,13 +3202,26 @@
       </div>`;
   }
 
+  // The Updates tab's dot: brand-coloured for a new version, red while the updater needs its own password.
+  function updTabDot() {
+    const u = state.updates;
+    const fix = Boolean(u && u.default_token && state.me && state.me.main);
+    return html`<span class="st-dot ${fix ? 'st-dot-warn' : ''}" ${(u && u.available) || fix ? '' : raw('hidden')}></span>`;
+  }
+
   // This copy still uses the updater password every copy starts with.
   function updTokenCard() {
     return html`<div class="card adv-warning upd-token">
       <h2>Give the updater its own password</h2>
-      <p class="small">This copy still uses the updater password every copy of Simple Budget starts with, so anything on your network that
-        can reach the server could ask the updater to restart the app. In the app's folder on the server, run these two commands once.
-        Updating works the same way afterwards.</p>
+      <p class="small">This copy's updater still has the password every copy of Simple Budget starts with. The updater can restart the app
+        and install new versions, and its password is how it knows a request really came from your copy. Its port is never opened, so
+        only something already running on the server could use it.</p>
+      <ul class="small upd-risk">
+        <li><b>Only you on your home network:</b> low risk, but still recommended.</li>
+        <li><b>Others use your network or the server</b> (housemates, guests, other apps or containers on it): higher risk. Change it now.</li>
+        <li><b>Opened to the internet</b> (port forwarding): strongly advised against, whatever this password. Use a VPN such as WireGuard or Tailscale to reach it from outside instead.</li>
+      </ul>
+      <p class="small">In the app's folder on the server, run these two commands once. Updating works the same way afterwards.</p>
       <pre class="upd-cmd">${TOKEN_CMD}</pre>
       <div class="row"><button data-action="copy-token-cmd">Copy commands</button></div>
     </div>`;
