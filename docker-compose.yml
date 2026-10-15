@@ -25,6 +25,9 @@ services:
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       # How the app asks the updater (below) to install a new version.
       UPDATER_URL: http://updater:8080
+      # The password between the app and the updater. Set your own in .env before the
+      # first start (see README); "simple-budget-updater" is only a fallback, the same
+      # on every copy, and Settings -> Updates warns while it's in use.
       UPDATER_TOKEN: ${UPDATER_TOKEN:-simple-budget-updater}
       # So the app only offers versions the updater can install (see image above).
       IMAGE_TAG: ${IMAGE_TAG:-latest}
@@ -46,6 +49,7 @@ services:
     restart: unless-stopped
     environment:
       WATCHTOWER_HTTP_API_UPDATE: "true"
+      # Must match the app's UPDATER_TOKEN above (both come from .env).
       WATCHTOWER_HTTP_API_TOKEN: ${UPDATER_TOKEN:-simple-budget-updater}
       WATCHTOWER_LABEL_ENABLE: "true"
       WATCHTOWER_SCOPE: ${CONTAINER_NAME:-simple-budget}
