@@ -373,8 +373,10 @@ function createApi(db) {
 
   function settings() {
     const pc = payCycleOf(db);
-    return { pay_anchor_date: payAnchor(db), today: today(), pay_frequency: pc.frequency, pay_custom_days: pc.days,
-      pays_per_year: budget.paysPerYear(pc), cycle_end: budget.cycleBounds(payAnchor(db), budget.cycleIndexFor(payAnchor(db), today(), pc), pc).end,
+    const anchor = payAnchor(db);
+    const now = today();
+    return { pay_anchor_date: anchor, today: now, pay_frequency: pc.frequency, pay_custom_days: pc.days,
+      pays_per_year: budget.paysPerYear(pc), cycle_end: budget.cycleBounds(anchor, budget.cycleIndexFor(anchor, now, pc), pc).end,
       held_basis: heldBasis(db), ...depositRules(db) };
   }
 

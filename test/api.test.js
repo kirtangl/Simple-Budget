@@ -1159,3 +1159,25 @@ test('a list that is full says so', () => withServer({}, async (call) => {
   assert.equal(r.status, 400);
   assert.equal(r.body.error, "That's more incomes than Simple Budget can keep (200).");
 }));
+
+test('updates: a check that started before the repository changed is ignored', async () => {
+  const { createUpdates } = require('../src/updates');
+  let repo = 'Old/Repo';
+  let answer;
+  const fetchImpl = (url) => new Promise((resolve) => { answer = () => resolve({ ok: true, status: 200,
+    json: async () => [{ tag_name: url.includes('Old') ? 'v9.0.0' : 'v1.0.0', name: 'r', html_url: 'https://github.com/x/y', draft: false, prerelease: false }] }); });
+  const u = createUpdates({ version: '0.9.0', fetchImpl, settings: () => ({ channel: '', repo, token: '' }) });
+  const slow = u.check();
+  repo = 'New/Repo';
+  u.reset();
+  const oldAnswer = answer;
+  const fresh = u.check(); // not handed the old check
+  answer();
+  oldAnswer();
+  await Promise.all([slow, fresh]);
+  assert.equal(u.view().latest.version, '1.0.0');
+  // An error inside a route goes to Express instead of crashing the app.
+  let passed = null;
+  await u.get({}, { json: () => { throw new Error('boom'); } }, (err) => { passed = err; });
+  assert.equal(passed.message, 'boom');
+});
