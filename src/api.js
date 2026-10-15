@@ -765,7 +765,7 @@ function createApi(db) {
 
   // Restore a backup, replacing the data in every section the file contains.
   router.post('/import', (req, res) => {
-    res.json(importBackup(db, req.body));
+    res.json({ ...importBackup(db, req.body), backup: res.locals.safetyBackup || null });
   });
 
   router.use((err, req, res, next) => {
@@ -918,9 +918,37 @@ function importBackup(db, input) {
     }
   };
 
+  // Rows the file doesn't replace keep pointing at what they used to: an expense kept while
+  // its category is restored from the file is linked to the restored category of the same name.
+  const LINKS = [
+    ['expenses', 'account_id', 'accounts'], ['expenses', 'payee_id', 'payees'], ['expenses', 'category_id', 'categories'],
+    ['expenses', 'subcategory_id', 'subcategories'], ['loans', 'account_id', 'accounts'], ['loans', 'category_id', 'categories'],
+    ['goals', 'account_id', 'accounts'],
+  ];
+  const LINK_WORDS = { account_id: 'the account', payee_id: 'the payee', category_id: 'the category', subcategory_id: 'the sub category' };
+  const replaced = (present, table) => present.includes(table === 'subcategories' ? 'categories' : table);
+  const noteLinks = (present) => LINKS.filter(([table, , to]) => !present.includes(table) && replaced(present, to))
+    .map(([table, col, to]) => ({ table, col, to, rows: db.prepare(`SELECT t.id, t.name AS item, r.name AS name FROM ${table} t JOIN ${to} r ON r.id = t.${col}`).all() }));
+  const relink = (links) => {
+    for (const { table, col, to, rows } of links) {
+      for (const { id, item, name } of rows) {
+        let match;
+        if (to === 'subcategories') {
+          const cat = db.prepare(`SELECT category_id FROM ${table} WHERE id = ?`).get(id);
+          match = db.prepare('SELECT id FROM subcategories WHERE name = ? COLLATE NOCASE AND category_id IS ?').get(name, cat ? cat.category_id : null);
+        } else {
+          match = db.prepare(`SELECT id FROM ${to} WHERE name = ? COLLATE NOCASE`).get(name);
+        }
+        if (match) db.prepare(`UPDATE ${table} SET ${col} = ? WHERE id = ?`).run(match.id, id);
+        else warnings.push(`"${item}" is no longer linked to ${LINK_WORDS[col]} "${name}", which isn't in the backup.`);
+      }
+    }
+  };
+
   transaction(db, () => {
     // Clear the sections the file contains. Expenses go first because they refer to the others.
     const present = BACKUP_SECTIONS.filter((s) => Array.isArray(data[s]));
+    const links = noteLinks(present);
     for (const section of ['expenses', 'loans', 'goals', 'goal_groups', 'incomes', 'categories', 'payees', 'accounts']) {
       if (present.includes(section)) db.exec(`DELETE FROM ${section}`);
     }
@@ -972,6 +1000,7 @@ function importBackup(db, input) {
       return out;
     });
     restoreHistory();
+    relink(links);
 
     const s = data.settings && typeof data.settings === 'object' ? data.settings : {};
     if (budget.isValidDate(s.pay_anchor_date)) setSetting(db, 'pay_anchor_date', s.pay_anchor_date);

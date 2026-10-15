@@ -1,8 +1,8 @@
 'use strict';
 
 // Household logins. The main household password is stored hashed in the
-// settings; on a fresh install it is DEFAULT_PASSWORD and the app asks for a
-// new one on first login. Extra logins (e.g. one each) live in the `logins`
+// settings. On a fresh install it is START_PASSWORD from .env, or else
+// DEFAULT_PASSWORD, and then the app asks for a new one on first login. Extra logins (e.g. one each) live in the `logins`
 // table, each with its own password and theme. Everyone sees the same budget.
 //
 // A successful login sets a long-lived, HMAC-signed cookie naming the login,
@@ -14,7 +14,7 @@ const crypto = require('node:crypto');
 const { getSetting, setSetting, transaction } = require('./db');
 
 const DEFAULT_PASSWORD = 'simplebudget';
-const MIN_LENGTH = 6;
+const MIN_LENGTH = 8;
 const LEGACY_COOKIE = 'sb_session'; // before each copy had its own cookie name
 const MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
 const MAIN = 0; // the main household login
@@ -51,16 +51,27 @@ async function checkPasswordAsync(stored, given) {
   return crypto.timingSafeEqual(expected, actual);
 }
 
-// Put the default password back on the main login and ask for a new one at next login.
-function resetPassword(db) {
+// The main login's starting password: START_PASSWORD from .env if it's long enough, else the default.
+function startPassword(env = process.env) {
+  const p = typeof env.START_PASSWORD === 'string' ? env.START_PASSWORD.trim() : '';
+  return p.length >= MIN_LENGTH ? { password: p, fromEnv: true } : { password: DEFAULT_PASSWORD, fromEnv: false };
+}
+
+// Put the main login back on its starting password. Only the default has to be
+// changed at the next login, and only a brand new install shows it on the login page:
+// after a reset the data is already there, so whoever runs the reset is told it instead.
+function resetPassword(db, { fresh = false, env = process.env } = {}) {
+  const start = startPassword(env);
   transaction(db, () => {
-    setSetting(db, 'password_hash', hashPassword(DEFAULT_PASSWORD));
-    setSetting(db, 'password_must_change', '1');
+    setSetting(db, 'password_hash', hashPassword(start.password));
+    setSetting(db, 'password_must_change', start.fromEnv ? '0' : '1');
+    setSetting(db, 'password_hint', fresh && !start.fromEnv ? '1' : '0');
   });
+  return start;
 }
 
 function ensurePassword(db) {
-  if (!getSetting(db, 'password_hash')) resetPassword(db);
+  if (!getSetting(db, 'password_hash')) resetPassword(db, { fresh: true });
 }
 
 function readCookie(req, name) {
@@ -94,29 +105,69 @@ function createAuth({ db, secret, secureCookies }) {
   // Wrong guesses, per address and in total. Five wrong in a row locks that
   // address out for a minute; lots of wrong guesses from anywhere slow everyone
   // down, in case something is pretending to be many different addresses.
+  // A guess is counted before it's checked, so guesses sent all at once can't
+  // slip past the limit, and each address can only have one being checked at a time.
   const failures = new Map(); // ip -> { count, until }
-  let recentFailures = []; // times of wrong guesses in the last minute
+  let recentFailures = []; // { t } for each wrong guess in the last minute
+  const checking = new Map(); // ip -> guesses being checked right now
   const PER_IP = 5;
   const OVERALL = 30;
+  const AT_ONCE = 4; // guesses being checked at once, from every address together
   const WINDOW_MS = 60_000;
+  const SLOW_MS = 1000; // over the overall limit, guesses wait their turn this long apart
+  let slowLane = Promise.resolve();
   function blocked(ip) {
-    const now = Date.now();
-    recentFailures = recentFailures.filter((t) => t > now - WINDOW_MS);
     const entry = failures.get(ip);
-    return (entry && entry.until > now) || recentFailures.length >= OVERALL;
+    return Boolean(entry && entry.until > Date.now());
   }
+  function busy() {
+    const now = Date.now();
+    recentFailures = recentFailures.filter((m) => m.t > now - WINDOW_MS);
+    return recentFailures.length >= OVERALL;
+  }
+  // Counts a wrong guess, and returns a function that takes it back if it turns out right.
   function recordFailure(ip) {
     const now = Date.now();
     for (const [key, e] of failures) if (e.until && e.until <= now) failures.delete(key);
     if (failures.size > 10_000) failures.clear();
     const entry = failures.get(ip);
-    const count = (entry && !(entry.until && entry.until <= now) ? entry.count : 0) + 1;
+    const before = entry && !(entry.until && entry.until <= now) ? { ...entry } : null;
+    const count = (before ? before.count : 0) + 1;
     failures.set(ip, { count, until: count >= PER_IP ? now + WINDOW_MS : 0 });
-    recentFailures.push(now);
+    const mark = { t: now };
+    recentFailures.push(mark);
+    return () => {
+      recentFailures = recentFailures.filter((m) => m !== mark);
+      failures.delete(ip);
+    };
+  }
+  // Runs a password check for one address: refused while it's locked out or already
+  // has one being checked, and slowed down (not refused) when lots of guesses are wrong.
+  async function guarded(ip, check) {
+    if (blocked(ip)) return { tooMany: true };
+    const inFlight = [...checking.values()].reduce((a, b) => a + b, 0);
+    if ((checking.get(ip) || 0) >= 1 || inFlight >= AT_ONCE) return { tooMany: true };
+    checking.set(ip, (checking.get(ip) || 0) + 1);
+    const undo = recordFailure(ip);
+    try {
+      if (busy()) {
+        const turn = slowLane.then(() => new Promise((r) => { setTimeout(r, SLOW_MS); }));
+        slowLane = turn;
+        await turn;
+      }
+      const ok = await check();
+      if (ok) undo();
+      return { ok };
+    } finally {
+      const n = (checking.get(ip) || 1) - 1;
+      if (n) checking.set(ip, n); else checking.delete(ip);
+    }
   }
   const TOO_MANY = 'Too many attempts. Please wait a minute and try again.';
 
+  // Only the main login is ever held at "choose a new password"; the others carry on.
   const mustChange = () => getSetting(db, 'password_must_change') === '1';
+  const mustChangeFor = (l) => Boolean(l) && l.id === MAIN && mustChange();
   const extras = () => db.prepare('SELECT * FROM logins ORDER BY name COLLATE NOCASE, id').all();
   const main = () => {
     let custom = null;
@@ -195,32 +246,48 @@ function createAuth({ db, secret, secureCookies }) {
   };
   const cleanName = (name) => (typeof name === 'string' ? name.trim().slice(0, 40) : '');
 
+  function finishChange(req, res, me, password) {
+    const problem = checkNewPassword(password, me.id, req.ip);
+    if (problem) return res.status(problem === TOO_MANY ? 429 : 400).json({ error: problem });
+    if (me.id === MAIN) {
+      transaction(db, () => {
+        setSetting(db, 'password_hash', hashPassword(password));
+        setSetting(db, 'password_must_change', '0');
+        setSetting(db, 'password_hint', '0');
+      });
+    } else {
+      db.prepare('UPDATE logins SET password_hash = ? WHERE id = ?').run(hashPassword(password), me.id);
+    }
+    setCookie(res, me.id); // the old cookie stopped working when the hash changed
+    return res.json({ ok: true });
+  }
+
   return {
     status(req, res) {
-      const must = mustChange();
-      // Before login, only reveal that the default is still in use (so the
-      // login screen can say what it is) on a brand new install.
-      res.json({ loggedIn: Boolean(currentLogin(req)), mustChangePassword: must, defaultPassword: must ? DEFAULT_PASSWORD : undefined });
+      const me = currentLogin(req);
+      // The login page only shows the default password on a brand new install,
+      // never after a reset, when the household's data is already there.
+      const hint = mustChange() && getSetting(db, 'password_hint') !== '0';
+      res.json({ loggedIn: Boolean(me), mustChangePassword: me ? mustChangeFor(me) : hint, defaultPassword: hint && !me ? DEFAULT_PASSWORD : undefined });
     },
 
     // The password alone says which login it is.
     async login(req, res, next) {
       try {
-        const ip = req.ip;
-        if (blocked(ip)) return res.status(429).json({ error: TOO_MANY });
         const given = req.body && req.body.password;
         let match = null;
-        for (const l of allLogins()) {
-          // eslint-disable-next-line no-await-in-loop
-          if (await checkPasswordAsync(l.password_hash, given)) { match = l; break; }
-        }
-        if (!match) {
-          recordFailure(ip);
-          return res.status(401).json({ error: 'That password is not right.' });
-        }
-        failures.delete(ip);
+        const r = await guarded(req.ip, async () => {
+          if (typeof given !== 'string' || given.length > 1024) return false;
+          for (const l of allLogins()) {
+            // eslint-disable-next-line no-await-in-loop
+            if (await checkPasswordAsync(l.password_hash, given)) { match = l; return true; }
+          }
+          return false;
+        });
+        if (r.tooMany) return res.status(429).json({ error: TOO_MANY });
+        if (!match) return res.status(401).json({ error: 'That password is not right.' });
         setCookie(res, match.id);
-        res.json({ ok: true, mustChangePassword: mustChange() });
+        res.json({ ok: true, mustChangePassword: mustChangeFor(match) });
       } catch (err) { next(err); }
     },
 
@@ -230,33 +297,26 @@ function createAuth({ db, secret, secureCookies }) {
       res.json({ ok: true });
     },
 
-    // Change your own password. The current one is only asked for when it isn't the first-run default.
-    changePassword(req, res) {
-      const me = currentLogin(req);
-      if (!me) return res.status(401).json({ error: 'Please log in.' });
-      const { current, password } = req.body || {};
-      const first = me.id === MAIN && mustChange();
-      if (!first && !checkPassword(me.password_hash, current)) {
-        return res.status(400).json({ error: 'Your current password is not right.' });
-      }
-      const problem = checkNewPassword(password, me.id, req.ip);
-      if (problem) return res.status(problem === TOO_MANY ? 429 : 400).json({ error: problem });
-      if (me.id === MAIN) {
-        transaction(db, () => {
-          setSetting(db, 'password_hash', hashPassword(password));
-          setSetting(db, 'password_must_change', '0');
-        });
-      } else {
-        db.prepare('UPDATE logins SET password_hash = ? WHERE id = ?').run(hashPassword(password), me.id);
-      }
-      setCookie(res, me.id); // the old cookie stopped working when the hash changed
-      res.json({ ok: true });
+    // Change your own password. The current one is asked for unless the main login is still on
+    // the default, and it's checked like a login, so it can't be guessed without limit.
+    async changePassword(req, res, next) {
+      try {
+        const me = currentLogin(req);
+        if (!me) return res.status(401).json({ error: 'Please log in.' });
+        const { current, password } = req.body || {};
+        if (!mustChangeFor(me)) {
+          const r = await guarded(req.ip, () => checkPasswordAsync(me.password_hash, current));
+          if (r.tooMany) return res.status(429).json({ error: TOO_MANY });
+          if (!r.ok) return res.status(400).json({ error: 'Your current password is not right.' });
+        }
+        finishChange(req, res, me, password);
+      } catch (err) { next(err); }
     },
 
     require(req, res, next) {
       const me = currentLogin(req);
       if (!me) return res.status(401).json({ error: 'Please log in.' });
-      if (mustChange()) return res.status(403).json({ error: 'Please choose a new password first.', mustChangePassword: true });
+      if (mustChangeFor(me)) return res.status(403).json({ error: 'Please choose a new password first.', mustChangePassword: true });
       req.login = me;
       // Move a login from the old shared cookie onto this copy's own.
       if (usedLegacy(req)) { setCookie(res, me.id); res.clearCookie(LEGACY_COOKIE, { path: '/' }); }
@@ -306,6 +366,8 @@ function createAuth({ db, secret, secureCookies }) {
     },
 
     // Rename or recolour any login, or set a new password for another login (e.g. if it's been forgotten).
+    // Logins only tell the household apart, so anyone can do this, except set the main login's
+    // password: only Main can, or anyone could take over what only Main can change.
     updateLogin(req, res) {
       const id = Number(req.params.id);
       const login = Number.isInteger(id) ? loginById(id) : null;
@@ -322,6 +384,7 @@ function createAuth({ db, secret, secureCookies }) {
       }
       if (password !== undefined) {
         if (id === req.login.id) return res.status(400).json({ error: 'Use "Change password" to change your own.' });
+        if (id === MAIN) return res.status(403).json({ error: "Only the main login can change the main login's password." });
         const problem = checkNewPassword(password, id, req.ip);
         if (problem) return res.status(problem === TOO_MANY ? 429 : 400).json({ error: problem });
       }
@@ -355,4 +418,4 @@ function createAuth({ db, secret, secureCookies }) {
   };
 }
 
-module.exports = { createAuth, resetPassword, DEFAULT_PASSWORD, THEME_COLOURS };
+module.exports = { createAuth, resetPassword, startPassword, DEFAULT_PASSWORD, MIN_LENGTH, THEME_COLOURS };

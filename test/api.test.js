@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { openDatabase } = require('../src/db');
 const { createApp } = require('../src/server');
+const { resetPassword } = require('../src/auth');
 
 // Pins the server's clock for tests whose data is tied to particular dates.
 // Only Date is faked, so timers and network calls carry on as normal.
@@ -18,13 +19,13 @@ async function withServer(options, fn) {
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${server.address().port}/api`;
   let cookie = '';
-  const call = async (method, path, body) => {
+  const call = async (method, path, body, headers = {}) => {
     const res = await fetch(base + path, {
-      method, headers: { 'content-type': 'application/json', cookie }, body: body ? JSON.stringify(body) : undefined,
+      method, headers: { 'content-type': 'application/json', cookie, ...headers }, body: body ? JSON.stringify(body) : undefined,
     });
     const set = res.headers.get('set-cookie');
     if (set) cookie = set.split(';')[0];
-    return { status: res.status, body: await res.json() };
+    return { status: res.status, headers: res.headers, body: await res.json() };
   };
   try {
     if (!options.raw) {
@@ -948,3 +949,114 @@ test('history in a backup file is checked before it is restored', () => withServ
   const id = (await call('GET', '/data')).body.expenses[0].id;
   assert.deepEqual((await call('GET', `/history/expense/${id}`)).body.map((x) => [x.on_date, x.value]), [['2025-01-01', 5000]]);
 }));
+
+test('a password reset only holds the main login, and shows the password in the terminal, not the page', async () => {
+  const db = openDatabase(':memory:');
+  await withServer({ db }, async (call) => {
+    await call('POST', '/logins', { name: 'Sam', password: 'sams-password' });
+    await call('POST', '/logout');
+    assert.equal(resetPassword(db).password, 'simplebudget');
+    let r = await call('GET', '/session');
+    assert.deepEqual(r.body, { loggedIn: false, mustChangePassword: false }); // no hint after a reset
+    // Other logins carry on as normal.
+    assert.equal((await call('POST', '/login', { password: 'sams-password' })).body.mustChangePassword, false);
+    assert.equal((await call('GET', '/data')).status, 200);
+    assert.equal((await call('GET', '/session')).body.mustChangePassword, false);
+    await call('POST', '/logout');
+    // The main login chooses a new password first.
+    assert.equal((await call('POST', '/login', { password: 'simplebudget' })).body.mustChangePassword, true);
+    assert.equal((await call('GET', '/data')).status, 403);
+    assert.equal((await call('POST', '/password', { password: 'brand-new-pw' })).status, 200);
+    assert.equal((await call('GET', '/data')).status, 200);
+  });
+});
+
+test('START_PASSWORD in .env is the starting password, with nothing shown on the login page', async () => {
+  const db = openDatabase(':memory:');
+  const env = { START_PASSWORD: 'our-start-pw' };
+  resetPassword(db, { fresh: true, env });
+  await withServer({ db, raw: true }, async (call) => {
+    assert.deepEqual((await call('GET', '/session')).body, { loggedIn: false, mustChangePassword: false });
+    assert.equal((await call('POST', '/login', { password: 'simplebudget' })).status, 401);
+    assert.equal((await call('POST', '/login', { password: 'our-start-pw' })).body.mustChangePassword, false);
+    assert.equal((await call('GET', '/data')).status, 200);
+  });
+  // Too short to use: the default instead.
+  assert.equal(resetPassword(db, { env: { START_PASSWORD: 'short' } }).password, 'simplebudget');
+});
+
+test("any login can manage the others, but only Main sets Main's password", () => withServer({}, async (call) => {
+  const sam = (await call('POST', '/logins', { name: 'Sam', password: 'sams-password' })).body;
+  await call('POST', '/logout');
+  await call('POST', '/login', { password: 'sams-password' });
+  assert.equal((await call('PATCH', '/logins/0', { password: 'taken-over-pw' })).status, 403);
+  assert.equal((await call('PATCH', '/logins/0', { name: 'Kim' })).status, 200);
+  assert.equal((await call('DELETE', '/logins/0')).status, 400);
+  const alex = (await call('POST', '/logins', { name: 'Alex', password: 'alexs-password' })).body;
+  assert.equal((await call('PATCH', `/logins/${alex.id}`, { password: 'alexs-new-pw' })).status, 200);
+  assert.equal((await call('POST', '/import', { app: 'simple-budget', format_version: 2, payees: [] })).status, 403);
+  await call('POST', '/logout');
+  assert.equal((await call('POST', '/login', { password: 'household-pw' })).status, 200);
+  assert.equal((await call('PATCH', `/logins/${sam.id}`, { password: 'sams-new-pw' })).status, 200);
+  assert.equal((await call('POST', '/logins', { name: 'Jo', password: 'short' })).status, 400); // 8 characters at least
+}));
+
+test('guesses sent all at once are counted before they are checked', () => withServer({ raw: true }, async (call) => {
+  const results = await Promise.all(Array.from({ length: 20 }, () => call('POST', '/login', { password: 'wrong-guess' })));
+  const wrong = results.filter((r) => r.status === 401).length;
+  assert.ok(wrong <= 5, `${wrong} guesses were checked`);
+  assert.equal(results.filter((r) => r.status === 429).length, 20 - wrong);
+  assert.equal((await call('POST', '/login', { password: 'simplebudget' })).status, 200);
+}));
+
+test('the current password can only be guessed a few times', () => withServer({}, async (call) => {
+  const tries = [];
+  for (let i = 0; i < 6; i += 1) tries.push((await call('POST', '/password', { current: `wrong-${i}`, password: 'another-pw' })).status);
+  assert.deepEqual(tries, [400, 400, 400, 400, 400, 429]);
+}));
+
+test('changes from other sites are refused, logins must be JSON, and API answers are not cached', () => withServer({}, async (call) => {
+  assert.equal((await call('POST', '/payees', { name: 'Evil' }, { origin: 'http://evil.example' })).status, 403);
+  assert.equal((await call('POST', '/payees', { name: 'Evil' }, { 'sec-fetch-site': 'cross-site' })).status, 403);
+  assert.equal((await call('POST', '/payees', { name: 'Sibling' }, { 'sec-fetch-site': 'same-site' })).status, 403);
+  assert.equal((await call('POST', '/payees', { name: 'Ours' }, { 'sec-fetch-site': 'same-origin' })).status, 201);
+  assert.equal((await call('POST', '/login', { password: 'x' }, { 'content-type': 'application/x-www-form-urlencoded' })).status, 415);
+  assert.equal((await call('GET', '/data')).headers.get('cache-control'), 'no-store');
+}));
+
+test('restoring part of a backup keeps the other rows linked by name', () => withServer({}, async (call) => {
+  const cats = (await call('GET', '/categories')).body;
+  const acct = (await call('POST', '/accounts', { name: 'Bills' })).body;
+  await call('POST', '/expenses', { name: 'Phone', amount_cents: 5000, frequency: 'monthly', category_id: cats[0].id, account_id: acct.id });
+  await call('POST', '/expenses', { name: 'Gym', amount_cents: 3000, frequency: 'monthly', category_id: cats[1].id });
+  const r = await call('POST', '/import', { app: 'simple-budget', format_version: 2,
+    categories: [{ id: 50, name: cats[0].name.toUpperCase(), subcategories: [] }] });
+  assert.equal(r.status, 200);
+  const d = (await call('GET', '/data')).body;
+  const phone = d.expenses.find((e) => e.name === 'Phone');
+  assert.equal(d.categories.find((c) => c.id === phone.category_id).name, cats[0].name.toUpperCase());
+  assert.equal(phone.account_id, acct.id); // accounts weren't in the file, so untouched
+  assert.equal(d.expenses.find((e) => e.name === 'Gym').category_id, null);
+  assert.match(r.body.warnings.join(' '), new RegExp(`"Gym" is no longer linked to the category "${cats[1].name}"`));
+}));
+
+test('backups: a file restore saves what was there first, and manual backups are capped and can be deleted', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-backups-'));
+  try {
+    await withServer({ dataDir }, async (call) => {
+      await call('POST', '/payees', { name: 'Before' });
+      const r = await call('POST', '/import', { app: 'simple-budget', format_version: 2, payees: [{ id: 1, name: 'After' }] });
+      assert.match(r.body.backup, /^budget-before-restore-/);
+      let made;
+      for (let i = 0; i < 20; i += 1) made = (await call('POST', '/backups')).body.created;
+      assert.equal((await call('POST', '/backups')).status, 409);
+      const left = (await call('DELETE', `/backups/${made}`)).body.backups;
+      assert.ok(!left.some((b) => b.name === made));
+      assert.equal((await call('POST', '/backups')).status, 200);
+      assert.equal((await call('DELETE', '/backups/..%2Fbudget.db')).status, 404);
+    });
+  } finally { fs.rmSync(dataDir, { recursive: true, force: true }); }
+});

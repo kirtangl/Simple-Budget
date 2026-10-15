@@ -53,6 +53,8 @@ This downloads the ready-made image and starts two containers: the app, and a sm
 
 Then open `http://<your-server>:3000` and log in with the default password **`simplebudget`**. You'll be asked to choose your own password straight away.
 
+Would rather skip that step? Before the first `docker compose up -d`, add `START_PASSWORD=your-password` (at least 8 characters) to `.env`. The app starts with that as the main password instead, and the login page doesn't show any password. It's only used when the app is first set up and when the password is reset.
+
 First steps once you're in:
 
 1. **Settings → General**: pick any pay day (cycles are counted every 14 days from it) and choose your rounding and buffer.
@@ -64,15 +66,18 @@ To update, press **Update now** in Settings → Updates (see [Updating](#updatin
 
 ### Passwords and logins
 
-The first password is the **main** login. Add a login for each person under **Settings → Security**, each with its own password. Change your own password there too; doing that logs your login out on every other device. Any login can set a new password for another one that's been forgotten.
+The first password is the **main** login. Add a login for each person under **Settings → Security**, each with its own password (at least 8 characters). Logins only tell the household apart: everyone sees the same budget. Change your own password there too; doing that logs your login out on every other device.
 
-Forgot the main password? Reset it back to `simplebudget` from the server:
+- Any login can add, rename or remove the other logins, and set a new password for one that's been forgotten.
+- The main login can't be removed, and only the main login can change its own password. Installing updates, restoring backups and Settings → Advanced are main login only too.
+
+Forgot the main password? Reset it from the server:
 
 ```sh
-docker compose exec budget node src/reset-password.js
+sudo docker compose exec budget node src/reset-password.js
 ```
 
-You'll be asked to choose a new password the next time you log in. Other logins aren't affected.
+It goes back to `START_PASSWORD` from `.env` if you set one, otherwise to `simplebudget`. The command tells you which, and lists the other logins so you can spot one you don't recognise. The login page doesn't show the password after a reset. With `simplebudget`, you'll be asked to choose a new password when you log in. Other logins carry on as normal.
 
 ### Settings (`.env`)
 
@@ -83,7 +88,8 @@ Most of these can also be changed in the app under **Settings → Advanced** (be
 | `TZ`             | Your timezone, so bills flip to "paid" on the right day.                     | `Australia/Brisbane` |
 | `SECURE_COOKIES` | Set to `true` if you put the app behind HTTPS (e.g. a reverse proxy).        | `false`              |
 | `ALLOWED_HOSTS`  | Extra web addresses the app answers to, comma separated, e.g. `budget.example.com`. See below. | none |
-| `TRUST_PROXY`    | Only behind a reverse proxy: its address (e.g. `172.18.0.1`), or `1`, so the login limit sees each visitor's real address. | off |
+| `TRUST_PROXY`    | Only behind a reverse proxy: its address (e.g. `172.18.0.1`), or `1`, so the login limit sees each visitor's real address. `true` trusts proxies on the home network only. | off |
+| `START_PASSWORD` | The main login's starting password, used on first setup and after a reset (at least 8 characters). Not shown in the app. | `simplebudget` |
 
 The app only answers to home-network addresses: an IP address like `192.168.1.20`, `localhost`, a plain name like `nas`, and names ending in `.local`, `.lan`, `.home.arpa`, `.internal` or `.ts.net` (Tailscale). This stops a website on the internet from tricking your browser into reading the budget. If you open the app through your own domain (a reverse proxy or a Cloudflare Tunnel), add that domain in **Settings → Advanced** (open the app by its IP address to get there) or to `ALLOWED_HOSTS`, or you'll see "Simple Budget doesn't answer to ...".
 
@@ -91,9 +97,9 @@ The app only answers to home-network addresses: an IP address like `192.168.1.20
 
 Everything is stored in one SQLite database file inside the Docker volume `budget-data`. It survives restarts and updates.
 
-- **Backup and restore**: Settings → General → **Download backup** saves your accounts, income, payees, categories, expenses, goals, debts and settings as a JSON file. **Restore from backup** loads one back in and **replaces** what's there. Passwords and logins aren't included or changed. This is also handy for starting over: wipe the volume (`docker compose down -v`), start again, and restore.
+- **Backup and restore**: Settings → General → **Download backup** saves your accounts, income, payees, categories, expenses, goals, debts and settings as a JSON file. **Restore from backup** (main login only) loads one back in and **replaces** what's there, saving a copy of what was there first under **Backups** (below). Passwords and logins aren't included or changed. If a file only has some sections, the rest stays linked to the restored items by name. This is also handy for starting over: wipe the volume (`docker compose down -v`), start again, and restore.
 - **Older backups keep working**: each file records its format version. When a newer app expects data an older file doesn't have, it fills in the defaults, and any section missing from the file is left as it is.
-- **Backups on the server**: Settings → Updates → **Backups** lists copies of the whole database kept in `backups/` in the data volume. One is made before every update and before every restore (the last 5 are kept, or 10 or 20 under **Preferences**), and **Back up now** makes a manual one, which is kept until you delete the file. **Restore** (main login only) puts the budget back as it was then; logins and passwords stay as they are now, so nobody is logged out.
+- **Backups on the server**: Settings → Updates → **Backups** lists copies of the whole database kept in `backups/` in the data volume. One is made before every update and before every restore (the last 5 are kept, or 10 or 20 under **Preferences**), and **Back up now** makes a manual one (up to 20), which is kept until you press **Delete** on it. **Restore** (main login only) puts the budget back as it was then; logins and passwords stay as they are now, so nobody is logged out.
 - **Full database copy**: `docker compose cp budget:/app/data/budget.db ./budget-backup.db`
 
 ### Updating
@@ -178,7 +184,7 @@ npm install
 npm start
 ```
 
-The database is created at `data/budget.db`. Log in with `simplebudget` and choose a new password. To reset it, run `node src/reset-password.js`.
+The database is created at `data/budget.db`. Log in with `simplebudget` (or `START_PASSWORD`) and choose a new password. To reset it, run `node src/reset-password.js`.
 
 ## For developers
 

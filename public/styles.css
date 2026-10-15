@@ -1607,6 +1607,8 @@ dialog.loan-modal .error:empty { display: none; }
 .upd-backup-list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); }
 .upd-backup-name { font-size: 13px; font-weight: 600; }
 .upd-backup-list .linkish { font-size: 12px; }
+.upd-backup-btns { display: flex; gap: 14px; flex-shrink: 0; }
+.upd-backup-list .linkish.danger-link { color: var(--danger); }
 .upd-folder { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
 .upd-empty { padding-top: 8px; border-top: 1px solid var(--line); }
 .upd-prefs h3 { margin-bottom: 4px; }
