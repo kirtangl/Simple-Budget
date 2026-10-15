@@ -5,7 +5,6 @@
 // daylight saving never shifts a day.
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const CYCLE_DAYS = 14;
 const DAYS_PER_YEAR = 365.25;
 
 // How often you get paid. A pay cycle runs from one pay day to the day before
@@ -105,9 +104,6 @@ function perPayCents(expense, cycle = DEFAULT_PAY_CYCLE) {
   const f = FREQUENCIES[expense.frequency];
   return f ? (expense.amount_cents * f.perYear) / paysPerYear(cycle) : 0;
 }
-
-// Kept for the fortnightly case the app started with.
-const fortnightlyCents = (expense) => perPayCents(expense, DEFAULT_PAY_CYCLE);
 
 // Every date this expense comes out between start and end (inclusive).
 // Weekly and fortnightly expenses count day_offset days from the anchor pay day,
@@ -715,9 +711,9 @@ function workOutEstimates(loan, today) {
 }
 
 module.exports = {
-  FREQUENCIES, CYCLE_DAYS, PAY_FREQUENCIES, DEFAULT_PAY_CYCLE, payCycle, paysPerYear, monthlyStart,
+  FREQUENCIES, PAY_FREQUENCIES, DEFAULT_PAY_CYCLE, payCycle, paysPerYear, monthlyStart,
   addDays, daysBetween, isValidDate, cycleIndexFor, cycleBounds,
-  perPayCents, fortnightlyCents, occurrences, INCOME_FREQUENCIES, incomePerCycle, isSplit, perCycleCents, inRange, nextDate, movedFrom, spreadsEachCycle, yearStart, paidBetween, fundedRows,
+  perPayCents, occurrences, INCOME_FREQUENCIES, incomePerCycle, isSplit, perCycleCents, inRange, nextDate, movedFrom, spreadsEachCycle, yearStart, paidBetween, fundedRows,
   LOAN_FREQUENCIES, amortisedRepayment, maxPrincipal, addMonths, loanAsExpense, scheduleAsExpense,
   scheduledRepayment, budgetedRepayment, nextDue, loanEndDate, calculatedRepayment, minimumBalance,
   loanRepayment, simulateLoan, loanEstimates, loanTimeline, loanHistory, ROUNDING, DEFAULT_DEPOSIT_RULES, roundUp, depositCents, buildCycle,

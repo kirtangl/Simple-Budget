@@ -109,4 +109,4 @@ function createConfig(db) {
   };
 }
 
-module.exports = { createConfig, ConfigError, splitHosts, DEFAULT_REPO };
+module.exports = { createConfig, ConfigError, splitHosts };

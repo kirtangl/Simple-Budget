@@ -186,11 +186,13 @@ npm start
 
 The database is created at `data/budget.db`. Log in with `simplebudget` (or `START_PASSWORD`) and choose a new password. To reset it, run `node src/reset-password.js`.
 
+`PORT` (default 3000) and `DB_FILE` change where it listens and keeps its data. Login cookies are signed with a key the app makes and keeps in the database; set `SESSION_SECRET` to use your own instead (changing it logs everyone out).
+
 ## For developers
 
 - **Backend**: Node.js + Express with the built-in `node:sqlite` module, so there are no native dependencies to compile. Money is stored as whole cents.
 - **Frontend**: plain HTML, CSS and JavaScript in `public/`, with no build step.
-- **API**: everything the app does goes through a JSON API under `/api` (`/api/data`, `/api/cycle?offset=N`, and CRUD endpoints for `accounts`, `payees`, `categories`, `subcategories`, `expenses`, `incomes`, `goals`, `loans`, plus `me` and `logins`). That keeps the door open for native phone apps later.
+- **API**: everything the app does goes through a JSON API under `/api` (`/api/data`, which includes each account's deposit, `/api/cycle?offset=N`, and CRUD endpoints for `accounts`, `payees`, `categories`, `subcategories`, `expenses`, `incomes`, `goals`, `loans`, plus `me` and `logins`). That keeps the door open for native phone apps later.
 - **Backups**: the format is documented in `src/api.js`. If you change it, bump `BACKUP_FORMAT_VERSION` and add an upgrade step so older files still restore.
 - **Tests**: `npm test` runs them. They include a made-up household whose deposits were worked out by hand.
 

@@ -167,6 +167,21 @@ const RESOURCES = {
     required: ['kind', 'name'],
     // A new goal belongs to whoever added it, unless the form says otherwise.
     owned: true,
+    // The form can name a new category (or a new colour for one) along with the goal:
+    // both are saved together. The goal takes the category's name as already saved.
+    beforeWrite: (db, data, body, before) => {
+      const name = data.group_name;
+      if (!name) return;
+      const kind = data.kind || (before && before.kind);
+      const colour = T.colour(body.group_color);
+      const group = db.prepare('SELECT * FROM goal_groups WHERE kind = ? AND name = ? COLLATE NOCASE').get(kind, name);
+      if (!group) {
+        db.prepare('INSERT INTO goal_groups (kind, name, color) VALUES (?, ?, ?)').run(kind, name, colour);
+      } else {
+        data.group_name = group.name;
+        if (colour && colour !== group.color) db.prepare('UPDATE goal_groups SET color = ? WHERE id = ?').run(colour, group.id);
+      }
+    },
     order: 'done, group_name COLLATE NOCASE, sort_order, name COLLATE NOCASE',
   },
   loans: {
@@ -201,11 +216,16 @@ const RESOURCES = {
     fields: { kind: T.enumOf('goal', 'debt'), name: T.text, color: T.colour },
     required: ['kind', 'name'],
     order: 'kind, name COLLATE NOCASE',
-    // Renaming a category moves its goals with it.
+    // Renaming a category, or moving it between Goals and Debts, takes its goals with it.
     afterUpdate: (db, before, after) => {
-      if (before.name !== after.name) {
-        db.prepare('UPDATE goals SET group_name = ? WHERE kind = ? AND group_name = ? COLLATE NOCASE').run(after.name, after.kind, before.name);
+      if (before.name !== after.name || before.kind !== after.kind) {
+        db.prepare('UPDATE goals SET group_name = ?, kind = ? WHERE kind = ? AND group_name = ? COLLATE NOCASE').run(after.name, after.kind, before.kind, before.name);
       }
+    },
+    // A category that only existed as a name on its goals, saved under a new name: the goals move to it.
+    afterInsert: (db, row, body) => {
+      const was = T.text(body.from_name);
+      if (was) db.prepare('UPDATE goals SET group_name = ? WHERE kind = ? AND group_name = ? COLLATE NOCASE').run(row.name, row.kind, was);
     },
     // Deleting a category leaves its goals uncategorised.
     afterDelete: (db, before) => {
@@ -247,7 +267,7 @@ function clean(resource, body, { partial }) {
 
 // Notes what changed in a row's tracked amounts. Setting the same amount again adds nothing.
 // `date` is when the change takes effect, for fields without a date of their own (default today).
-function logHistory(db, resource, before, after, { loginId = null, date: from = null } = {}) {
+function logHistory(db, resource, before, after, { date: from = null } = {}) {
   if (!resource.history) return;
   const { kind, fields } = resource.history;
   for (const [field, pick] of Object.entries(fields)) {
@@ -263,22 +283,22 @@ function logHistory(db, resource, before, after, { loginId = null, date: from = 
     if (!onDate && from && laterChange(db, kind, after.id, field, date) === 'start') {
       db.prepare('UPDATE amount_history SET on_date = ? WHERE kind = ? AND item_id = ? AND field = ?').run(budget.addDays(date, -1), kind, after.id, field);
     }
-    addHistory(db, { kind, id: after.id, field, date, value, frequency, loginId, estimate });
+    addHistory(db, { kind, id: after.id, field, date, value, frequency, estimate });
   }
 }
 
 // One amount on a date, slotted in with the others (so a back-dated price sits in its place).
 // A second change on the same day replaces the first (a typo fixed), but the starting amount is
 // always kept, and an amount the same as the one already in force then isn't repeated.
-function addHistory(db, { kind, id, field, date, value, frequency = null, loginId = null, estimate = null }) {
+function addHistory(db, { kind, id, field, date, value, frequency = null, estimate = null }) {
   const rows = db.prepare('SELECT * FROM amount_history WHERE kind = ? AND item_id = ? AND field = ? ORDER BY on_date, id').all(kind, id, field);
   const upTo = rows.filter((r) => r.on_date <= date);
   const prev = upTo[upTo.length - 1];
   if (prev && prev.on_date === date && upTo.length > 1) {
-    db.prepare('UPDATE amount_history SET value = ?, frequency = ?, login_id = ? WHERE id = ?').run(value, frequency ?? null, loginId, prev.id);
+    db.prepare('UPDATE amount_history SET value = ?, frequency = ? WHERE id = ?').run(value, frequency ?? null, prev.id);
   } else if (!prev || prev.value !== value || prev.frequency !== (frequency ?? null)) {
-    db.prepare('INSERT INTO amount_history (kind, item_id, field, on_date, value, frequency, login_id, before_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(kind, id, field, date, value, frequency ?? null, loginId, estimate ?? null);
+    db.prepare('INSERT INTO amount_history (kind, item_id, field, on_date, value, frequency, before_value) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(kind, id, field, date, value, frequency ?? null, estimate ?? null);
   }
 }
 
@@ -329,7 +349,7 @@ function applyPendingAmounts(db) {
 }
 
 function historyOf(db, kind, id) {
-  return db.prepare('SELECT id, field, on_date, value, frequency, login_id, before_value FROM amount_history WHERE kind = ? AND item_id = ? ORDER BY on_date, id').all(kind, id).map((r) => ({ ...r }));
+  return db.prepare('SELECT id, field, on_date, value, frequency, before_value FROM amount_history WHERE kind = ? AND item_id = ? ORDER BY on_date, id').all(kind, id).map((r) => ({ ...r }));
 }
 
 function today() {
@@ -522,7 +542,7 @@ function createApi(db) {
     const later = from <= today() && laterChange(db, 'expense', id, 'amount_cents', from) === 'change';
     transaction(db, () => {
       if (later) {
-        addHistory(db, { kind: 'expense', id, field: 'amount_cents', date: from, value: cents, frequency: e.frequency, loginId: req.login ? req.login.id : null });
+        addHistory(db, { kind: 'expense', id, field: 'amount_cents', date: from, value: cents, frequency: e.frequency });
         if ('review_date' in body) db.prepare('UPDATE expenses SET review_date = ?, review_snooze = NULL WHERE id = ?').run(review, id);
       } else if (from > today()) {
         db.prepare('UPDATE expenses SET pending_cents = ?, pending_from = ?, review_date = ?, review_snooze = NULL WHERE id = ?').run(cents, from, review, id);
@@ -531,7 +551,7 @@ function createApi(db) {
         const cols = e.yearly_cents != null ? 'yearly_cents = ?, amount_cents = ?' : 'amount_cents = ?';
         db.prepare(`UPDATE expenses SET ${cols}, review_date = ?, review_snooze = NULL WHERE id = ?`)
           .run(...(e.yearly_cents != null ? [cents, cents] : [cents]), review, id);
-        logHistory(db, RESOURCES.expenses, before, { ...db.prepare('SELECT * FROM expenses WHERE id = ?').get(id) }, { loginId: req.login ? req.login.id : null, date: from });
+        logHistory(db, RESOURCES.expenses, before, { ...db.prepare('SELECT * FROM expenses WHERE id = ?').get(id) }, { date: from });
       }
     });
     res.json({ ...db.prepare('SELECT * FROM expenses WHERE id = ?').get(id) });
@@ -559,11 +579,11 @@ function createApi(db) {
     for (const f of pastOnly) saved[f] = l[f];
     const cols = Object.keys(saved);
     transaction(db, () => {
-      for (const f of pastOnly) addHistory(db, { kind: 'loan', id, field: f, date: data.balance_date, value: data[f], frequency: f === 'repayment_cents' ? l.repayment_frequency : null, loginId: req.login ? req.login.id : null });
+      for (const f of pastOnly) addHistory(db, { kind: 'loan', id, field: f, date: data.balance_date, value: data[f], frequency: f === 'repayment_cents' ? l.repayment_frequency : null });
       db.prepare(`UPDATE loans SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).run(...cols.map((c) => saved[c]), id);
       const after = { ...db.prepare('SELECT * FROM loans WHERE id = ?').get(id) };
       logHistory(db, RESOURCES.loans, before, older ? { ...after, balance_cents: data.balance_cents, balance_date: data.balance_date } : after,
-        { loginId: req.login ? req.login.id : null, date: data.balance_date });
+        { date: data.balance_date });
     });
     res.json({ ...db.prepare('SELECT * FROM loans WHERE id = ?').get(id) });
   });
@@ -676,7 +696,7 @@ function createApi(db) {
     const perYear = budget.LOAN_FREQUENCIES[freq];
     const rate = T.rate(q.rate) ?? 0;
     const years = Number(q.years);
-    if (!(years > 0 && years <= 50)) throw new BadRequest('Term must be between 1 and 50 years.');
+    if (!(years >= 1 / 12 && years <= 50)) throw new BadRequest('Term must be between 1 month and 50 years.');
     const periods = Math.round(years * perYear);
     const amount = T.cents(q.amount_cents);
     const limit = Math.min(Math.max(Number(q.limit_percent) || 70, 1), 100);
@@ -763,11 +783,16 @@ function createApi(db) {
       if (resource.owned && !(req.body && 'owner_id' in req.body) && req.login) data.owner_id = req.login.id;
       if (resource.check) resource.check(data);
       checkUnique(data);
-      const cols = Object.keys(data);
-      const sql = `INSERT INTO ${name} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`;
-      const { lastInsertRowid } = db.prepare(sql).run(...cols.map((c) => data[c]));
-      logHistory(db, resource, null, get(lastInsertRowid), { loginId: req.login ? req.login.id : null });
-      res.status(201).json(get(lastInsertRowid));
+      const id = transaction(db, () => {
+        if (resource.beforeWrite) resource.beforeWrite(db, data, req.body, null);
+        const cols = Object.keys(data);
+        const sql = `INSERT INTO ${name} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`;
+        const { lastInsertRowid } = db.prepare(sql).run(...cols.map((c) => data[c]));
+        if (resource.afterInsert) resource.afterInsert(db, get(lastInsertRowid), req.body);
+        logHistory(db, resource, null, get(lastInsertRowid));
+        return lastInsertRowid;
+      });
+      res.status(201).json(get(id));
     });
 
     router.patch(`/${name}/:id`, (req, res) => {
@@ -784,14 +809,15 @@ function createApi(db) {
       if (resource.check) resource.check(merged);
       const within = resource.unique && resource.unique.within;
       if ('name' in data || (within && within in data)) checkUnique(merged, id);
-      const cols = Object.keys(data);
       transaction(db, () => {
+        if (resource.beforeWrite) resource.beforeWrite(db, data, req.body, before);
+        const cols = Object.keys(data);
         if (cols.length) {
           db.prepare(`UPDATE ${name} SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`)
             .run(...cols.map((c) => data[c]), id);
         }
         if (resource.afterUpdate) resource.afterUpdate(db, before, get(id));
-        logHistory(db, resource, before, get(id), { loginId: req.login ? req.login.id : null });
+        logHistory(db, resource, before, get(id));
       });
       res.json(get(id));
     });
@@ -819,6 +845,16 @@ function createApi(db) {
     if (next < 0) throw new BadRequest(`There's only $${(goal.current_cents / 100).toFixed(2)} to take from.`);
     db.prepare('UPDATE goals SET current_cents = ? WHERE id = ?').run(next, id);
     res.json({ ...db.prepare('SELECT * FROM goals WHERE id = ?').get(id) });
+  });
+
+  // Takes goals out of a category that only exists as a name on them: { kind, name }.
+  router.post('/goal_groups/clear', (req, res) => {
+    const body = req.body || {};
+    const kind = labelled('kind', T.enumOf('goal', 'debt'), body.kind);
+    const name = labelled('name', T.text, body.name);
+    if (!kind || !name) throw new BadRequest('Say which category to clear.');
+    db.prepare('UPDATE goals SET group_name = NULL WHERE kind = ? AND group_name = ? COLLATE NOCASE').run(kind, name);
+    res.json({ ok: true });
   });
 
   // Save a new display order, e.g. { ids: [3, 1, 2] }.
@@ -1098,4 +1134,4 @@ function importBackup(db, input) {
   return { ok: true, format_version: Number(input.format_version) || 1, counts, warnings };
 }
 
-module.exports = { createApi, today, exportBackup, importBackup, BACKUP_FORMAT_VERSION, BACKUP_SETTINGS };
+module.exports = { createApi, BACKUP_SETTINGS };

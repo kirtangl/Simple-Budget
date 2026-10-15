@@ -233,6 +233,11 @@ const MIGRATIONS = [
   ALTER TABLE expenses ADD COLUMN pending_from TEXT;
   ALTER TABLE amount_history ADD COLUMN before_value NUMERIC;
   `,
+  // 16: who made each history change was recorded but never shown, and wasn't cleared when
+  // a login was removed. It's no longer kept (the column stays, empty).
+  `
+  UPDATE amount_history SET login_id = NULL;
+  `,
 ];
 
 function openDatabase(file) {

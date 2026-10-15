@@ -1928,15 +1928,6 @@
     }
   });
 
-  // Saves a category's colour, creating the category if it's new. Returns its name as saved.
-  async function saveGroup(kind, name, color) {
-    if (!name) return null;
-    const existing = findGroup(kind, name);
-    if (!existing) return (await api('POST', '/goal_groups', { kind, name, color })).name;
-    if (existing.color !== color) await api('PATCH', `/goal_groups/${existing.id}`, { color });
-    return existing.name;
-  }
-
   function goalForm(kind, g = { kind, current_cents: 0 }) {
     const k = KIND[kind];
     const accounts = state.data.accounts;
@@ -1989,7 +1980,8 @@
           if (body.start_date && body.target_date && body.target_date < body.start_date) throw new Error('The pay off date is before the start date.');
         }
         if (!body.name) throw new Error('Please give it a name.');
-        body.group_name = await saveGroup(kind, body.group_name, val(form, 'group_color'));
+        // A new category, or a new colour for one, is saved with the goal.
+        if (body.group_name) body.group_color = val(form, 'group_color');
         await (g.id ? api('PATCH', `/goals/${g.id}`, body) : api('POST', '/goals', body));
         await reload();
       },
@@ -2015,12 +2007,8 @@
         if (existing) {
           await api('PATCH', `/goal_groups/${existing.id}`, body);
         } else {
-          // A category that only existed as a name on its goals: save it, then move the goals.
-          await api('POST', '/goal_groups', { kind, ...body });
-          if (newName !== name) {
-            const moving = state.data.goals.filter((g) => g.kind === kind && (g.group_name || '').toLowerCase() === name.toLowerCase());
-            for (const g of moving) await api('PATCH', `/goals/${g.id}`, { group_name: newName });
-          }
+          // A category that only existed as a name on its goals: save it, and its goals move with it.
+          await api('POST', '/goal_groups', { kind, ...body, from_name: name });
         }
         await reload();
       },
@@ -2028,8 +2016,7 @@
         if (existing) {
           await api('DELETE', `/goal_groups/${existing.id}`);
         } else {
-          const moving = state.data.goals.filter((g) => g.kind === kind && (g.group_name || '').toLowerCase() === name.toLowerCase());
-          for (const g of moving) await api('PATCH', `/goals/${g.id}`, { group_name: null });
+          await api('POST', '/goal_groups/clear', { kind, name });
         }
         await reload();
       },

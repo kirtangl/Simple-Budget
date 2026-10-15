@@ -1181,3 +1181,31 @@ test('updates: a check that started before the repository changed is ignored', a
   await u.get({}, { json: () => { throw new Error('boom'); } }, (err) => { passed = err; });
   assert.equal(passed.message, 'boom');
 });
+
+test('goal categories: saved with a goal, moved between goals and debts, and named-only ones', () => withServer({}, async (call) => {
+  // A goal with a new category creates it, with its colour, in the same save.
+  let g = (await call('POST', '/goals', { kind: 'goal', name: 'Bike', group_name: 'toys', group_color: '#00aa00' })).body;
+  let d = (await call('GET', '/data')).body;
+  const toys = d.goal_groups.find((x) => x.name === 'toys');
+  assert.equal(toys.color, '#00aa00');
+  // An existing one keeps its spelling, and a new colour is saved with the goal.
+  g = (await call('PATCH', `/goals/${g.id}`, { group_name: 'TOYS', group_color: '#0000aa' })).body;
+  assert.equal(g.group_name, 'toys');
+  assert.equal((await call('GET', '/goal_groups')).body.find((x) => x.id === toys.id).color, '#0000aa');
+  // A bad goal saves nothing, category included.
+  assert.equal((await call('POST', '/goals', { kind: 'goal', group_name: 'Never', target_cents: -1 })).status, 400);
+  assert.equal((await call('GET', '/goal_groups')).body.some((x) => x.name === 'Never'), false);
+  // Moving the category to Debts takes its goals with it.
+  await call('PATCH', `/goal_groups/${toys.id}`, { kind: 'debt' });
+  d = (await call('GET', '/data')).body;
+  assert.deepEqual([d.goals[0].kind, d.goals[0].group_name], ['debt', 'toys']);
+  // Goals in a category that only exists as a name (from an old backup) move when it's saved under a new name...
+  await call('POST', '/import', { app: 'simple-budget', goals: [{ id: 1, kind: 'goal', name: 'Couch', group_name: 'Home' }, { id: 2, kind: 'goal', name: 'Rug', group_name: 'home' }] });
+  await call('POST', '/goal_groups', { kind: 'goal', name: 'House', from_name: 'Home' });
+  d = (await call('GET', '/data')).body;
+  assert.deepEqual(d.goals.map((x) => x.group_name), ['House', 'House']);
+  // ...and are left without one when it's deleted.
+  await call('POST', '/import', { app: 'simple-budget', goals: [{ id: 1, kind: 'goal', name: 'Couch', group_name: 'Home' }] });
+  await call('POST', '/goal_groups/clear', { kind: 'goal', name: 'home' });
+  assert.equal((await call('GET', '/data')).body.goals[0].group_name, null);
+}));
