@@ -307,6 +307,28 @@ test('paid so far counts dates before today, and per-cycle savings by cycle', ()
   assert.equal(r.cents, 7000);
 });
 
+test('paid so far uses the price in force on each date', () => {
+  // $100 a month from January, $120 from 1 September: Jul + Aug at $100, Sep + Oct at $120.
+  const bill = { frequency: 'monthly', day_of_month: 1, amount_cents: 12000 };
+  const history = [
+    { id: 1, field: 'amount_cents', on_date: '2026-01-01', value: 10000, frequency: 'monthly' },
+    { id: 2, field: 'amount_cents', on_date: '2026-09-01', value: 12000, frequency: 'monthly' },
+  ];
+  assert.deepEqual(budget.paidBetween(bill, '2026-07-01', '2026-10-15', { history }), { count: 4, cents: 44000 });
+  assert.deepEqual(budget.paidBetween(bill, '2026-07-01', '2026-10-15'), { count: 4, cents: 48000 }); // no history: today's price
+  // Added in March with payments from January: its first amount covers the months before.
+  assert.deepEqual(budget.paidBetween(bill, '2026-01-01', '2026-04-15', { history: [{ ...history[0], on_date: '2026-03-10' }] }), { count: 4, cents: 40000 });
+  // A change of how often it's paid: $300 quarterly (Jan, Apr) then $100 monthly from 1 June.
+  const q = { frequency: 'monthly', day_of_month: 1, start_month: 1, amount_cents: 10000 };
+  const hq = [
+    { id: 1, field: 'amount_cents', on_date: '2026-01-01', value: 30000, frequency: 'quarterly' },
+    { id: 2, field: 'amount_cents', on_date: '2026-06-01', value: 10000, frequency: 'monthly' },
+  ];
+  assert.deepEqual(budget.paidBetween(q, '2026-01-01', '2026-08-15', { history: hq }), { count: 5, cents: 90000 });
+  // Other fields' history is ignored.
+  assert.deepEqual(budget.paidBetween(bill, '2026-07-01', '2026-10-15', { history: [{ id: 3, field: 'interest_rate', on_date: '2026-08-01', value: 5 }] }), { count: 4, cents: 48000 });
+});
+
 test('days a month does not have move to its last day', () => {
   const rent = { frequency: 'monthly', day_of_month: 31 };
   assert.deepEqual(budget.occurrences(rent, '2026-01-01', '2026-06-30'),

@@ -225,23 +225,44 @@ function yearStart(today, basis) {
 
 // What has come out for a row from `from` up to (not including) `today`, the same
 // way the Overview counts bills as paid. Savings spread per cycle count each cycle's share.
-function paidBetween(e, from, today, { anchor = from, payAnchor = anchor, payCycle: pc = DEFAULT_PAY_CYCLE } = {}) {
+// `history` (its amount_history rows) prices each payment at the amount in force on its
+// date; without it, every payment is counted at today's amount.
+function paidBetween(e, from, today, { anchor = from, payAnchor = anchor, payCycle: pc = DEFAULT_PAY_CYCLE, history = [] } = {}) {
   const start = e.start_date && e.start_date > from ? e.start_date : from;
   const last = addDays(today, -1);
   const end = e.end_date && e.end_date < last ? e.end_date : last;
   if (start > end) return { count: 0, cents: 0 };
-  if (spreadsEachCycle(e, pc)) {
-    const each = Math.round(perCycleCents(e, pc));
-    let count = 0;
-    for (let i = cycleIndexFor(anchor, start, pc); ; i += 1) {
-      const c = cycleBounds(anchor, i, pc);
-      if (c.start > end) break;
-      if (c.start >= start) count += 1;
+  const paidIn = (row, s, until) => {
+    if (spreadsEachCycle(row, pc)) {
+      const each = Math.round(perCycleCents(row, pc));
+      let count = 0;
+      for (let i = cycleIndexFor(anchor, s, pc); ; i += 1) {
+        const c = cycleBounds(anchor, i, pc);
+        if (c.start > until) break;
+        if (c.start >= s) count += 1;
+      }
+      return { count, cents: count * each };
     }
-    return { count, cents: count * each };
+    const count = occurrences(row, s, until, payAnchor).length;
+    return { count, cents: count * row.amount_cents };
+  };
+  const changes = history.filter((h) => h.field === 'amount_cents' && Number.isInteger(h.value))
+    .sort((a, b) => (a.on_date < b.on_date ? -1 : a.on_date > b.on_date ? 1 : a.id - b.id));
+  if (!changes.length) return paidIn(e, start, end);
+  // The row as it was under one recorded amount (and how often it was paid then).
+  const asAt = (h) => ({ ...e, amount_cents: h.value, frequency: h.frequency || e.frequency, ...(isSplit(e) && { yearly_cents: h.value }) });
+  // Before the first record (bills added after they started), its first amount applies.
+  let current = changes.filter((h) => h.on_date <= start).at(-1) || changes[0];
+  let from_ = start;
+  const total = { count: 0, cents: 0 };
+  const add = (r) => { total.count += r.count; total.cents += r.cents; };
+  for (const h of changes.filter((c) => c.on_date > start && c.on_date <= end)) {
+    add(paidIn(asAt(current), from_, addDays(h.on_date, -1)));
+    current = h;
+    from_ = h.on_date;
   }
-  const count = occurrences(e, start, end, payAnchor).length;
-  return { count, cents: count * e.amount_cents };
+  add(paidIn(asAt(current), from_, end));
+  return total;
 }
 
 // Expenses can be ordinary bills (kind 'expense'), savings transfers ('saving')

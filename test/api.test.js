@@ -1093,3 +1093,11 @@ test('backups: a file restore saves what was there first, and manual backups are
     });
   } finally { fs.rmSync(dataDir, { recursive: true, force: true }); }
 });
+
+test('paid this year counts each payment at the price it was then', (t) => { onDay(t, '2026-10-15'); return withServer({}, async (call) => {
+  const e = (await call('POST', '/expenses', { name: 'Gym', amount_cents: 10000, frequency: 'monthly', day_of_month: 1 })).body;
+  await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 10000, from: '2026-01-01' });
+  await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 12000, from: '2026-09-01' });
+  const d = (await call('GET', `/expenses/${e.id}/details`)).body;
+  assert.deepEqual([d.paid_fytd.count, d.paid_fytd.cents], [4, 44000]); // Jul, Aug at $100; Sep, Oct at $120
+}); });

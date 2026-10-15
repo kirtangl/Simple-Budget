@@ -466,12 +466,13 @@ function createApi(db) {
     const e = db.prepare('SELECT * FROM expenses WHERE id = ?').get(Number(req.params.id));
     if (!e) return res.status(404).json({ error: 'Not found.' });
     const now = today();
-    const opts = { anchor: payAnchor(db), payCycle: payCycleOf(db) };
+    const history = historyOf(db, 'expense', e.id);
+    const opts = { anchor: payAnchor(db), payCycle: payCycleOf(db), history };
     const fy = budget.yearStart(now, 'financial');
     const cy = budget.yearStart(now, 'calendar');
     res.json({ ...e, next_date: budget.nextDate(e, now, opts.anchor), spread: budget.spreadsEachCycle(e, opts.payCycle),
       paid_fytd: { from: fy, ...budget.paidBetween(e, fy, now, opts) },
-      paid_ytd: { from: cy, ...budget.paidBetween(e, cy, now, opts) }, history: historyOf(db, 'expense', e.id) });
+      paid_ytd: { from: cy, ...budget.paidBetween(e, cy, now, opts) }, history });
   });
 
   // A new price for a bill, from a date: { amount_cents, from, review_date }. A date after
