@@ -31,6 +31,10 @@ services:
       UPDATER_TOKEN: ${UPDATER_TOKEN:-simple-budget-updater}
       # So the app only offers versions the updater can install (see image above).
       IMAGE_TAG: ${IMAGE_TAG:-latest}
+      # Automatic shop prices (see "Automatic prices" in the README): where the price-checker is,
+      # and the password between them. Leave PRICE_CHECKER_URL empty to go without.
+      PRICE_CHECKER_URL: ${PRICE_CHECKER_URL:-}
+      PRICE_CHECKER_TOKEN: ${PRICE_CHECKER_TOKEN:-simple-budget-prices}
     labels:
       # Only this copy's updater may update it.
       com.centurylinklabs.watchtower.enable: "true"
@@ -59,5 +63,28 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
+  # Looks up supermarket prices for the Shopping tab in a real browser. Only started with the
+  # "prices" profile (COMPOSE_PROFILES=prices in .env), and it's the only part that needs the
+  # internet for that. Its port isn't published, so only the app can reach it. The browser's
+  # profile (its cookies) is kept in the price-checker-data volume.
+  price-checker:
+    profiles: [prices]
+    image: ghcr.io/kirtangl/simple-budget-price-checker:${IMAGE_TAG:-latest}
+    build: ./price-checker
+    container_name: ${CONTAINER_NAME:-simple-budget}-prices
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Australia/Brisbane}
+      # Must match the app's PRICE_CHECKER_TOKEN above (both come from .env).
+      PRICE_CHECKER_TOKEN: ${PRICE_CHECKER_TOKEN:-simple-budget-prices}
+    # Chromium needs more shared memory than Docker's 64 MB.
+    shm_size: 1gb
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+      com.centurylinklabs.watchtower.scope: ${CONTAINER_NAME:-simple-budget}
+    volumes:
+      - price-checker-data:/data
+
 volumes:
   budget-data:
+  price-checker-data:

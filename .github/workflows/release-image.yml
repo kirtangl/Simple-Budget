@@ -1,6 +1,7 @@
-# Builds the Docker image and publishes it to GitHub's container registry
-# (ghcr.io/kirtangl/simple-budget) whenever a release is published, so each
-# copy can update itself from Settings → Updates.
+# Builds the Docker images and publishes them to GitHub's container registry
+# (ghcr.io/kirtangl/simple-budget, and the price-checker's
+# ghcr.io/kirtangl/simple-budget-price-checker) whenever a release is
+# published, so each copy can update itself from Settings → Updates.
 #
 # Tags: the version (0.7.0, 0.7), "beta" for every release including
 # pre-releases, and "latest" for full releases only.
@@ -27,6 +28,7 @@ permissions:
 
 env:
   IMAGE: ghcr.io/kirtangl/simple-budget
+  CHECKER_IMAGE: ghcr.io/kirtangl/simple-budget-price-checker
 
 jobs:
   test:
@@ -83,6 +85,26 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # The app reports the release's own version (0.8.0-beta.1), not package.json's.
+          build-args: APP_VERSION=${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
+      # The price-checker, with the same tags.
+      - id: checker-meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.CHECKER_IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},enable=${{ github.event_name == 'release' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=raw,value=beta,enable=${{ github.event_name == 'release' }}
+            type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: price-checker
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.checker-meta.outputs.tags }}
+          labels: ${{ steps.checker-meta.outputs.labels }}
           build-args: APP_VERSION=${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
 
   notes:
