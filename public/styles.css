@@ -1766,7 +1766,7 @@ dialog.loan-modal .error:empty { display: none; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
 .shop-where { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-.shop-where .grow { min-width: 0; }
+.shop-where .grow { flex: 1; min-width: 0; }
 .shop-where h2 { margin: 0; font-size: 1.15rem; overflow-wrap: anywhere; }
 .shop-where p { margin: 0; }
 .shop-add { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -1804,19 +1804,49 @@ button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
 .shop-sep::before, .shop-sep::after { content: ''; flex: 1; border-top: 1px dashed var(--line); }
 .shop-deal, .list .meta.shop-deal { color: var(--paid); }
 .shop-clear { display: flex; justify-content: flex-end; margin: 0 0 12px; }
-.shop-totals { padding-top: 6px; }
-.shop-total { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 0; }
-.shop-total.grand { border-top: 1px solid var(--line); font-weight: 600; }
-.shop-total.save { color: var(--paid); border-top: 1px solid var(--line); }
-.shop-total.best b { color: var(--paid); }
 .g-best { color: var(--paid); font-weight: 600; }
+.g-sep { display: inline-block; width: 1px; height: 12px; margin: 0 8px; background: var(--line); vertical-align: -1px; }
+/* Ticked items: the same tags, quietened like the rest of the row. */
+.shop-item.got .shop-tag { background: color-mix(in srgb, var(--tag) 30%, var(--card)); color: var(--text); }
+/* The totals under the list. */
+.shop-sum { padding: 18px 20px; }
+.sum-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.35fr); align-items: stretch; }
+.sum-tile { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 4px 18px; border-left: 1px solid var(--line); }
+.sum-tile:first-child { padding-left: 0; border-left: 0; }
+.sum-label { font-size: .85rem; color: color-mix(in srgb, var(--text) 72%, var(--card)); }
+.sum-num { font-size: 1.6rem; font-weight: 700; line-height: 1.2; }
+.sum-sub { font-size: .75rem; color: var(--muted); }
+.sum-sub.warn { color: var(--due); }
+.sum-tile.sum-best { margin-left: 12px; padding: 12px 16px; border: 1px solid color-mix(in srgb, var(--paid) 45%, var(--card)); border-radius: 12px;
+  background: color-mix(in srgb, var(--paid) 10%, var(--card)); }
+.sum-best .sum-num, .sum-best .sum-sub { color: var(--paid); }
+.sum-best-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sum-pill { padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, var(--paid) 22%, var(--card)); color: var(--paid); font-size: .72rem; font-weight: 600; white-space: nowrap; }
+.sum-bar { display: flex; gap: 2px; height: 12px; margin: 18px 0 8px; border-radius: 999px; overflow: hidden; }
+.sum-seg { min-width: 3px; background: var(--seg); }
+.sum-seg.hatch, .sum-key.hatch { background: repeating-linear-gradient(135deg, var(--seg, var(--muted)) 0 3px, color-mix(in srgb, var(--seg, var(--muted)) 30%, var(--card)) 3px 6px); }
+.sum-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .75rem; color: var(--muted); }
+.sum-key { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 2px; background: var(--muted); vertical-align: -1px; }
+.sum-table { margin-top: 14px; }
+.sum-tr { display: grid; grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr)); gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); font-size: .92rem; }
+.sum-tr > span:not(:first-child) { text-align: right; }
+.sum-th { border-top: 0; font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.sum-tt { font-weight: 700; }
+.sum-tr .good { color: var(--paid); }
+.sum-tr .muted { color: var(--muted); }
+@media (max-width: 720px) {
+  .shop-sum { padding: 16px; }
+  .sum-tiles { grid-template-columns: 1fr 1fr; row-gap: 14px; }
+  .sum-tile { padding: 0 0 0 14px; }
+  .sum-tile:nth-child(3) { padding-left: 0; border-left: 0; }
+  .sum-tile.sum-best { grid-column: 1 / -1; margin-left: 0; border-left: 1px solid color-mix(in srgb, var(--paid) 45%, var(--card)); padding: 12px 14px; }
+  .sum-num { font-size: 1.3rem; }
+  .sum-tr { font-size: .82rem; gap: 6px; }
+}
 /* A store or login in its own colour. White text on the colour reads in every theme. */
 .shop-tag { display: inline-block; padding: 0 7px; border-radius: 999px; background: var(--tag); color: #fff; font-size: .75rem; font-weight: 600; line-height: 1.6; }
 .shop-item.got .shop-who { color: var(--muted); }
 .store-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
-.shop-split > span { white-space: nowrap; }
-.shop-split { display: flex; flex-wrap: wrap; gap: 6px 14px; padding-top: 4px; font-size: .9rem; }
-.shop-split b { font-weight: 600; }
 /* The aisle picker: big enough to tap in a shop. */
 .spot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: 6px; margin: 8px 0 4px; }
 .spot-grid.named { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }

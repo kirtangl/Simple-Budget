@@ -4236,8 +4236,9 @@ sudo docker compose up -d --build</pre>`;
     const out = { spent: new Map(), spentTotal: 0, remaining: 0, unpriced: 0, split: new Map(), saving: 0 };
     for (const { it, p } of rows) {
       if (it.done_at) {
-        const c = itemCost(p, it.done_store_id);
-        if (c != null) { out.spent.set(it.done_store_id, (out.spent.get(it.done_store_id) || 0) + c * it.qty); out.spentTotal += c * it.qty; }
+        const at = boughtAt(it, p, store);
+        const c = itemCost(p, at);
+        if (c != null) { out.spent.set(at, (out.spent.get(at) || 0) + c * it.qty); out.spentTotal += c * it.qty; }
         continue;
       }
       const here = itemCost(p, store);
@@ -4249,10 +4250,52 @@ sudo docker compose up -d --build</pre>`;
     }
     return out;
   }
+  // The store a ticked item counts at: where it was bought, or this one when that isn't known
+  // (ticked before a store was chosen) or has no price.
+  const boughtAt = (it, p, store) => (it.done_store_id && itemCost(p, it.done_store_id) != null ? it.done_store_id : store);
   // What a row costs: at the store it was bought at once ticked off, otherwise at this one.
-  const rowCost = ({ it, p }, store) => { const c = itemCost(p, it.done_at ? it.done_store_id : store); return c == null ? null : c * it.qty; };
+  const rowCost = ({ it, p }, store) => { const c = itemCost(p, it.done_at ? boughtAt(it, p, store) : store); return c == null ? null : c * it.qty; };
   // The same, buying it wherever is cheapest if it's still to get.
   const rowBest = (r, store) => { const b = !r.it.done_at && itemCost(r.p, store) != null ? bestPrice(r.p, store) : null; return b ? b.cents * r.it.qty : rowCost(r, store); };
+
+  // The totals under the list: tiles for the whole shop, what's spent, what's left and the best
+  // it could be; a bar of where the money goes; and a line per store.
+  function shopSummary(t, store) {
+    const money2 = (c) => moneyFmt.format((c || 0) / 100);
+    const best = t.remaining - t.saving;
+    const after = t.spentTotal + best;
+    const used = state.shop.stores.filter((s) => t.spent.get(s.id) || t.split.get(s.id));
+    const across = state.shop.stores.filter((s) => t.spent.get(s.id)).length;
+    const whole = t.spentTotal + best;
+    const seg = (s, cents, hatch) => (cents ? html`<span class="sum-seg ${hatch ? 'hatch' : ''}" style="--seg:${s.color || 'var(--muted)'};flex-grow:${cents}"
+      title="${s.name}: ${money2(cents)} ${hatch ? 'to buy' : 'spent'}"></span>` : '');
+    const tile = (label, cents, sub, cls = '') => html`<div class="sum-tile"><span class="sum-label">${label}</span><b class="sum-num num">${money2(cents)}</b><span class="sum-sub ${cls}">${sub}</span></div>`;
+    return html`<div class="card shop-sum">
+      <div class="sum-tiles">
+        ${tile('Total shop', t.spentTotal + t.remaining, 'before savings')}
+        ${tile('Spent so far', t.spentTotal, across ? `across ${across} ${across === 1 ? 'store' : 'stores'}` : 'nothing ticked yet')}
+        ${tile('Still to buy', t.remaining, !store ? 'choose a store to price it' : t.unpriced ? `${t.unpriced} ${t.unpriced === 1 ? 'item' : 'items'} without a price` : `at ${storeName(store)}`, t.unpriced || !store ? 'warn' : '')}
+        <div class="sum-tile sum-best">
+          <div class="sum-best-head"><span class="sum-label">Total after savings</span>${t.saving ? html`<span class="sum-pill">Save ${money2(t.saving)}</span>` : ''}</div>
+          <b class="sum-num num">${money2(after)}</b>
+          <span class="sum-sub">${t.saving ? `${money2(best)} left to buy by shopping around` : 'Already the best price for what\'s left'}</span>
+        </div>
+      </div>
+      ${whole ? html`<div class="sum-bar" role="img" aria-label="Spent and still to buy, by store">
+          ${used.map((s) => seg(s, t.spent.get(s.id), false))}${used.map((s) => seg(s, t.split.get(s.id), true))}</div>
+        <div class="sum-legend"><span><i class="sum-key"></i>Spent</span><span><i class="sum-key hatch"></i>Still to buy (cheapest store)</span></div>` : ''}
+      ${used.length ? html`<div class="sum-table" role="table">
+        <div class="sum-tr sum-th" role="row"><span role="columnheader">Store</span><span role="columnheader">Spent</span><span role="columnheader">To buy</span><span role="columnheader">Store total</span></div>
+        ${used.map((s) => {
+          const sp = t.spent.get(s.id) || 0; const tb = t.split.get(s.id) || 0;
+          return html`<div class="sum-tr" role="row"><span role="cell">${shopTag(s.name, s.color)}</span><span role="cell" class="num">${sp ? money2(sp) : '—'}</span>
+            <span role="cell" class="num ${tb ? 'good' : 'muted'}">${tb ? `+ ${money2(tb)}` : '—'}</span><span role="cell" class="num"><b>${money2(sp + tb)}</b></span></div>`;
+        })}
+        <div class="sum-tr sum-tt" role="row"><span role="cell">Total</span><span role="cell" class="num">${money2(t.spentTotal)}</span>
+          <span role="cell" class="num good">${money2(best)}</span><span role="cell" class="num good">${money2(after)}</span></div>
+      </div>` : ''}
+    </div>`;
+  }
 
   const shopCollapsed = () => { try { return new Set(JSON.parse(recall('shop:collapsed') || '[]')); } catch { return new Set(); } };
 
@@ -4268,7 +4311,7 @@ sudo docker compose up -d --build</pre>`;
     const where = shop.locations.length
       ? html`<div class="shop-where">
           <div class="grow"><div class="muted small">Shopping at</div><h2>${loc ? html`${storeDot(loc.store_id)}${locLabel(loc)}` : 'Choose a store'}</h2></div>
-          <button type="button" data-action="shop-change">${loc ? 'Change' : 'Choose'}</button></div>`
+          <button type="button" class="linkish small" data-action="shop-change">${loc ? 'Change' : 'Choose'}</button></div>`
       : html`<div class="shop-where"><p class="muted small grow">Add the stores you shop at to sort the list by aisle and compare prices.</p>
           <button type="button" class="primary" data-action="shop-stores">+ Add a store location</button></div>`;
 
@@ -4283,7 +4326,7 @@ sudo docker compose up -d --build</pre>`;
         <input type="checkbox" data-action="shop-tick" data-id="${it.id}" ${raw(got ? 'checked' : '')} aria-label="${got ? 'Not got' : 'Got'} ${p.name}">
         <div class="grow" data-action="shop-item" data-id="${it.id}">
           <div class="title">${p.name}${sizeLabel(p) ? html` <span class="shop-size">${sizeLabel(p)}</span>` : ''}</div>
-          ${got ? html`<div class="meta shop-who">Checked off${it.done_by_name ? html` by ${shopTag(it.done_by_name, it.done_by_colour)}` : ''}${it.done_store_id ? html` · Purchased at ${shopTag(storeName(it.done_store_id), storeColour(it.done_store_id))}` : ''}</div>`
+          ${got ? html`<div class="meta shop-who" title="Checked off${it.done_by_name ? ` by ${it.done_by_name}` : ''}${it.done_store_id ? `, bought at ${storeName(it.done_store_id)}` : ''}">${it.done_by_name ? shopTag(it.done_by_name, it.done_by_colour) : 'Got'}${it.done_store_id ? html` – ${shopTag(storeName(it.done_store_id), storeColour(it.done_store_id))}` : ''}</div>`
             : cheaper ? html`<div class="meta shop-deal">${money(cheaper.cents)} at ${storeName(cheaper.store)} · save ${money((price - cheaper.cents) * it.qty)}</div>` : ''}
         </div>
         <div class="shop-ctrl">
@@ -4309,8 +4352,8 @@ sudo docker compose up -d --build</pre>`;
           <button type="button" class="shop-gtoggle" data-action="shop-fold" data-key="${key}" aria-expanded="${shut ? 'false' : 'true'}">
             <span class="chev">${shut ? '▸' : '▾'}</span><span class="g-name">${g.label}</span>
             <span class="g-count">${todo.length ? `${todo.length} to get` : 'All got'}</span>
-            ${sub ? html`<span class="g-right num">${money(sub)}${optimal < sub ? html` <span class="g-best" title="Buying each where it's cheapest">(${money(optimal)})</span>` : ''}</span>` : ''}</button>
-          ${g.section ? html`<button type="button" class="mini" data-action="shop-section-edit" data-id="${g.section.id}" aria-label="Edit ${g.label}">Edit</button>` : ''}
+            ${sub ? html`<span class="g-right num">${money(sub)}${optimal < sub ? html`<span class="g-sep" aria-hidden="true"></span><span class="g-best" title="Buying each where it's cheapest">(${money(optimal)})</span>` : ''}</span>` : ''}</button>
+          ${g.section ? html`<button type="button" class="linkish small" data-action="shop-section-edit" data-id="${g.section.id}" aria-label="Edit ${g.label}">Edit</button>` : ''}
         </div>
         ${shut ? '' : html`
           ${g.key === 'unsorted' && loc && todo.length ? html`<p class="muted small shop-hint">Set where these are at ${locLabel(loc)} and they'll be sorted from now on.</p>` : ''}
@@ -4319,20 +4362,7 @@ sudo docker compose up -d --build</pre>`;
       </section>`;
     };
 
-    let totals = '';
-    const t = shopTotals(rows, store);
-    if (rows.length && (store || t.spentTotal)) {
-      const line = (label, cents, cls = '') => html`<div class="shop-total ${cls}"><span>${label}</span><b class="num">${money(cents)}</b></div>`;
-      const split = shop.stores.filter((s) => t.split.get(s.id)).map((s) => html`<span>${storeDot(s.id)}<b>${s.name}</b> ${money(t.split.get(s.id))}</span>`);
-      totals = html`<div class="card shop-totals">
-        ${shop.stores.filter((s) => t.spent.get(s.id)).map((s) => line(html`Spent at ${shopTag(s.name, s.color)}`, t.spent.get(s.id), 'spent'))}
-        ${store ? line(html`Total remaining at ${storeName(store)}${t.unpriced ? html`<span class="muted small"> · ${t.unpriced} without a price here</span>` : ''}`, t.remaining) : ''}
-        ${line('Total shop', t.spentTotal + t.remaining, 'grand')}
-        ${t.saving ? html`${line('Total potential savings', t.saving, 'save')}
-          ${line('Total optimal remaining', t.remaining - t.saving, 'best')}
-          <div class="shop-split"><span class="muted small">Shopping around:</span> ${split}</div>` : ''}
-      </div>`;
-    }
+    const totals = rows.length ? shopSummary(shopTotals(rows, store), store) : '';
 
     return html`
       <div class="card shop-top">
@@ -4398,7 +4428,8 @@ sudo docker compose up -d --build</pre>`;
       title: 'Shopping at',
       body: html`${state.shop.stores.map((s) => {
         const locs = state.shop.locations.filter((l) => l.store_id === s.id);
-        return locs.length ? html`<h3 class="form-section">${storeDot(s.id)}${s.name}</h3>
+        return locs.length ? html`<div class="store-head"><h3 class="form-section">${storeDot(s.id)}${s.name}</h3>
+            <button type="button" class="linkish small" data-action="shop-store-edit" data-id="${s.id}" data-back="change" aria-label="Edit ${s.name}">Edit</button></div>
           <div class="spot-grid named">${locs.map((l) => html`<button type="button" class="spot-btn ${loc && loc.id === l.id ? 'on' : ''}" data-pick-loc="${l.id}">${l.name}</button>`)}</div>` : '';
       })}
         <div class="spot-grid named other"><button type="button" class="spot-btn add" data-action="shop-stores">Add or change stores</button></div>`,
@@ -4701,16 +4732,17 @@ sudo docker compose up -d --build</pre>`;
     'shop-store-edit': (el) => {
       const s = state.shop.stores.find((x) => x.id === Number(el.dataset.id));
       if (!s) return;
+      const back = el.dataset.back === 'change' ? shopChange : shopStores;
       openForm({
         title: `Edit ${s.name}`,
         body: html`<div class="fields">
           <div class="field"><label for="st-name">Name</label><input id="st-name" name="name" value="${s.name}" required></div>
           <div class="field color-field"><label for="st-color">Colour</label><input id="st-color" type="color" name="color" value="${/^#[0-9a-f]{6}$/i.test(s.color || '') ? s.color : '#64748b'}"></div></div>`,
-        lead: html`<button type="button" data-action="shop-stores">Back</button>`,
+        lead: html`<button type="button" data-action="${back === shopChange ? 'shop-change' : 'shop-stores'}">Back</button>`,
         onSave: async (form) => {
           await api('PATCH', `/shop/stores/${s.id}`, { name: val(form, 'name'), color: val(form, 'color') });
           await loadShop(state.shop.list);
-          setTimeout(shopStores); // back to the stores, once this popup has closed
+          setTimeout(back); // back where it was opened from, once this popup has closed
         },
       });
     },
