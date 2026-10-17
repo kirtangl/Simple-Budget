@@ -1954,3 +1954,39 @@ a.lookup:hover { text-decoration: underline; }
 .check-list input.check-price { flex: none; width: 84px; }
 .check-on { font-size: .72rem; font-weight: 600; color: var(--brand); white-space: nowrap; }
 .spot-btn.on .store-dot { box-shadow: 0 0 0 2px var(--on-brand); }
+/* Automatic prices: the out-of-date banner, a check's progress, search results and the puzzle popup. */
+.auto-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 14px;
+  border-left: 4px solid var(--due); background: color-mix(in srgb, var(--due) 8%, var(--card)); }
+.auto-banner .grow { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.auto-stores { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.auto-store { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: .9rem; font-weight: 400; }
+.auto-store b { margin-right: 4px; }
+.auto-store .good, .upd-list .good { color: var(--paid); font-weight: 600; }
+.auto-store .warn, .match-line.warn { color: var(--due); font-weight: 600; }
+.auto-spin { width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--brand); border-radius: 50%; animation: auto-spin .8s linear infinite; }
+@keyframes auto-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .auto-spin { animation-duration: 3s; } }
+h3.form-section.find-head { margin-top: 14px; }
+.find-what { margin: 0 0 8px; overflow-wrap: anywhere; }
+.find-list > li { gap: 10px; align-items: center; }
+.find-list > li.on { margin: 0 -8px; padding-left: 8px; padding-right: 8px; border-radius: 8px; background: color-mix(in srgb, var(--paid) 10%, transparent); }
+.find-list .sum-pill { display: inline-block; margin-top: 3px; }
+.find-list .title { overflow-wrap: anywhere; }
+.find-price { white-space: nowrap; }
+.find-on { color: var(--paid); font-weight: 600; white-space: nowrap; }
+.find-none { margin: 6px 0 2px; }
+.price-special { color: var(--paid); font-weight: 600; }
+.match-line { margin-top: 2px; font-size: .75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.match-line.warn { white-space: normal; }
+.similar-line { margin: 8px 0 0; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--info) 8%, var(--card)); overflow-wrap: anywhere; }
+.similar-line .muted { display: block; margin-top: 2px; }
+.similar-pill { display: block; margin-top: 3px; font-size: .75rem; color: var(--muted); overflow-wrap: anywhere; }
+.auto-find { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 12px; }
+.upd-list > li { gap: 10px; align-items: center; }
+.upd-list .title { overflow-wrap: anywhere; }
+.upd-change { white-space: nowrap; }
+.solve-screen { margin: 8px 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--bg); }
+.solve-screen img { display: block; width: 100%; height: auto; cursor: crosshair; touch-action: none; user-select: none; }
+.solve-type { display: flex; gap: 8px; }
+.solve-type input { flex: 1; min-width: 0; }
+#prompt:has(.solve-screen) { width: min(960px, calc(100vw - 24px)); max-width: none; }

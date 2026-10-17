@@ -461,6 +461,7 @@ function createShop(db, { checker = null } = {}) {
     const out = { id: job.id, type: meta.type, state: job.state, waiting_for: job.waiting_for || 0, stores };
     if (meta.type === 'find') {
       out.product_id = meta.product_id;
+      out.q = job.q;
       out.results = {};
       for (const [key, list] of Object.entries(job.results || {})) if (key in byKey) out.results[byKey[key]] = list;
     } else {
@@ -472,7 +473,8 @@ function createShop(db, { checker = null } = {}) {
     return out;
   };
 
-  // A product's prices from a search at every store (or just the stores given, for a new match).
+  // A product's prices from a search at every store (or just the stores given, for a new match):
+  // { product_id, store_ids?, q? }. It searches for the name and size unless q says otherwise.
   router.post('/checker/find', async (req, res) => {
     needChecker();
     const b = body(req);
@@ -482,7 +484,8 @@ function createShop(db, { checker = null } = {}) {
     if (!stores.length) throw new BadRequest('None of your stores have automatic prices.');
     const keys = {};
     for (const s of stores) if (!Object.values(keys).includes(s.checker)) keys[s.id] = s.checker;
-    const job = await checker.start({ type: 'search', q: queryOf(p), stores: Object.values(keys) });
+    const q = typeof b.q === 'string' && b.q.trim() ? b.q.trim().slice(0, 120) : queryOf(p);
+    const job = await checker.start({ type: 'search', q, stores: Object.values(keys) });
     const meta = { type: 'find', product_id: p.id, stores: keys, all: !b.store_ids };
     remember(job, meta);
     res.status(201).json(jobView(job, meta));
@@ -504,6 +507,7 @@ function createShop(db, { checker = null } = {}) {
       for (const s of stores) {
         const m = one('SELECT * FROM shop_matches WHERE product_id = ? AND store_id = ?', pid, s.id);
         if (!m) { unmatched.push({ product_id: pid, store_id: s.id }); continue; }
+        if (!m.url) continue; // not sold there, or not wanted
         const price = one('SELECT checked_at FROM shop_prices WHERE product_id = ? AND store_id = ?', pid, s.id);
         if (price && price.checked_at && price.checked_at >= since) continue;
         const key = `${pid}:${s.id}`;
@@ -570,7 +574,7 @@ function createShop(db, { checker = null } = {}) {
   router.get('/checker/jobs/:id', async (req, res) => {
     const meta = startedJob(req.params.id);
     const job = await checker.get(req.params.id);
-    if (meta.type === 'find' && job.state !== 'running' && job.state !== 'queued') meta.results = job.results;
+    if (meta.type === 'find') { meta.results = job.results; meta.final = job.state === 'done' || job.state === 'cancelled'; }
     if (meta.type === 'update' && (job.state === 'done' || job.state === 'cancelled')) applyUpdate(job, meta);
     res.json(jobView(job, meta));
   });
@@ -608,7 +612,7 @@ function createShop(db, { checker = null } = {}) {
   });
 
   // The store listings picked for a product from a find: { job, picks: { [store id]: result's index,
-  // or null for no match } }. Their prices are saved, and a cheaper similar product among all the
+  // or null for none of them } }. Their prices are saved, and a cheaper similar product among all the
   // results (by its price per g, mL or each) is kept as a hint.
   router.put('/products/:id/matches', async (req, res) => {
     const id = Number(req.params.id);
@@ -617,24 +621,27 @@ function createShop(db, { checker = null } = {}) {
     const b = body(req);
     const meta = startedJob(b.job);
     if (meta.type !== 'find' || meta.product_id !== id) throw new BadRequest("That search wasn't for this product.");
-    if (!meta.results) meta.results = (await checker.get(b.job)).results;
+    if (!meta.final) meta.results = (await checker.get(b.job)).results;
     const results = meta.results || {};
     const picks = b.picks && typeof b.picks === 'object' ? Object.entries(b.picks) : [];
-    const chosen = new Set();
     transaction(db, () => {
       for (const [sid, index] of picks) {
         const key = meta.stores[Number(sid)];
         if (!key) throw new BadRequest('That store was not part of the search.');
-        if (index === null) { db.prepare('DELETE FROM shop_matches WHERE product_id = ? AND store_id = ?').run(id, Number(sid)); continue; }
+        // None of them: remembered (an empty address), so it isn't asked about again until found anew.
+        if (index === null) {
+          db.prepare(`INSERT INTO shop_matches (product_id, store_id, url, name, size, missing_at) VALUES (?, ?, '', '', NULL, NULL)
+            ON CONFLICT (product_id, store_id) DO UPDATE SET url = '', name = '', size = NULL, missing_at = NULL`).run(id, Number(sid));
+          continue;
+        }
         const r = (results[key] || [])[int(index, 0, 1000, 'The pick')];
         if (!r) throw new BadRequest('That result is not there.');
-        chosen.add(r);
         db.prepare(`INSERT INTO shop_matches (product_id, store_id, url, name, size, missing_at) VALUES (?, ?, ?, ?, ?, NULL)
           ON CONFLICT (product_id, store_id) DO UPDATE SET url = excluded.url, name = excluded.name, size = excluded.size, missing_at = NULL`)
           .run(id, Number(sid), String(r.url).slice(0, 500), String(r.name).slice(0, 200), r.size ? String(r.size).slice(0, 40) : null);
         savePrice(id, Number(sid), r.price_cents, r.was_cents);
       }
-      const similar = cheaperSimilar(p, results, meta.stores, chosen);
+      const similar = cheaperSimilar(p, results, meta.stores);
       if (similar) {
         db.prepare(`INSERT INTO shop_similar (product_id, store_id, name, size, price_cents, url, seen_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
           ON CONFLICT (product_id) DO UPDATE SET store_id = excluded.store_id, name = excluded.name, size = excluded.size,
@@ -648,31 +655,28 @@ function createShop(db, { checker = null } = {}) {
   });
 
   // The cheapest result, per g, mL or each, that's like the product (a word of its name in common,
-  // and a size from half to twice as big) and at least 5% cheaper than its best price now.
-  function cheaperSimilar(p, results, storeKeys, chosen) {
+  // and a size from half to twice as big) and at least 5% cheaper than its best matched price.
+  function cheaperSimilar(p, results, storeKeys) {
     const own = p.size && MEASURE[p.unit] ? measureOf(`${p.size}${p.unit}`) : null;
-    const per = (price, size) => { const m = measureOf(size) || own; return m ? [m[0], price / m[1]] : null; };
+    const matched = all(`SELECT m.url, m.size, x.price_cents FROM shop_matches m
+      JOIN shop_prices x ON x.product_id = m.product_id AND x.store_id = m.store_id WHERE m.product_id = ?`, p.id);
     let best = null;
-    for (const r of chosen) {
-      const x = per(r.price_cents, r.size);
-      if (x && (!best || x[1] < best[1])) best = x;
-    }
-    if (!best && own) {
-      const cheapest = one('SELECT min(price_cents) AS c FROM shop_prices WHERE product_id = ?', p.id).c;
-      if (cheapest) best = [own[0], cheapest / own[1]];
+    for (const m of matched) {
+      const size = measureOf(m.size) || own;
+      if (size && (!best || m.price_cents / size[1] < best[1])) best = [size[0], m.price_cents / size[1]];
     }
     if (!best) return null;
     const words = wordsOf(p.name);
-    const refSize = own ? own[1] : null;
+    const ref = own && own[0] === best[0] ? own[1] : null;
     let found = null;
     for (const [sid, key] of Object.entries(storeKeys)) {
       for (const r of results[key] || []) {
-        if (chosen.has(r) || r.available === false || !Number.isInteger(r.price_cents)) continue;
-        const m = measureOf(r.size);
-        if (!m || m[0] !== best[0]) continue;
-        if (refSize && (m[1] < refSize / 2 || m[1] > refSize * 2)) continue;
+        if (matched.some((m) => m.url === r.url) || r.available === false || !Number.isInteger(r.price_cents)) continue;
+        const size = measureOf(r.size);
+        if (!size || size[0] !== best[0]) continue;
+        if (ref && (size[1] < ref / 2 || size[1] > ref * 2)) continue;
         if (![...wordsOf(r.name)].some((w) => words.has(w))) continue;
-        const cost = r.price_cents / m[1];
+        const cost = r.price_cents / size[1];
         if (cost < best[1] * 0.95 && (!found || cost < found.cost)) found = { ...r, store_id: Number(sid), cost };
       }
     }

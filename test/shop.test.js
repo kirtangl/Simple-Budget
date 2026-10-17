@@ -357,7 +357,7 @@ test('shopping: automatic price search, matching, the cheaper similar hint and u
   let p = r.body;
   assert.deepEqual([p.prices[stores.Woolworths], p.was[stores.Woolworths], p.prices[stores.Coles]], [280, 350, 300]);
   assert.equal(p.matches[stores.Coles].url, 'https://shop.example/c/1');
-  assert.equal(p.matches[stores.Aldi], undefined);
+  assert.deepEqual(p.matches[stores.Aldi], { url: '', name: '', size: null, missing_at: null }); // none of them, remembered
   assert.equal(p.similar.name, 'Cheap Label Rolled Oats');
   assert.deepEqual([p.similar.store_id, p.similar.price_cents], [stores.Aldi, 199]);
   assert.equal((await call('PUT', `/shop/products/${id}/matches`, { job: found.id, picks: { [stores.Coles]: 7 } })).status, 400);
@@ -366,7 +366,11 @@ test('shopping: automatic price search, matching, the cheaper similar hint and u
   // Nothing's out of date yet, so an update has nothing to do except the store it isn't matched at.
   r = await call('POST', '/shop/checker/update', { list: 'shared' });
   assert.deepEqual([r.body.id, r.body.total], [null, 0]);
-  assert.deepEqual(r.body.unmatched, [{ product_id: id, store_id: stores.Aldi }]);
+  assert.deepEqual(r.body.unmatched, []);
+  const bread = (await call('POST', '/shop/items', { name: 'Test bread' })).body.product_id;
+  r = await call('POST', '/shop/checker/update', { list: 'shared' });
+  assert.equal(r.body.unmatched.length, 3);
+  assert.ok(r.body.unmatched.every((u) => u.product_id === bread));
 
   // A week later (dates moved back), with new prices at the stores: only the list's matched prices update.
   const backup = (await call('GET', '/export')).body;
@@ -400,7 +404,7 @@ test('shopping: automatic price search, matching, the cheaper similar hint and u
   // Kept in a backup.
   shop = (await call('GET', '/export')).body.shopping;
   assert.equal(shop.similar.length, 1);
-  assert.equal(shop.matches.length, 2);
+  assert.equal(shop.matches.length, 3);
   assert.ok(shop.stores.every((s) => 'checker' in s));
 })));
 

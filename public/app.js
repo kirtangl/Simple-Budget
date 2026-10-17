@@ -4204,6 +4204,14 @@ sudo docker compose up -d --build</pre>`;
     const url = lookupUrl(s, name, size);
     return url ? html`<a class="lookup" href="${url}" target="_blank" rel="noopener noreferrer" data-lookup="${s.id}">Look up ↗</a>` : '';
   };
+  // The store's own product a price is kept up to date from, or that it couldn't be found last time.
+  const matchLine = (p, s) => {
+    const m = p.matches?.[s.id];
+    if (!m || !state.shop.checker || !s.checker) return '';
+    if (!m.url) return html`<div class="match-line muted small">No automatic price here <button type="button" class="linkish small" data-find-store="${s.id}">Find</button></div>`;
+    return m.missing_at ? html`<div class="match-line warn small">Couldn't find at ${s.name} <button type="button" class="linkish small" data-find-store="${s.id}">Find new match</button></div>`
+      : html`<div class="match-line muted small" title="${m.name}">Auto: ${m.name}</div>`;
+  };
   // A price that hasn't been checked for four weeks is old: prices are worth checking again.
   const STALE_DAYS = 28;
   const daysSince = (at) => (at ? Math.floor((Date.now() - Date.parse(`${at.replace(' ', 'T')}Z`)) / 86400000) : null);
@@ -4371,6 +4379,7 @@ sudo docker compose up -d --build</pre>`;
         <div class="si-name" data-action="shop-item" data-id="${it.id}">
           <div class="title">${p.name}${sizeLabel(p) ? html` <span class="shop-size">${sizeLabel(p)}</span>` : ''}</div>
           ${!got && cheaper ? html`<span class="shop-deal-pill">${storeDot(cheaper.store)}${storeName(cheaper.store)} ${money2(cheaper.cents)} · save ${money((price - cheaper.cents) * it.qty)}</span>` : ''}
+          ${!got && p.similar ? html`<span class="similar-pill">Cheaper similar: ${storeName(p.similar.store_id)} ${p.similar.name} ${money2(p.similar.price_cents)}</span>` : ''}
         </div>
         <div class="si-who">${got ? html`${it.done_by_name ? html`<span class="who-init" style="--tag:${it.done_by_colour || 'var(--brand)'}" title="Checked off by ${it.done_by_name}">${it.done_by_name.slice(0, 1).toUpperCase()}</span>` : ''}
           ${at ? html`<span class="who-at">${storeDot(at)}${storeName(at)}</span>` : ''}`
@@ -4438,6 +4447,7 @@ sudo docker compose up -d --build</pre>`;
         ${rows.length ? html`<div class="shop-progress"><span><b>${done} of ${rows.length}</b> got</span>
           <span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="${rows.length}" aria-valuenow="${done}"><i style="width:${Math.round((done / rows.length) * 100)}%"></i></span></div>` : ''}
       </div>
+      ${autoBanner()}
       ${tools}
       ${rows.length ? html`<div class="shop-list">${groups.length ? groups.map(section)
           : html`<div class="card"><p class="empty">Nothing left that's cheapest at ${storeName(store)}. Turn off Best buys to see everything.</p></div>`}</div>
@@ -4610,7 +4620,14 @@ sudo docker compose up -d --build</pre>`;
           <input id="sp-${s.id}" name="price-${s.id}" inputmode="decimal" placeholder="$" value="${moneyInput(p.prices[s.id])}">
           <div class="price-meta">${p.prices[s.id] != null ? html`<span class="price-age ${priceOld(p, s.id) ? 'old' : ''}" data-age="${s.id}">${checkedText(p.checked?.[s.id])}</span>
             ${priceOld(p, s.id) ? html`<button type="button" class="linkish small" data-same="${s.id}">Still right</button>` : ''}` : ''}
-            ${lookupLink(s, p.name, sizeLabel(p))}</div></div>`)}</div>
+            ${p.was?.[s.id] ? html`<span class="price-special">Special · was ${money(p.was[s.id])}</span>` : ''}
+            ${lookupLink(s, p.name, sizeLabel(p))}</div>
+          ${matchLine(p, s)}</div>`)}</div>
+        ${p.similar ? html`<p class="similar-line small">Cheaper similar: ${storeDot(p.similar.store_id)}${storeName(p.similar.store_id)} ${p.similar.name}${p.similar.size ? ` ${p.similar.size}` : ''}
+          <b>${money(p.similar.price_cents)}</b> <a class="lookup" href="${p.similar.url}" target="_blank" rel="noopener noreferrer">View ↗</a>
+          <span class="muted">Only a hint: it isn't used for best buys or totals.</span></p>` : ''}
+        ${autoStores().length ? html`<div class="auto-find"><button type="button" class="primary" data-auto-find>Automatic price search</button>
+          <span class="muted small">Finds this product at ${autoStores().map((s) => s.name).join(', ')}, and keeps its prices up to date.</span></div>` : ''}
         ${state.shop.stores.some((s) => s.search_url) ? html`<p class="muted small">Look up opens the store's website, searched for this product, so you can check its price.</p>` : ''}
         ${loc ? html`<h3 class="form-section">At ${locLabel(loc)}</h3>
           <div class="row"><span>${spot.label}</span><button type="button" class="mini" data-spot-change>Change</button></div>` : ''}`,
@@ -4619,6 +4636,9 @@ sudo docker compose up -d --build</pre>`;
       afterRender: (form) => {
         const change = form.querySelector('[data-spot-change]');
         if (change) change.onclick = () => spotPicker(p, loc, reopen);
+        const find = form.querySelector('[data-auto-find]');
+        if (find) find.onclick = () => findPrices(p, reopen);
+        form.querySelectorAll('[data-find-store]').forEach((b) => { b.onclick = () => findPrices(p, reopen, { only: Number(b.dataset.findStore) }); });
         // Look up searches for the name and size as they're typed.
         const relink = () => {
           const unit = val(form, 'unit');
@@ -4765,6 +4785,304 @@ sudo docker compose up -d --build</pre>`;
       },
     });
   }
+
+  // ---------- Automatic prices (the price-checker) ----------
+  //
+  // With a price-checker set up (see the README), a product can be searched for at the stores it
+  // knows, and the one bought at each picked: its price is then kept up to date from the store's
+  // website. The list shows a banner when its matched prices were checked before the stores'
+  // Wednesday price changes.
+
+  const autoStores = () => (state.shop.checker ? state.shop.stores.filter((s) => s.checker && state.shop.checker.stores.includes(s.checker)) : []);
+  const dateText = (at) => (at ? new Date(`${at.replace(' ', 'T')}Z`).toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '');
+  // Products on the list with a matched price checked before this week's price day.
+  function outOfDate() {
+    const since = state.shop.checker?.since;
+    const stores = autoStores();
+    const products = new Set();
+    let prices = 0;
+    let last = null;
+    if (!since || !stores.length) return { count: 0, prices, last };
+    for (const it of state.shop.items) {
+      const p = !it.done_at && shopProduct(it.product_id);
+      if (!p) continue;
+      for (const s of stores) {
+        const at = p.matches?.[s.id]?.url ? p.checked?.[s.id] : since;
+        if (at && at >= since) continue;
+        products.add(p.id);
+        prices += 1;
+        if (at && (!last || at > last)) last = at;
+      }
+    }
+    return { count: products.size, prices, last };
+  }
+  function autoBanner() {
+    const { count, prices, last } = outOfDate();
+    if (!count) return '';
+    return html`<div class="card auto-banner" role="status"><div class="grow"><b>${prices} ${prices === 1 ? 'price' : 'prices'} out of date</b>
+      <span class="muted small">${last ? `Last checked ${dateText(last)}. ` : ''}Stores change their prices on Wednesday mornings.</span></div>
+      <button type="button" class="mini primary" data-action="shop-update">Update ${count} ${count === 1 ? 'product' : 'products'}</button></div>`;
+  }
+
+  // How a store is going in a check, as a line: a tick, a count, "waiting for you" with Solve, or try later.
+  function autoProgress(job, s) {
+    const st = job.stores[s.id];
+    if (!st) return '';
+    const count = st.total > 1 ? ` ${st.done} of ${st.total}` : '';
+    const line = {
+      waiting: html`<span class="muted">Waiting${job.waiting_for ? ' for another check to finish' : ''}…</span>`,
+      working: html`<span class="auto-spin" aria-hidden="true"></span><span>Checking${count}…</span>`,
+      done: html`<span class="good">✓${count}</span>`,
+      needs_person: html`<span class="warn">Waiting for you</span><button type="button" class="mini primary" data-solve="${s.id}">Solve</button>`,
+      try_later: html`<span class="warn">Try again later${st.until ? ` (after ${new Date(st.until).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })})` : ''}</span>`,
+      error: html`<span class="warn">Didn't work${st.message ? `: ${st.message}` : ''}</span>`,
+      cancelled: html`<span class="muted">Stopped</span>`,
+    }[st.state] || '';
+    return html`<div class="auto-store">${storeDot(s.id)}<b>${s.name}</b>${line}</div>`;
+  }
+  const jobRunning = (job) => job && (job.state === 'queued' || job.state === 'running');
+
+  // Follows a check: asks how it's going every second, calling draw each time, until it's finished
+  // or the popup it belongs to has gone. A store waiting for a person opens its page for them
+  // (and Solve opens it again, through form.solve).
+  function followJob(job, draw, form) {
+    let current = job;
+    let solving = null;
+    const asked = new Set();
+    const solve = (id) => {
+      if (solving !== null || $prompt.open) return;
+      solving = id;
+      solvePopup(current, id, () => current).finally(() => { solving = null; });
+    };
+    form.solve = solve;
+    const tick = async () => {
+      if (!form.isConnected || !$modal.open || form.dataset.job !== String(current.id)) return;
+      try { current = await api('GET', `/shop/checker/jobs/${current.id}`); } catch (err) {
+        form.querySelector('#form-error').textContent = err.message;
+        return;
+      }
+      if (form.dataset.job !== String(current.id)) return;
+      draw(current);
+      const waiting = Object.entries(current.stores).find(([, st]) => st.state === 'needs_person');
+      // Opened once by itself; hidden, it waits for Solve.
+      if (waiting && !asked.has(waiting[0])) { asked.add(waiting[0]); solve(Number(waiting[0])); }
+      if (jobRunning(current)) setTimeout(tick, 1000);
+    };
+    form.dataset.job = String(job.id);
+    draw(job);
+    setTimeout(tick, 600);
+  }
+  const solveClick = (form, ev) => {
+    const b = ev.target.closest('[data-solve]');
+    if (b && form.solve) form.solve(Number(b.dataset.solve));
+    return Boolean(b);
+  };
+
+  // A store's page as the price-checker sees it, for a person to get past its bot check. Clicks,
+  // drags and typing go to that page. It closes by itself once the check is gone. Nothing here
+  // solves anything: that's the person's job.
+  function solvePopup(job, storeId, latest) {
+    return new Promise((resolve) => {
+      const s = state.shop.stores.find((x) => x.id === storeId);
+      const src = () => `/api/shop/checker/screen/${storeId}?t=${Date.now()}`;
+      $promptForm.innerHTML = html`
+        ${promptHead(`${s ? s.name : 'The store'} wants to check you're a person`)}
+        <p class="muted small">This is the store's page in the price-checker. Solve the puzzle on it as you normally would: click, drag or type below. It carries on by itself once it's done.</p>
+        <div class="solve-screen"><img id="solve-img" alt="The store's page" draggable="false" src="${src()}"></div>
+        <div class="solve-type"><label for="solve-text" class="sr-only">Type into the page</label>
+          <input id="solve-text" placeholder="Type into the page" autocomplete="off"><button type="button" class="mini" data-solve-send>Send</button></div>
+        <p class="error" id="solve-error"></p>
+        <div class="dialog-actions"><button type="button" class="danger" data-p="skip">Give up (try later)</button><button type="button" data-p="">Hide</button></div>`.s;
+      const img = $promptForm.querySelector('#solve-img');
+      let open = true;
+      const done = async (how) => {
+        if (!open) return;
+        open = false;
+        $promptForm.onclick = null;
+        if ($prompt.open) $prompt.close();
+        if (how === 'skip') { try { await api('POST', `/shop/checker/jobs/${job.id}/skip`, { store_id: storeId }); } catch { /* finished anyway */ } }
+        resolve(how);
+      };
+      // A fresh picture after each one loads, while the store still waits.
+      img.onload = () => setTimeout(() => {
+        if (!open) return;
+        const st = latest().stores[storeId];
+        if (!st || st.state !== 'needs_person') { done('solved'); return; }
+        img.src = src();
+      }, 700);
+      img.onerror = () => setTimeout(() => {
+        if (!open) return;
+        const st = latest().stores[storeId];
+        if (!st || st.state !== 'needs_person') done('solved'); else img.src = src();
+      }, 1500);
+      const at = (ev) => {
+        const r = img.getBoundingClientRect();
+        return { x: Math.round(((ev.clientX - r.left) / r.width) * img.naturalWidth), y: Math.round(((ev.clientY - r.top) / r.height) * img.naturalHeight) };
+      };
+      const send = (ev) => api('POST', `/shop/checker/input/${storeId}`, ev).catch((err) => { $promptForm.querySelector('#solve-error').textContent = err.message; });
+      // A press and release in the same spot is a click; moving in between is a drag (for slider puzzles).
+      let down = null;
+      let moved = false;
+      let lastMove = 0;
+      img.onpointerdown = (ev) => { ev.preventDefault(); img.setPointerCapture(ev.pointerId); down = at(ev); moved = false; };
+      img.onpointermove = (ev) => {
+        if (!down) return;
+        const p = at(ev);
+        if (!moved && Math.hypot(p.x - down.x, p.y - down.y) < 6) return;
+        if (!moved) { moved = true; send({ type: 'down', ...down }); }
+        if (Date.now() - lastMove > 80) { lastMove = Date.now(); send({ type: 'move', ...p }); }
+      };
+      img.onpointerup = (ev) => {
+        if (!down) return;
+        const p = at(ev);
+        send(moved ? { type: 'up', ...p } : { type: 'click', ...down });
+        down = null;
+      };
+      const text = $promptForm.querySelector('#solve-text');
+      const typeIt = async () => { if (text.value) { await send({ type: 'text', text: text.value }); text.value = ''; } };
+      text.onkeydown = async (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); if (text.value) await typeIt(); else send({ type: 'key', key: 'Enter' }); } };
+      $promptForm.onsubmit = (e) => e.preventDefault();
+      $promptForm.onclick = (e) => {
+        if (e.target.closest('[data-solve-send]')) { typeIt(); return; }
+        const p = e.target.closest('[data-p]');
+        if (p) done(p.dataset.p || 'hidden');
+      };
+      $prompt.oncancel = () => done('hidden');
+      $prompt.showModal();
+      watchScroll();
+    });
+  }
+
+  // Automatic price search for a product: searches the stores, then the one bought at each is
+  // picked with Use this. only is a store id, to find a new match at just that store.
+  function findPrices(p, back, { only = null, q = null, job = null } = {}) {
+    const money2 = (c) => moneyFmt.format((c || 0) / 100);
+    const stores = autoStores().filter((s) => !only || s.id === only);
+    let current = job;
+    const results = (j, s) => {
+      const st = j.stores[s.id];
+      if (!st || st.state !== 'done') return '';
+      const list = (j.results && j.results[s.id]) || [];
+      const mine = shopProduct(p.id)?.matches?.[s.id];
+      const none = mine && !mine.url ? html`<span class="muted small">None of these ✓ (no automatic price at ${s.name})</span>`
+        : html`<button type="button" class="mini" data-unmatch="${s.id}">None of these</button>`;
+      if (!list.length) return html`<p class="muted small">Nothing found at ${s.name}. Try different words above.</p>`;
+      return html`<ul class="list find-list">${list.slice(0, 12).map((r, i) => {
+        const on = mine && mine.url === r.url;
+        return html`<li class="${on ? 'on' : ''}"><div class="grow"><div class="title">${r.name}</div>
+            <div class="muted small">${[r.size, r.unit_price].filter(Boolean).join(' · ')}
+              <a class="lookup" href="${r.url}" target="_blank" rel="noopener noreferrer">View ↗</a></div>
+            ${r.special ? html`<span class="sum-pill">Special${r.was_cents ? ` · was ${money2(r.was_cents)}` : ''}</span>` : ''}
+            ${r.available === false ? html`<span class="muted small"> In store only</span>` : ''}</div>
+          <b class="num find-price">${money2(r.price_cents)}</b>
+          ${on ? html`<span class="mini find-on">Matched ✓</span>` : html`<button type="button" class="mini primary" data-match="${s.id}" data-i="${i}">Use this</button>`}</li>`;
+      })}</ul><div class="find-none">${none}</div>`;
+    };
+    const draw = (j) => {
+      const box = $modalForm.querySelector('#find-body');
+      if (!box) return;
+      current = j;
+      box.innerHTML = html`${stores.map((s) => html`<h3 class="form-section find-head">${autoProgress(j, s)}</h3>${results(j, s)}`)}`.s;
+      const help = $modalForm.querySelector('#find-help');
+      if (help) help.textContent = jobRunning(j) ? 'Searching the stores. This usually takes a few seconds.' : 'Tap Use this on the one you buy at each store. Its price is saved now and kept up to date.';
+    };
+    const start = async (form, words) => {
+      form.querySelector('#form-error').textContent = '';
+      try {
+        const j = await api('POST', '/shop/checker/find', { product_id: p.id, store_ids: only ? [only] : undefined, q: words || undefined });
+        followJob(j, draw, form);
+      } catch (err) { form.querySelector('#form-error').textContent = err.message; }
+    };
+    openForm({
+      title: only ? `Find a new match · ${storeName(only)}` : 'Automatic price search',
+      body: html`<p class="find-what"><b>${productLabel(p)}</b></p>
+        <div class="prod-tools"><label for="find-q" class="sr-only">Search the stores for</label>
+          <input id="find-q" type="search" value="${q || current?.q || `${p.name} ${sizeLabel(p).replace(' ', '')}`.trim()}" autocomplete="off">
+          <button type="button" class="mini" data-find-go>Search again</button></div>
+        <p class="muted small" id="find-help">Searching the stores. This usually takes a few seconds.</p>
+        <div id="find-body"></div>`,
+      lead: html`<button type="button" data-find-back>Back</button>`,
+      afterRender: (form) => {
+        if (current) followJob(current, draw, form); else start(form);
+        const again = () => start(form, form.querySelector('#find-q').value.trim());
+        form.querySelector('#find-q').onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); again(); } };
+        form.onclick = async (ev) => {
+          if (solveClick(form, ev)) return;
+          if (ev.target.closest('[data-find-go]')) { again(); return; }
+          if (ev.target.closest('[data-find-back]')) { back(); return; }
+          const m = ev.target.closest('[data-match], [data-unmatch]');
+          if (!m || !current) return;
+          try {
+            const store = Number(m.dataset.match || m.dataset.unmatch);
+            await api('PUT', `/shop/products/${p.id}/matches`, { job: current.id, picks: { [store]: m.dataset.match ? Number(m.dataset.i) : null } });
+            await loadShop(state.shop.list);
+            render();
+            draw(current);
+          } catch (err) { form.querySelector('#form-error').textContent = err.message; }
+        };
+      },
+    });
+  }
+
+  // Updating the list's out-of-date prices: each store's progress, then what changed, what
+  // couldn't be found, and what isn't matched yet.
+  function updatePrices() {
+    const money2 = (c) => (c == null ? '—' : moneyFmt.format(c / 100));
+    const stores = autoStores();
+    const name = (id) => { const p = shopProduct(id); return p ? productLabel(p) : 'A product'; };
+    const findLink = (pid, sid, label) => html`<button type="button" class="linkish small" data-find-for="${pid}" data-find-store="${sid}">${label}</button>`;
+    const draw = (j) => {
+      const box = $modalForm.querySelector('#upd-body');
+      if (!box) return;
+      const finished = !jobRunning(j);
+      const unmatched = new Map();
+      for (const u of j.unmatched || []) unmatched.set(u.product_id, [...(unmatched.get(u.product_id) || []), u.store_id]);
+      box.innerHTML = html`
+        ${j.id ? html`<div class="auto-stores">${stores.filter((s) => j.stores[s.id]).map((s) => autoProgress(j, s))}</div>` : html`<p class="muted">Every matched price on the list is up to date.</p>`}
+        ${finished && j.changes ? html`<h3 class="form-section">${j.changes.length ? `${j.changes.length} ${j.changes.length === 1 ? 'price' : 'prices'} changed` : 'No prices changed'}</h3>
+          ${j.changes.length ? html`<ul class="list upd-list">${j.changes.map((c) => html`<li><div class="grow"><div class="title">${name(c.product_id)}</div>
+            <div class="muted small">${storeDot(c.store_id)}${storeName(c.store_id)}${c.special ? html` · <span class="good">Special</span>` : ''}</div></div>
+            <span class="num upd-change"><s class="muted">${money2(c.old_cents)}</s> → <b class="${c.old_cents != null && c.new_cents < c.old_cents ? 'good' : ''}">${money2(c.new_cents)}</b></span></li>`)}</ul>` : ''}` : ''}
+        ${finished && j.missing && j.missing.length ? html`<h3 class="form-section">Couldn't find</h3><ul class="list upd-list">${j.missing.map((m) => html`<li><div class="grow">
+            <div class="title">${name(m.product_id)}</div><div class="muted small">Not found at ${storeName(m.store_id)}. It may be gone or renamed.</div></div>
+            ${findLink(m.product_id, m.store_id, 'Find new match')}</li>`)}</ul>` : ''}
+        ${finished && unmatched.size ? html`<h3 class="form-section">Not matched yet</h3>
+          <p class="muted small">These have no automatic price at a store yet. Find them once and they're kept up to date from then on.</p>
+          <ul class="list upd-list">${[...unmatched].map(([pid, sids]) => html`<li><div class="grow"><div class="title">${name(pid)}</div>
+            <div class="muted small">${sids.map((sid) => storeName(sid)).join(', ')}</div></div>${findLink(pid, sids.length === 1 ? sids[0] : '', 'Find')}</li>`)}</ul>` : ''}`.s;
+      const stop = $modalForm.querySelector('[data-upd-stop]');
+      if (stop) stop.hidden = finished;
+      if (finished) loadShop(state.shop.list).then(render);
+    };
+    openForm({
+      title: 'Update prices',
+      body: html`<p class="muted small">Gets this week's prices from the stores' websites for what's on the list. One check runs at a time, a few seconds per product.</p>
+        <div id="upd-body"><div class="auto-store"><span class="auto-spin" aria-hidden="true"></span>Starting…</div></div>`,
+      lead: html`<button type="button" class="danger" data-upd-stop>Stop</button>`,
+      afterRender: async (form) => {
+        let job = null;
+        form.onclick = async (ev) => {
+          if (solveClick(form, ev)) return;
+          if (ev.target.closest('[data-upd-stop]') && job && job.id) {
+            try { await api('POST', `/shop/checker/jobs/${job.id}/cancel`); } catch { /* finished */ }
+            return;
+          }
+          const f = ev.target.closest('[data-find-for]');
+          if (f) {
+            const p = shopProduct(Number(f.dataset.findFor));
+            if (p) findPrices(p, updateAgain, { only: f.dataset.findStore ? Number(f.dataset.findStore) : null });
+          }
+        };
+        try {
+          job = await api('POST', '/shop/checker/update', { list: state.shop.list });
+          if (job.id) followJob(job, (j) => { job = j; draw(j); }, form); else draw(job);
+        } catch (err) { form.querySelector('#form-error').textContent = err.message; }
+      },
+    });
+  }
+  // Back from finding a match, to a fresh look at what's left (nothing is checked twice: what was
+  // just updated is up to date).
+  const updateAgain = () => updatePrices();
 
   // The household's stores, each with its locations, and a section list for each location.
   function shopStores() {
@@ -4919,6 +5237,7 @@ sudo docker compose up -d --build</pre>`;
     },
     'shop-products': () => { state.productQuery = ''; state.productEdit = false; productList(); },
     'shop-check': () => { state.checkAll = false; priceCheck(); },
+    'shop-update': () => updatePrices(),
     'shop-change': () => shopChange(),
     'shop-stores': () => shopStores(),
     'shop-sections': (el) => shopSections(Number(el.dataset.id)),
@@ -4939,10 +5258,14 @@ sudo docker compose up -d --build</pre>`;
           <div class="field"><label for="st-name">Name</label><input id="st-name" name="name" value="${s.name}" required></div>
           <div class="field color-field"><label for="st-color">Colour</label><input id="st-color" type="color" name="color" value="${/^#[0-9a-f]{6}$/i.test(s.color || '') ? s.color : '#64748b'}"></div></div>
           <div class="field"><label for="st-search">Search link</label><input id="st-search" name="search_url" inputmode="url" value="${s.search_url || ''}" placeholder="https://www.example.com.au/search?q={q}">
-          <p class="muted small">The store's search page, with {q} where the product goes. Search the store's website for anything, copy the address, and put {q} in place of what you searched for. Leave it blank to turn off Look up.</p></div>`,
+          <p class="muted small">The store's search page, with {q} where the product goes. Search the store's website for anything, copy the address, and put {q} in place of what you searched for. Leave it blank to turn off Look up.</p></div>
+          ${state.shop.checker ? html`<div class="field"><label for="st-checker">Automatic prices</label><select id="st-checker" name="checker">
+            <option value="">None</option>${state.shop.checker.stores.map((k) => html`<option value="${k}" ${raw(s.checker === k ? 'selected' : '')}>From ${k[0].toUpperCase()}${k.slice(1)}'s website</option>`)}</select>
+            <p class="muted small">Which website the price-checker gets this store's prices from.</p></div>` : ''}`,
         lead: html`<button type="button" data-action="${back === shopChange ? 'shop-change' : 'shop-stores'}">Back</button>`,
         onSave: async (form) => {
-          await api('PATCH', `/shop/stores/${s.id}`, { name: val(form, 'name'), color: val(form, 'color'), search_url: val(form, 'search_url') });
+          await api('PATCH', `/shop/stores/${s.id}`, { name: val(form, 'name'), color: val(form, 'color'), search_url: val(form, 'search_url'),
+            ...(state.shop.checker ? { checker: val(form, 'checker') || null } : {}) });
           await loadShop(state.shop.list);
           setTimeout(back); // back where it was opened from, once this popup has closed
         },
