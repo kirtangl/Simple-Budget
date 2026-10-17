@@ -2,6 +2,17 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v0.9.6 (17 October 2026)
+
+### Improved
+- Simple Budget now runs on the latest version of Express, the part that answers every page and button. Nothing should look or work differently. It keeps the app current, so future fixes and updates stay easy.
+
+### Fixed
+- A price change set for a future date can be cancelled: its "Coming up" line in a bill's price history now has a bin like the others.
+- Moving an account up or down no longer changes the colours of your accounts. Each account now keeps the colour it shows today, until you pick another.
+
+For whoever runs the server: nothing to do beyond updating as usual. Express moves from 4 to 5, and the code checker used by the build moves from ESLint 9 to 10.
+
 ## v0.9.5 (15 October 2026)
 
 ### New

@@ -77,6 +77,7 @@
     }
   }
 
+  // src/db.js keeps a copy for accounts, to save each one's colour: change both together.
   const PALETTE = ['#0f766e', '#2563eb', '#9333ea', '#ea580c', '#db2777', '#16a34a', '#ca8a04', '#0891b2', '#64748b', '#dc2626'];
   const colorFor = (item, i) => (item && item.color) || PALETTE[i % PALETTE.length];
   // Incomes default to colours that sit well beside the green combined income.
@@ -752,7 +753,8 @@
       </div>
       <div class="ph-axis"><span>${fmtDate(rows[0].on_date, true)}</span><span>${fut ? fmtDate(fut.on_date, true) : 'Today'}</span></div>
       <ul class="ph-list">
-        ${fut ? html`<li class="future"><span class="ph-date">${fmtDate(fut.on_date, true)}</span><span class="num">${fmt(fut)}</span>${diff(fut, rows.at(-1))}<span class="ph-diff soon">Coming up</span></li>` : ''}
+        ${fut ? html`<li class="future"><span class="ph-date">${fmtDate(fut.on_date, true)}</span><span class="num">${fmt(fut)}</span>${diff(fut, rows.at(-1))}<span class="ph-diff soon">Coming up</span>
+          ${remove && remove.kind === 'expense' ? binBtn(remove, { id: 'pending' }, `${fmtDate(fut.on_date, true)}: ${fmt(fut)} (coming up)`) : ''}</li>` : ''}
         ${changes.map(({ r, prev }, k) => html`<li ${k + (fut ? 1 : 0) >= SHOW_FIRST ? raw('class="more" hidden') : ''}><span class="ph-date">${fmtDate(r.on_date, true)}</span>
         <span class="num">${fmt(r)}</span>${prev ? diff(r, prev) : html`<span class="ph-diff muted">${rows.length === 1 && !fut ? 'Changes will show here' : 'First recorded'}</span>`}
         ${remove && rows.length > 1 && r.id ? binBtn(remove, r, `${fmtDate(r.on_date, true)}: ${fmt(r)}`) : ''}</li>`)}</ul>
@@ -839,7 +841,7 @@
     const debt = g.kind === 'debt';
     const firm = debt && g.target_firm;
     const started = g.current_cents > 0;
-    let when = '';
+    let when;
     if (debt && g.target_date) {
       when = late
         ? html`<span class="pill bad">Overdue ${-days} day${days === -1 ? '' : 's'}${firm ? ' · firm' : ` · was due ${fmtDate(g.target_date)}`}</span>`
@@ -3779,10 +3781,13 @@ sudo docker compose up -d --build</pre>`;
     'show-more': (el) => { el.parentElement.querySelectorAll('.more[hidden]').forEach((m) => { m.hidden = false; }); el.remove(); },
     'history-remove': async (el) => {
       const { kind, item, id, what } = el.dataset;
-      const ok = await askChoice({ title: 'Remove this entry?', text: html`<p><b>${what}</b></p><p>It comes out of the history. If it's the newest one, the ${kind === 'loan' ? 'loan goes' : 'bill goes'} back to the one before it.</p>`,
-        choices: [{ label: 'Cancel', value: 'no' }, { label: 'Remove', value: 'yes', danger: true }] });
+      const pending = id === 'pending';
+      const ok = await askChoice({ title: pending ? 'Cancel this price change?' : 'Remove this entry?',
+        text: html`<p><b>${what}</b></p><p>${pending ? "The bill stays at its current price, and this change won't happen."
+          : `It comes out of the history. If it's the newest one, the ${kind === 'loan' ? 'loan goes' : 'bill goes'} back to the one before it.`}</p>`,
+        choices: [{ label: pending ? 'Keep it' : 'Cancel', value: 'no' }, { label: pending ? 'Cancel change' : 'Remove', value: 'yes', danger: true }] });
       if (ok !== 'yes') return;
-      await api('DELETE', `/history/${kind}/${item}/${id}`);
+      await api('DELETE', pending ? `/expenses/${item}/pending` : `/history/${kind}/${item}/${id}`);
       await reload();
       await render();
       toast('Removed');

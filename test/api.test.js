@@ -530,6 +530,7 @@ test('updates: version order and picking the newest release from GitHub', async 
     await call('GET', '/updates');
     assert.equal(calls, 1); // remembered between checks
     r = await call('POST', '/updates/check');
+    assert.equal(r.status, 200);
     assert.equal(calls, 2);
   });
   const token = process.env.GITHUB_TOKEN;
@@ -997,6 +998,31 @@ test('history in a backup file is checked before it is restored', () => withServ
   const id = (await call('GET', '/data')).body.expenses[0].id;
   assert.deepEqual((await call('GET', `/history/expense/${id}`)).body.map((x) => [x.on_date, x.value]), [['2025-01-01', 5000]]);
 }));
+
+test('a price change waiting for a future date can be cancelled', () => withServer({}, async (call) => {
+  const e = (await call('POST', '/expenses', { name: 'Internet', amount_cents: 8000, frequency: 'monthly' })).body;
+  await call('POST', `/expenses/${e.id}/amount`, { amount_cents: 9000, from: '2099-01-01' });
+  const r = await call('DELETE', `/expenses/${e.id}/pending`);
+  assert.equal(r.status, 200);
+  assert.deepEqual([r.body.amount_cents, r.body.pending_cents, r.body.pending_from], [8000, null, null]);
+  assert.equal((await call('GET', `/history/expense/${e.id}`)).body.length, 1); // the history is untouched
+  assert.equal((await call('DELETE', '/expenses/9999/pending')).status, 404);
+}));
+
+test('accounts keep their colours when they are moved', async () => {
+  const db = openDatabase(':memory:');
+  await withServer({ db }, async (call) => {
+    for (const name of ['Bills', 'Spending', 'Savings']) await call('POST', '/accounts', { name });
+    // As if restored from an older backup, with no colours saved: each is shown in its place's colour.
+    db.exec('UPDATE accounts SET color = NULL');
+    const before = (await call('GET', '/accounts')).body;
+    await call('POST', '/accounts/reorder', { ids: before.map((a) => a.id).reverse() });
+    const after = (await call('GET', '/accounts')).body;
+    assert.deepEqual(after.map((a) => a.name), before.map((a) => a.name).reverse());
+    const palette = ['#0f766e', '#2563eb', '#9333ea', '#ea580c', '#db2777', '#16a34a', '#ca8a04', '#0891b2', '#64748b', '#dc2626'];
+    before.forEach((a, i) => assert.equal(after.find((x) => x.id === a.id).color, palette[i % palette.length]));
+  });
+});
 
 test('a password reset only holds the main login, and shows the password in the terminal, not the page', async () => {
   const db = openDatabase(':memory:');

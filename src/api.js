@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const { transaction, getSetting, setSetting } = require('./db');
+const { transaction, getSetting, setSetting, fillAccountColours } = require('./db');
 const budget = require('./budget');
 
 class BadRequest extends Error {}
@@ -557,6 +557,14 @@ function createApi(db) {
     res.json({ ...db.prepare('SELECT * FROM expenses WHERE id = ?').get(id) });
   });
 
+  // Cancelling a price change that's waiting for a future date. The bill keeps its current price.
+  router.delete('/expenses/:id/pending', (req, res) => {
+    const id = Number(req.params.id);
+    if (!db.prepare('SELECT 1 FROM expenses WHERE id = ?').get(id)) return res.status(404).json({ error: 'Not found.' });
+    db.prepare('UPDATE expenses SET pending_cents = NULL, pending_from = NULL WHERE id = ?').run(id);
+    res.json({ ...db.prepare('SELECT * FROM expenses WHERE id = ?').get(id) });
+  });
+
   // A statement update for a loan: { balance_cents, balance_date, interest_rate, repayment_cents }.
   // Rate and repayment changes are logged on the statement date too.
   router.post('/loans/:id/balance', (req, res) => {
@@ -864,7 +872,11 @@ function createApi(db) {
     const ids = req.body && req.body.ids;
     if (!Array.isArray(ids)) throw new BadRequest('Expected a list of ids.');
     const stmt = db.prepare(`UPDATE ${name} SET sort_order = ? WHERE id = ?`);
-    transaction(db, () => ids.forEach((id, i) => stmt.run(i, Number(id))));
+    transaction(db, () => {
+      // An account restored from an older backup may have no colour yet: keep the one it's shown in before moving it.
+      if (name === 'accounts') fillAccountColours(db);
+      ids.forEach((id, i) => stmt.run(i, Number(id)));
+    });
     res.json({ ok: true });
   });
 
