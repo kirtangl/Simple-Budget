@@ -6,7 +6,7 @@ const express = require('express');
 const { openDatabase, getSetting, setSetting } = require('./db');
 const { createAuth } = require('./auth');
 const { createApi } = require('./api');
-const { createShop } = require('./shop');
+const { createShop, createHelper } = require('./shop');
 const { createChecker } = require('./checker');
 const { createUpdates, UpdateError, compareVersions, parseVersion } = require('./updates');
 const { createBackups, BackupError } = require('./backups');
@@ -140,6 +140,8 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null, check
   // app on the same server, can't press buttons here on a logged-in browser's behalf.
   app.use('/api', (req, res, next) => {
     if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+    // The browser helper sends its key, not a login cookie, so another page can't use it.
+    if (req.path.startsWith('/shop-helper/') && /^Bearer /.test(req.get('authorization') || '')) return next();
     const site = req.get('sec-fetch-site');
     if (site && site !== 'same-origin' && site !== 'none') return res.status(403).json({ error: "That request didn't come from this app." });
     const origin = req.get('origin');
@@ -295,6 +297,7 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null, check
     }
     res.json(advanced(req));
   });
+  app.use('/api/shop-helper', createHelper(db));
   app.use('/api/shop', auth.require, createShop(db, { checker }));
   app.use('/api', auth.require, createApi(db));
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));

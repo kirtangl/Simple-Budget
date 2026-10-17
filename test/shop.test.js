@@ -13,9 +13,9 @@ async function withServer(options, fn) {
   const base = `http://127.0.0.1:${server.address().port}/api`;
   const caller = () => {
     let cookie = '';
-    return async (method, path, body) => {
+    return async (method, path, body, headers = {}) => {
       const res = await fetch(base + path, {
-        method, headers: { 'content-type': 'application/json', cookie }, body: body ? JSON.stringify(body) : undefined,
+        method, headers: { 'content-type': 'application/json', cookie, ...headers }, body: body ? JSON.stringify(body) : undefined,
       });
       const set = res.headers.get('set-cookie');
       if (set) cookie = set.split(';')[0];
@@ -417,3 +417,46 @@ test('shopping: prices go out of date at 9am on Wednesdays', () => {
   assert.equal(at('2026-10-13T12:00:00'), local('2026-10-07T09:00:00')); // Tuesday
   assert.equal(at('2026-10-18T12:00:00'), local('2026-10-14T09:00:00')); // Sunday
 });
+
+test('shopping: the browser helper (Coles button) uses its own key', () => withServer({}, async (call, caller) => {
+  const stores = await storesOf(call);
+  const oats = (await call('POST', '/shop/items', { name: 'Rolled oats' })).body.product_id;
+  await call('PATCH', `/shop/products/${oats}`, { size: 750, unit: 'g' });
+  const milk = (await call('POST', '/shop/items', { name: 'Milk' })).body.product_id;
+  const bread = (await call('POST', '/shop/items', { name: 'Bread' })).body.product_id;
+  // A new key replaces the old one; the extension sends it, not a login cookie, from its own origin.
+  const old = (await call('POST', '/shop/helper/key', {})).body.key;
+  assert.equal((await call('POST', '/shop/helper/key', {})).body.key, old);
+  const key = (await call('POST', '/shop/helper/key', { new: true })).body.key;
+  assert.notEqual(key, old);
+  const ext = caller();
+  const as = (k) => ({ authorization: `Bearer ${k}`, origin: 'chrome-extension://abcdefgh' });
+  assert.equal((await ext('GET', '/shop-helper/coles')).status, 401);
+  assert.equal((await ext('GET', '/shop-helper/coles', null, as(old))).status, 401);
+  assert.equal((await ext('GET', '/shop/', null, as(key))).status, 401); // only the helper's routes
+  assert.equal((await ext('GET', '/shop-helper/nowhere', null, as(key))).status, 404);
+
+  let r = await ext('GET', '/shop-helper/coles', null, as(key));
+  assert.equal(r.body.store.id, stores.Coles);
+  assert.deepEqual(r.body.items.map((i) => [i.name, i.q, i.match, i.out_of_date]),
+    [['Bread', 'Bread', null, false], ['Milk', 'Milk', null, false], ['Rolled oats', 'Rolled oats 750g', null, false]]);
+
+  r = await ext('POST', '/shop-helper/coles/results', {
+    found: [{ product_id: oats, url: 'https://shop.example/c/oats', name: 'Test Rolled Oats', size: '750g', price_cents: 300, was_cents: 350 },
+      { product_id: milk, url: 'javascript:alert(1)', name: 'Bad', price_cents: 100 }],
+    none: [bread],
+  }, as(key));
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.changes, [{ product_id: oats, old_cents: null, new_cents: 300 }]);
+  const p = (await call('GET', '/shop')).body.products.find((x) => x.id === oats);
+  assert.deepEqual([p.prices[stores.Coles], p.was[stores.Coles], p.matches[stores.Coles].url], [300, 350, 'https://shop.example/c/oats']);
+  r = await ext('GET', '/shop-helper/coles', null, as(key));
+  const by = Object.fromEntries(r.body.items.map((i) => [i.name, i]));
+  assert.equal(by.Bread.none, true);
+  assert.equal(by.Milk.match, null);
+  assert.equal(by['Rolled oats'].match.name, 'Test Rolled Oats');
+  assert.equal(by['Rolled oats'].out_of_date, false);
+  await ext('POST', '/shop-helper/coles/results', { missing: [oats] }, as(key));
+  r = await ext('GET', '/shop-helper/coles', null, as(key));
+  assert.equal(r.body.items.find((i) => i.product_id === oats).match.missing, true);
+}));

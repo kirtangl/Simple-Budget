@@ -1990,3 +1990,10 @@ h3.form-section.find-head { margin-top: 14px; }
 .solve-type { display: flex; gap: 8px; }
 .solve-type input { flex: 1; min-width: 0; }
 #prompt:has(.solve-screen) { width: min(960px, calc(100vw - 24px)); max-width: none; }
+/* The Coles button's setup steps. */
+.helper-steps { margin: 6px 0 10px; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; }
+.helper-steps li { overflow-wrap: anywhere; }
+a.button-like { display: inline-block; padding: 7px 14px; border-radius: 8px; background: var(--brand); color: var(--on-brand); font-weight: 600; text-decoration: none; }
+.helper-copy { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 6px; }
+.helper-copy .muted { width: 56px; }
+.helper-copy code { flex: 1; min-width: 0; padding: 4px 8px; border-radius: 6px; background: var(--bg); overflow-wrap: anywhere; }

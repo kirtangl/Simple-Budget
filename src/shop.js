@@ -6,7 +6,7 @@
 // link is logins: the shared list or a login's own, and who ticked something off.
 
 const express = require('express');
-const { transaction, getSetting } = require('./db');
+const { transaction, getSetting, setSetting } = require('./db');
 const { CheckerError } = require('./checker');
 
 const MAX_AISLE = 20;
@@ -683,6 +683,25 @@ function createShop(db, { checker = null } = {}) {
     return found;
   }
 
+  // The key the browser helper (the Coles button) uses, made the first time it's asked for.
+  // { new: true } makes a new one, and the old one stops working.
+  router.post('/helper/key', (req, res) => {
+    let key = getSetting(db, 'shop_helper_key');
+    if (!key || body(req).new === true) {
+      key = require('node:crypto').randomBytes(18).toString('base64url');
+      setSetting(db, 'shop_helper_key', key);
+    }
+    res.json({ key });
+  });
+
+  // The browser helper itself, to unzip and load into Brave or Chrome (see the README).
+  router.get('/helper/extension.zip', (req, res) => {
+    const { zipFolder } = require('./zip');
+    const dir = require('node:path').join(__dirname, '..', 'browser-extension');
+    res.set({ 'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="simple-budget-coles-button.zip"' })
+      .send(zipFolder(dir, 'simple-budget-coles-button'));
+  });
+
   router.use((err, req, res, next) => {
     if (err instanceof CheckerError) return res.status(err.status).json({ error: err.message });
     if (err instanceof BadRequest) return res.status(400).json({ error: err.message });
@@ -690,6 +709,86 @@ function createShop(db, { checker = null } = {}) {
     next(err);
   });
 
+  return router;
+}
+
+// ---------- The browser helper (the Coles button) ----------
+//
+// A Simple Budget extension in the household's own browser gets prices from a store's website
+// while they browse it (Coles turns the price-checker away). It's not logged in like a person:
+// it uses a key (Shopping → Coles button) and only reaches these two routes.
+//
+//   GET  /api/shop-helper/:store          the list's products to check there (store: coles ...)
+//   POST /api/shop-helper/:store/results  { found: [{ product_id, url, name, size, price_cents, was_cents }],
+//                                           none: [product ids], missing: [product ids] }
+
+function createHelper(db) {
+  const router = express.Router();
+  const crypto = require('node:crypto');
+  const hash = (v) => crypto.createHash('sha256').update(String(v)).digest();
+  router.use((req, res, next) => {
+    const key = getSetting(db, 'shop_helper_key');
+    const m = /^Bearer (.+)$/.exec(req.get('authorization') || '');
+    if (!key || !m || !crypto.timingSafeEqual(hash(m[1]), hash(key))) return res.status(401).json({ error: 'Wrong key. Copy it again from Shopping → Coles button.' });
+    next();
+  });
+  const storeOf = (key) => db.prepare('SELECT * FROM shop_stores WHERE checker = ? ORDER BY sort_order, id').get(String(key));
+
+  router.get('/:store', (req, res) => {
+    const s = storeOf(req.params.store);
+    if (!s) return res.status(404).json({ error: `No store gets its prices from ${req.params.store}.` });
+    const since = priceDay();
+    const items = db.prepare(`SELECT p.id, p.name, p.size, p.unit, sum(i.qty) AS qty FROM shop_items i JOIN shop_products p ON p.id = i.product_id
+      WHERE i.done_at IS NULL GROUP BY p.id ORDER BY p.name COLLATE NOCASE`).all().map((p) => {
+      const m = db.prepare('SELECT * FROM shop_matches WHERE product_id = ? AND store_id = ?').get(p.id, s.id);
+      const price = db.prepare('SELECT * FROM shop_prices WHERE product_id = ? AND store_id = ?').get(p.id, s.id);
+      const size = p.size ? `${p.size}${p.unit && MEASURE[p.unit] ? p.unit : ` ${p.unit || ''}`}`.trim() : '';
+      return {
+        product_id: p.id, name: p.name, size: size || null, q: `${p.name} ${size}`.trim(),
+        match: m && m.url ? { url: m.url, name: m.name, size: m.size, missing: Boolean(m.missing_at) } : null,
+        none: Boolean(m && !m.url),
+        price_cents: price ? price.price_cents : null,
+        checked_at: price ? price.checked_at : null,
+        out_of_date: Boolean(m && m.url && (!price || !price.checked_at || price.checked_at < since)),
+      };
+    });
+    res.json({ store: { id: s.id, name: s.name }, since, items });
+  });
+
+  router.post('/:store/results', (req, res) => {
+    const s = storeOf(req.params.store);
+    if (!s) return res.status(404).json({ error: 'Not found.' });
+    const b = body(req);
+    const ids = (v) => (Array.isArray(v) ? v.map(Number).filter((n) => Number.isInteger(n)) : []);
+    const product = (id) => db.prepare('SELECT id FROM shop_products WHERE id = ?').get(id);
+    const changes = [];
+    transaction(db, () => {
+      for (const r of (Array.isArray(b.found) ? b.found : []).slice(0, 500)) {
+        const id = Number(r && r.product_id);
+        if (!product(id) || typeof r.url !== 'string' || !/^https:\/\//.test(r.url) || typeof r.name !== 'string') continue;
+        const cents = Number.isInteger(r.price_cents) && r.price_cents > 0 && r.price_cents <= 100000 ? r.price_cents : null;
+        if (!cents) continue;
+        const was = Number.isInteger(r.was_cents) && r.was_cents > cents && r.was_cents <= 100000 ? r.was_cents : null;
+        const before = db.prepare('SELECT price_cents FROM shop_prices WHERE product_id = ? AND store_id = ?').get(id, s.id);
+        db.prepare(`INSERT INTO shop_matches (product_id, store_id, url, name, size, missing_at) VALUES (?, ?, ?, ?, ?, NULL)
+          ON CONFLICT (product_id, store_id) DO UPDATE SET url = excluded.url, name = excluded.name, size = excluded.size, missing_at = NULL`)
+          .run(id, s.id, r.url.slice(0, 500), r.name.trim().slice(0, 200), typeof r.size === 'string' ? r.size.slice(0, 40) : null);
+        db.prepare(`INSERT INTO shop_prices (product_id, store_id, price_cents, was_cents, checked_at) VALUES (?, ?, ?, ?, datetime('now'))
+          ON CONFLICT (product_id, store_id) DO UPDATE SET price_cents = excluded.price_cents, was_cents = excluded.was_cents, checked_at = excluded.checked_at`)
+          .run(id, s.id, cents, was);
+        if (!before || before.price_cents !== cents) changes.push({ product_id: id, old_cents: before ? before.price_cents : null, new_cents: cents });
+      }
+      for (const id of ids(b.none)) {
+        if (!product(id)) continue;
+        db.prepare(`INSERT INTO shop_matches (product_id, store_id, url, name, size, missing_at) VALUES (?, ?, '', '', NULL, NULL)
+          ON CONFLICT (product_id, store_id) DO UPDATE SET url = '', name = '', size = NULL, missing_at = NULL`).run(id, s.id);
+      }
+      for (const id of ids(b.missing)) {
+        db.prepare("UPDATE shop_matches SET missing_at = datetime('now') WHERE product_id = ? AND store_id = ? AND url <> ''").run(id, s.id);
+      }
+    });
+    res.json({ ok: true, changes });
+  });
   return router;
 }
 
@@ -734,4 +833,4 @@ function importShop(db, data) {
   return { products: db.prepare('SELECT count(*) AS n FROM shop_products').get().n, skipped };
 }
 
-module.exports = { createShop, exportShop, importShop, priceDay, UNITS };
+module.exports = { createShop, createHelper, exportShop, importShop, priceDay, UNITS };

@@ -4748,6 +4748,7 @@ sudo docker compose up -d --build</pre>`;
           aria-checked="${s.id === store.id ? 'true' : 'false'}" data-check-store="${s.id}">${storeDot(s.id)}${s.name}</button>`)}</div>
         <p class="muted small">${dueCount ? `${dueCount} ${dueCount === 1 ? 'product has' : 'products have'} no price at ${store.name} or one older than four weeks.` : `Every price at ${store.name} has been checked in the last four weeks.`}
           ${store.search_url ? '' : html` Add a search link to ${store.name} (Edit in Stores) to look products up.`}</p>
+        ${store.checker === 'coles' ? html`<p class="muted small">Or let the <button type="button" class="linkish small" data-action="shop-helper">Coles button</button> in your browser fill these in.</p>` : ''}
         <ul class="list check-list">${list.map((p) => html`<li>
           <div class="grow"><div class="title">${p.name}${sizeLabel(p) ? html` <span class="shop-size">${sizeLabel(p)}</span>` : ''}${onList.has(p.id) ? html` <span class="check-on">on the list</span>` : ''}</div>
             <div class="price-meta">${p.prices[store.id] != null ? html`<span class="price-age ${priceOld(p, store.id) ? 'old' : ''}" data-age="${p.id}">${checkedText(p.checked?.[store.id])}</span>
@@ -4838,7 +4839,8 @@ sudo docker compose up -d --build</pre>`;
       error: html`<span class="warn">Didn't work${st.message ? `: ${st.message}` : ''}</span>`,
       cancelled: html`<span class="muted">Stopped</span>`,
     }[st.state] || '';
-    return html`<div class="auto-store">${storeDot(s.id)}<b>${s.name}</b>${line}</div>`;
+    const hint = s.checker === 'coles' && st.state === 'try_later' ? html`<button type="button" class="linkish small" data-action="shop-helper">Use the Coles button</button>` : '';
+    return html`<div class="auto-store">${storeDot(s.id)}<b>${s.name}</b>${line}${hint}</div>`;
   }
   const jobRunning = (job) => job && (job.state === 'queued' || job.state === 'running');
 
@@ -5080,6 +5082,47 @@ sudo docker compose up -d --build</pre>`;
       },
     });
   }
+  // The Coles button: a Simple Budget extension for Brave or Chrome that gets Coles prices for
+  // what's on the list, in the household's own browser (Coles turns the price-checker away).
+  function helperPopup() {
+    openForm({
+      title: 'Coles button',
+      body: html`<p>Coles doesn't let automatic price checkers in, so its prices come from a button in your own browser instead.
+          Press it and it opens Coles in a tab, searches for what's on your lists a few seconds apart, and sends the prices here.
+          The first time, you pick which Coles product you buy for each item.</p>
+        <p class="muted small">It works in Brave, Chrome or Edge on a computer. Phones can't run it, but the prices show on every device.</p>
+        <h3 class="form-section">Set it up (once per computer)</h3>
+        <ol class="helper-steps">
+          <li><a class="button-like" href="/api/shop/helper/extension.zip" download>Download the Coles button</a> and unzip it somewhere it can stay, like Documents.</li>
+          <li>In Brave, go to <b>brave://extensions</b> (or <b>chrome://extensions</b>) and turn on <b>Developer mode</b>, top right.</li>
+          <li>Press <b>Load unpacked</b> and pick the unzipped <b>simple-budget-coles-button</b> folder. Pin it from the puzzle-piece menu.</li>
+          <li>Open it and put in this address and key:
+            <div class="helper-copy"><span class="muted small">Address</span><code>${location.origin}</code><button type="button" class="mini" data-copy-origin>Copy</button></div>
+            <div class="helper-copy"><span class="muted small">Key</span><code id="helper-key">••••••••</code><button type="button" class="mini" data-helper-key>Show</button></div></li>
+        </ol>
+        <p class="muted small">The key lets the button read your shopping lists and save prices, nothing else. <button type="button" class="linkish small" data-helper-new>Make a new key</button> if it's been shared by mistake; the old one stops working.</p>`,
+      afterRender: (form) => {
+        let key = null;
+        const show = async (fresh) => {
+          try {
+            key = (await api('POST', '/shop/helper/key', fresh ? { new: true } : {})).key;
+            form.querySelector('#helper-key').textContent = key;
+            form.querySelector('[data-helper-key]').textContent = 'Copy';
+          } catch (err) { form.querySelector('#form-error').textContent = err.message; }
+        };
+        form.onclick = async (ev) => {
+          if (ev.target.closest('[data-copy-origin]')) copyText(location.origin, 'Address');
+          if (ev.target.closest('[data-helper-key]')) { if (key) copyText(key, 'Key'); else show(false); }
+          if (ev.target.closest('[data-helper-new]')) {
+            const ok = await askChoice({ title: 'Make a new key?', text: html`<p>The Coles button stops working until the new key is put into it.</p>`,
+              choices: [{ label: 'Keep this one', value: 'no' }, { label: 'New key', value: 'yes', danger: true }] });
+            if (ok === 'yes') show(true);
+          }
+        };
+      },
+    });
+  }
+
   // Back from finding a match, to a fresh look at what's left (nothing is checked twice: what was
   // just updated is up to date).
   const updateAgain = () => updatePrices();
@@ -5238,6 +5281,7 @@ sudo docker compose up -d --build</pre>`;
     'shop-products': () => { state.productQuery = ''; state.productEdit = false; productList(); },
     'shop-check': () => { state.checkAll = false; priceCheck(); },
     'shop-update': () => updatePrices(),
+    'shop-helper': () => helperPopup(),
     'shop-change': () => shopChange(),
     'shop-stores': () => shopStores(),
     'shop-sections': (el) => shopSections(Number(el.dataset.id)),
