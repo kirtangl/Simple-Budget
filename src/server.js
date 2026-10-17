@@ -7,7 +7,6 @@ const { openDatabase, getSetting, setSetting } = require('./db');
 const { createAuth } = require('./auth');
 const { createApi } = require('./api');
 const { createShop } = require('./shop');
-const { createPriceLookup } = require('./prices');
 const { createUpdates, UpdateError, compareVersions, parseVersion } = require('./updates');
 const { createBackups, BackupError } = require('./backups');
 const { createConfig, ConfigError, splitHosts } = require('./config');
@@ -295,8 +294,7 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
     }
     res.json(advanced(req));
   });
-  const lookup = createPriceLookup({ db, fetchImpl: fetchImpl || globalThis.fetch });
-  app.use('/api/shop', auth.require, createShop(db, { lookup }));
+  app.use('/api/shop', auth.require, createShop(db));
   app.use('/api', auth.require, createApi(db));
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
 
@@ -310,7 +308,6 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
   });
 
   app.locals.updates = updates;
-  app.locals.lookup = lookup;
   return app;
 }
 
@@ -320,7 +317,6 @@ if (require.main === module) {
   const db = openDatabase(dbFile);
   const app = createApp({ db, secureCookies: process.env.SECURE_COOKIES === 'true', dataDir: path.dirname(dbFile) });
   app.locals.updates.start();
-  app.locals.lookup.start();
   const server = app.listen(port, () => {
     console.log(`Simple Budget running on http://localhost:${port}`);
     if (getSetting(db, 'password_must_change') === '1') {

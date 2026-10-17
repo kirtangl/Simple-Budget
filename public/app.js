@@ -4602,8 +4602,7 @@ sudo docker compose up -d --build</pre>`;
             ${state.shop.units.map((u) => html`<option ${raw(p.unit === u ? 'selected' : '')}>${u}</option>`)}</select></div>
           ${item ? html`<div class="field"><label for="sp-qty">How many</label><input id="sp-qty" name="qty" type="number" min="1" max="99" inputmode="numeric" value="${item.qty}"></div>` : ''}
         </div>
-        <h3 class="form-section price-head"><span>Price<span class="muted small">Leave blank if you don't know it</span></span>
-          ${autoReady() ? html`<button type="button" class="mini" data-find>Find prices</button>` : ''}</h3>
+        <h3 class="form-section">Price<span class="muted small">Leave blank if you don't know it</span></h3>
         <div class="field"><label for="sp-per">Price is</label><select id="sp-per" name="price_per">
           ${state.shop.price_per.map((k) => html`<option value="${k}" ${raw(p.price_per === k ? 'selected' : '')}>${PER_LABELS[k] || k}</option>`)}</select>
           <p class="muted small">Per kg or per L works out the cost from the size: $10 per kg for 500 g is $5.</p></div>
@@ -4611,8 +4610,7 @@ sudo docker compose up -d --build</pre>`;
           <input id="sp-${s.id}" name="price-${s.id}" inputmode="decimal" placeholder="$" value="${moneyInput(p.prices[s.id])}">
           <div class="price-meta">${p.prices[s.id] != null ? html`<span class="price-age ${priceOld(p, s.id) ? 'old' : ''}" data-age="${s.id}">${checkedText(p.checked?.[s.id])}</span>
             ${priceOld(p, s.id) ? html`<button type="button" class="linkish small" data-same="${s.id}">Still right</button>` : ''}` : ''}
-            ${lookupLink(s, p.name, sizeLabel(p))}</div>
-          ${p.matches?.[s.id] ? html`<div class="price-auto" title="${p.matches[s.id].name}">Auto · ${p.matches[s.id].name}</div>` : ''}</div>`)}</div>
+            ${lookupLink(s, p.name, sizeLabel(p))}</div></div>`)}</div>
         ${state.shop.stores.some((s) => s.search_url) ? html`<p class="muted small">Look up opens the store's website, searched for this product, so you can check its price.</p>` : ''}
         ${loc ? html`<h3 class="form-section">At ${locLabel(loc)}</h3>
           <div class="row"><span>${spot.label}</span><button type="button" class="mini" data-spot-change>Change</button></div>` : ''}`,
@@ -4631,8 +4629,6 @@ sudo docker compose up -d --build</pre>`;
           });
         };
         for (const n of ['name', 'size', 'unit']) form.elements[n].addEventListener('input', relink);
-        const find = form.querySelector('[data-find]');
-        if (find) find.onclick = () => findPrices(p, reopen);
         form.querySelectorAll('[data-same]').forEach((b) => {
           b.onclick = () => {
             checked.add(Number(b.dataset.same));
@@ -4710,129 +4706,6 @@ sudo docker compose up -d --build</pre>`;
     });
   }
 
-  // Automatic prices (src/prices.js): with an Apify key, Find prices searches the stores for a
-  // product and a tap matches it to the store's own product. Matched prices are refreshed on
-  // request, and once a week on their own.
-  const autoReady = () => Boolean(state.shop.lookup?.key_set) && state.shop.stores.some((s) => s.auto);
-  function findPrices(p, back, found = null) {
-    const money2 = (c) => moneyFmt.format((c || 0) / 100);
-    const q = found ? found.q : `${p.name} ${sizeLabel(p).replace(' ', '')}`.trim();
-    const stores = state.shop.stores.filter((s) => s.auto);
-    const results = (s) => {
-      const list = found.results[s.id] || [];
-      const mine = p.matches?.[s.id];
-      if (!list.length) return html`<p class="muted small">Nothing found at ${s.name}.${mine ? ` Still matched to ${mine.name}.` : ''}</p>`;
-      return html`<ul class="list find-list">${list.map((r, i) => {
-        const on = mine && mine.url === r.url;
-        return html`<li class="${on ? 'on' : ''}"><div class="grow"><div class="title">${r.name}</div>
-            <div class="muted small">${[r.size, r.unit_price].filter(Boolean).join(' · ')}
-              <a class="lookup" href="${r.url}" target="_blank" rel="noopener noreferrer">View ↗</a></div>
-            ${r.special ? html`<span class="sum-pill">Special${r.was_cents ? ` · was ${money2(r.was_cents)}` : ''}</span>` : ''}</div>
-          <b class="num find-price">${money2(r.price_cents)}</b>
-          ${on ? html`<button type="button" class="mini" data-unmatch="${s.id}">Matched ✓</button>`
-            : html`<button type="button" class="mini primary" data-match="${s.id}" data-i="${i}">Use this</button>`}</li>`;
-      })}</ul>`;
-    };
-    openForm({
-      title: `Find prices · ${productLabel(p)}`,
-      body: html`<div class="prod-tools"><label for="find-q" class="sr-only">Search the stores for</label>
-          <input id="find-q" type="search" value="${q}" autocomplete="off">
-          <button type="button" class="mini primary" data-find-go>Search</button></div>
-        <p class="muted small" id="find-help">${found ? 'Tap Use this on the one you buy at each store. Its price is saved, and kept up to date when prices are refreshed.'
-          : 'Searches Woolworths, Coles, Aldi and IGA online for this product. It can take up to a minute. Online prices are sometimes different from the shelf.'}</p>
-        ${found ? stores.map((s) => html`<h3 class="form-section">${storeDot(s.id)}${s.name}</h3>${results(s)}`) : ''}`,
-      lead: html`<button type="button" data-find-back>Back</button>`,
-      afterRender: (form) => {
-        const go = async () => {
-          const btn = form.querySelector('[data-find-go]');
-          btn.disabled = true;
-          btn.textContent = 'Searching…';
-          form.querySelector('#find-help').textContent = 'Searching the stores. This can take up to a minute.';
-          try {
-            const res = await api('POST', `/shop/products/${p.id}/find`, { q: form.querySelector('#find-q').value });
-            findPrices(shopProduct(p.id) || p, back, res);
-          } catch (err) {
-            form.querySelector('#form-error').textContent = err.message;
-            btn.disabled = false;
-            btn.textContent = 'Search';
-          }
-        };
-        if (!found) setTimeout(go);
-        form.querySelector('#find-q').onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); go(); } };
-        form.onclick = async (ev) => {
-          if (ev.target.closest('[data-find-go]')) { go(); return; }
-          if (ev.target.closest('[data-find-back]')) { back(); return; }
-          const m = ev.target.closest('[data-match], [data-unmatch]');
-          if (!m) return;
-          try {
-            const store = Number(m.dataset.match || m.dataset.unmatch);
-            const r = m.dataset.match ? found.results[store][Number(m.dataset.i)] : null;
-            await api('PUT', `/shop/products/${p.id}/match`, r ? { store_id: store, ...r } : { store_id: store, remove: true });
-            await loadShop(state.shop.list);
-            render();
-            findPrices(shopProduct(p.id), back, found);
-          } catch (err) { form.querySelector('#form-error').textContent = err.message; }
-        };
-      },
-    });
-  }
-
-  // Setting up automatic prices: the Apify key, and whether to refresh once a week.
-  function autoSetup(back) {
-    const st = state.shop.lookup || {};
-    openForm({
-      title: 'Automatic prices',
-      body: html`<p class="small">The supermarkets don't share their prices, so this uses Apify, a price lookup service that reads
-          Woolworths, Coles, Aldi and IGA online. Apify's free account gives $5 of use a month, which should cover a weekly refresh of a household list.</p>
-        <ol class="small setup-steps">
-          <li>Make a free account at <a href="https://apify.com" target="_blank" rel="noopener noreferrer">apify.com</a>.</li>
-          <li>In Apify, open <b>Settings</b>, then <b>API &amp; Integrations</b>, and copy the <b>Personal API token</b>.</li>
-          <li>Paste it here and press Save.</li>
-        </ol>
-        <div class="field"><label for="ap-key">Apify key</label>
-          <input id="ap-key" name="key" autocomplete="off" spellcheck="false" placeholder="${st.key_set ? 'Saved. Paste a new one to change it.' : 'apify_api_…'}"></div>
-        <label class="check-row"><input type="checkbox" name="weekly" ${raw(st.weekly === false ? '' : 'checked')}> Refresh matched prices once a week on their own</label>
-        <p class="muted small">Online prices are sometimes different from the shelf. The key stays on your server and isn't in backups.</p>`,
-      lead: st.key_set ? html`<button type="button" class="danger" data-remove-key>Remove key</button>` : null,
-      afterRender: (form) => {
-        const rm = form.querySelector('[data-remove-key]');
-        if (rm) {
-          rm.onclick = async () => {
-            state.shop.lookup = await api('PUT', '/shop/lookup', { remove_key: true });
-            closeForm();
-            toast('Apify key removed');
-            if (back) back();
-          };
-        }
-      },
-      onSave: async (form) => {
-        const key = val(form, 'key');
-        if (!key && !st.key_set) throw new Error('Paste your Apify key first.');
-        state.shop.lookup = await api('PUT', '/shop/lookup', { ...(key ? { key } : {}), weekly: form.elements.weekly.checked });
-        if (back) setTimeout(back);
-      },
-    });
-  }
-
-  // The panel at the top of Check prices.
-  function autoPanel() {
-    const st = state.shop.lookup || {};
-    if (!st.key_set) {
-      return html`<div class="auto-panel"><div class="grow"><b>Fill prices in automatically</b>
-        <div class="muted small">Looks up Woolworths, Coles, Aldi and IGA online, using a free Apify account.</div></div>
-        <button type="button" class="mini primary" data-auto-setup>Set up</button></div>`;
-    }
-    const last = st.last;
-    const when = last ? checkedText(last.at.replace('T', ' ').slice(0, 19)).replace('Checked', 'Refreshed') : 'Not refreshed yet';
-    const result = last && !last.error ? ` · ${last.updated} of ${last.checked} found, ${last.changed} changed` : '';
-    return html`<div class="auto-panel"><div class="grow"><b>Automatic prices</b>
-        <div class="muted small">${st.matched} ${st.matched === 1 ? 'price' : 'prices'} matched · ${when}${result}${st.weekly ? ' · weekly' : ''}</div>
-        ${last?.error ? html`<div class="small warn-text">${last.error}</div>` : ''}
-        ${st.matched ? '' : html`<div class="muted small">Open a product and press Find prices to match it at each store.</div>`}</div>
-      ${st.matched ? html`<button type="button" class="mini primary" data-auto-refresh ${raw(st.running ? 'disabled' : '')}>${st.running ? 'Refreshing…' : 'Refresh now'}</button>` : ''}
-      <button type="button" class="mini" data-auto-setup>Settings</button></div>`;
-  }
-
   // Checking prices at one store: what has no price there or an old one comes first (what's on
   // the list before the rest), each with Look up. Typing a price saves it as checked today, and
   // Still right keeps the price and marks it checked.
@@ -4851,7 +4724,7 @@ sudo docker compose up -d --build</pre>`;
     const same = new Set();
     openForm({
       title: 'Check prices',
-      body: html`${autoPanel()}<div class="check-stores" role="radiogroup" aria-label="Store">${stores.map((s) => html`<button type="button" role="radio" class="spot-btn ${s.id === store.id ? 'on' : ''}"
+      body: html`<div class="check-stores" role="radiogroup" aria-label="Store">${stores.map((s) => html`<button type="button" role="radio" class="spot-btn ${s.id === store.id ? 'on' : ''}"
           aria-checked="${s.id === store.id ? 'true' : 'false'}" data-check-store="${s.id}">${storeDot(s.id)}${s.name}</button>`)}</div>
         <p class="muted small">${dueCount ? `${dueCount} ${dueCount === 1 ? 'product has' : 'products have'} no price at ${store.name} or one older than four weeks.` : `Every price at ${store.name} has been checked in the last four weeks.`}
           ${store.search_url ? '' : html` Add a search link to ${store.name} (Edit in Stores) to look products up.`}</p>
@@ -4869,20 +4742,6 @@ sudo docker compose up -d --build</pre>`;
           const pick = ev.target.closest('[data-check-store]');
           if (pick) { state.checkStore = Number(pick.dataset.checkStore); priceCheck(); return; }
           if (ev.target.closest('[data-check-all]')) { state.checkAll = !state.checkAll; priceCheck(); return; }
-          if (ev.target.closest('[data-auto-setup]')) { autoSetup(priceCheck); return; }
-          const refresh = ev.target.closest('[data-auto-refresh]');
-          if (refresh) {
-            refresh.disabled = true;
-            refresh.textContent = 'Refreshing…';
-            api('POST', '/shop/lookup/refresh', {}).then((out) => {
-              toast(`${out.updated} of ${out.checked} prices found, ${out.changed} changed`);
-            }).catch((err) => toast(err.message)).finally(async () => {
-              await loadShop(state.shop.list);
-              render();
-              if ($modal.open && $modalForm.querySelector('.check-list')) priceCheck();
-            });
-            return;
-          }
           const b = ev.target.closest('[data-same]');
           if (b) {
             same.add(Number(b.dataset.same));

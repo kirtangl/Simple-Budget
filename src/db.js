@@ -374,7 +374,7 @@ const MIGRATIONS = [
   `,
   // 22: a search link for each store (the chains get theirs), so a product can be looked up on the
   // store's website, when each price was last checked (prices already kept count as checked now),
-  // and the store's own product each product is matched to, for automatic prices (src/prices.js).
+  // and the store's own product each product is matched to, for automatic prices (used from 0.9.9).
   `
   ALTER TABLE shop_stores ADD COLUMN search_url TEXT;
   UPDATE shop_stores SET search_url = CASE lower(name)
