@@ -256,6 +256,122 @@ const MIGRATIONS = [
   `,
   // 18: accounts keep the colour they're shown in now, whatever order they're put in later.
   FILL_ACCOUNT_COLOURS,
+  // 19: the shopping list. Locations are the household's stores (a chain and a suburb). A product's
+  // spot at a location is a numbered aisle or one of that location's named sections, or "not sold here".
+  // Prices are per chain. A list item with no owner is on the shared list, otherwise on that login's own.
+  `
+  CREATE TABLE shop_locations (
+    id INTEGER PRIMARY KEY,
+    store TEXT NOT NULL CHECK (store IN ('woolworths', 'coles', 'aldi')),
+    name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (store, name COLLATE NOCASE)
+  );
+  CREATE TABLE shop_sections (
+    id INTEGER PRIMARY KEY,
+    location_id INTEGER NOT NULL REFERENCES shop_locations(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (location_id, name COLLATE NOCASE)
+  );
+  CREATE TABLE shop_products (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE
+  );
+  CREATE TABLE shop_prices (
+    product_id INTEGER NOT NULL REFERENCES shop_products(id) ON DELETE CASCADE,
+    store TEXT NOT NULL CHECK (store IN ('woolworths', 'coles', 'aldi')),
+    price_cents INTEGER NOT NULL,
+    PRIMARY KEY (product_id, store)
+  );
+  CREATE TABLE shop_spots (
+    product_id INTEGER NOT NULL REFERENCES shop_products(id) ON DELETE CASCADE,
+    location_id INTEGER NOT NULL REFERENCES shop_locations(id) ON DELETE CASCADE,
+    aisle INTEGER,
+    section_id INTEGER REFERENCES shop_sections(id) ON DELETE CASCADE,
+    missing INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (product_id, location_id)
+  );
+  CREATE TABLE shop_items (
+    id INTEGER PRIMARY KEY,
+    product_id INTEGER NOT NULL REFERENCES shop_products(id) ON DELETE CASCADE,
+    owner_id INTEGER,
+    qty INTEGER NOT NULL DEFAULT 1,
+    added_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX shop_items_owner ON shop_items (owner_id);
+  `,
+  // 20: the shopping list again, before it was released: any store name (not just the three chains),
+  // a size and unit on products, decimal section orders (0.1, 0.2 ...), and ticked items kept on
+  // the list (who ticked them, and when) until they're cleared. Only test copies had the first
+  // version, so its rows are dropped rather than carried over.
+  `
+  DROP TABLE shop_items;
+  DROP TABLE shop_spots;
+  DROP TABLE shop_prices;
+  DROP TABLE shop_sections;
+  DROP TABLE shop_products;
+  DROP TABLE shop_locations;
+  CREATE TABLE shop_stores (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    sort_order INTEGER NOT NULL DEFAULT 0
+  );
+  INSERT INTO shop_stores (name, sort_order) VALUES ('Woolworths', 0), ('Coles', 1), ('Aldi', 2);
+  CREATE TABLE shop_locations (
+    id INTEGER PRIMARY KEY,
+    store_id INTEGER NOT NULL REFERENCES shop_stores(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    UNIQUE (store_id, name COLLATE NOCASE)
+  );
+  CREATE TABLE shop_sections (
+    id INTEGER PRIMARY KEY,
+    location_id INTEGER NOT NULL REFERENCES shop_locations(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    position REAL NOT NULL DEFAULT 0,
+    UNIQUE (location_id, name COLLATE NOCASE)
+  );
+  CREATE TABLE shop_products (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL COLLATE NOCASE,
+    size REAL,
+    unit TEXT
+  );
+  CREATE UNIQUE INDEX shop_products_name ON shop_products (name COLLATE NOCASE, coalesce(size, 0), coalesce(unit, ''));
+  CREATE TABLE shop_prices (
+    product_id INTEGER NOT NULL REFERENCES shop_products(id) ON DELETE CASCADE,
+    store_id INTEGER NOT NULL REFERENCES shop_stores(id) ON DELETE CASCADE,
+    price_cents INTEGER NOT NULL,
+    PRIMARY KEY (product_id, store_id)
+  );
+  CREATE TABLE shop_spots (
+    product_id INTEGER NOT NULL REFERENCES shop_products(id) ON DELETE CASCADE,
+    location_id INTEGER NOT NULL REFERENCES shop_locations(id) ON DELETE CASCADE,
+    aisle INTEGER,
+    section_id INTEGER REFERENCES shop_sections(id) ON DELETE CASCADE,
+    missing INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (product_id, location_id)
+  );
+  CREATE TABLE shop_items (
+    id INTEGER PRIMARY KEY,
+    product_id INTEGER NOT NULL REFERENCES shop_products(id) ON DELETE CASCADE,
+    owner_id INTEGER,
+    qty INTEGER NOT NULL DEFAULT 1,
+    added_at TEXT NOT NULL DEFAULT (datetime('now')),
+    done_at TEXT,
+    done_by INTEGER
+  );
+  CREATE INDEX shop_items_owner ON shop_items (owner_id);
+  `,
+  // 21: a colour for each store (the chains in their own), a product priced per kg or L as well as
+  // each, and the store something was ticked off at, so what's been spent can be shown.
+  `
+  ALTER TABLE shop_stores ADD COLUMN color TEXT;
+  UPDATE shop_stores SET color = CASE lower(name) WHEN 'woolworths' THEN '#178841' WHEN 'coles' THEN '#e01a22' WHEN 'aldi' THEN '#1f4fa3' END
+    WHERE color IS NULL;
+  ALTER TABLE shop_products ADD COLUMN price_per TEXT NOT NULL DEFAULT 'each';
+  ALTER TABLE shop_items ADD COLUMN done_store_id INTEGER REFERENCES shop_stores(id) ON DELETE SET NULL;
+  `,
 ];
 
 function openDatabase(file) {

@@ -199,6 +199,7 @@
   // button for the left of the bottom row, like Back.
   function openForm({ title, body, onSave, onDelete, saveLabel = 'Save', afterRender, noActions = false, cls = '', lead = null }) {
     $modal.className = cls;
+    $modalForm.onclick = null; // a popup's own click handler (afterRender) goes with it
     $modalForm.innerHTML = html`
       ${title == null ? '' : popHead(title, {})}
       ${body}
@@ -4156,6 +4157,749 @@ sudo docker compose up -d --build</pre>`;
     }
   });
 
+  // ---------- Shopping ----------
+  //
+  // Its own data (GET /shop), kept apart from the budget. The location being shopped at, and
+  // which sections are folded away, are remembered on each device, since people shop at different stores.
+
+  const remember = (key, value) => { try { if (value == null) localStorage.removeItem(key); else localStorage.setItem(key, String(value)); } catch { /* not remembered */ } };
+  const recall = (key) => { try { return localStorage.getItem(key); } catch { return null; } };
+
+  async function loadShop(list) {
+    state.shop = await api('GET', `/shop?list=${list}`);
+  }
+  const shopReload = async () => { await loadShop(state.shop.list); render(); };
+  const shopProduct = (id) => state.shop.products.find((p) => p.id === id);
+  const storeName = (id) => state.shop.stores.find((s) => s.id === id)?.name || 'that store';
+  const storeColour = (id) => state.shop.stores.find((s) => s.id === id)?.color || 'var(--muted)';
+  // A store's name in its colour, or a login's name in theirs, as a small tag.
+  const shopTag = (text, colour) => html`<span class="shop-tag" style="--tag:${colour || 'var(--brand)'}">${text}</span>`;
+  const storeDot = (id) => html`<span class="dot store-dot" style="background:${storeColour(id)}"></span>`;
+  const shopLocation = () => {
+    const id = Number(recall('shop:location'));
+    return state.shop.locations.find((l) => l.id === id) || null;
+  };
+  const locLabel = (l) => `${storeName(l.store_id)} ${l.name}`;
+  const sectionsAt = (locId) => state.shop.sections.filter((s) => s.location_id === locId)
+    .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name));
+  const sizeLabel = (p) => (p.size ? `${p.size} ${p.unit}` : p.unit || '');
+  // Prices by weight or volume: how many g or mL each is for (see PRICE_PER in src/shop.js).
+  const PER = { each: null, kg: 1000, '100g': 100, L: 1000, '100mL': 100 };
+  const PER_LABELS = { each: 'Each', kg: 'Per kg', '100g': 'Per 100 g', L: 'Per L', '100mL': 'Per 100 mL' };
+  const BASE = { g: 1, kg: 1000, mL: 1, L: 1000 };
+  const pricePerText = (p) => (PER[p.price_per] ? `/${p.price_per.replace(/^100/, '100 ')}` : '');
+  // What one of a product costs at a store, or null with no price there. $10 per kg for 500 g is $5.
+  function itemCost(p, store) {
+    const c = store == null ? null : p.prices[store];
+    if (c == null) return null;
+    const per = PER[p.price_per];
+    return per && p.size && BASE[p.unit] ? Math.round((c * p.size * BASE[p.unit]) / per) : c;
+  }
+  const productLabel = (p) => (sizeLabel(p) ? `${p.name} · ${sizeLabel(p)}` : p.name);
+
+  // Where a product is at a location, as a group to list it under: { key, label, order }.
+  function shopSpot(p, loc) {
+    const spot = loc && p.spots[loc.id];
+    if (!spot) return { key: 'unsorted', label: 'Unsorted', order: -1 };
+    if (spot.missing) return { key: 'missing', label: `Not at ${storeName(loc.store_id)}`, order: 1000 };
+    if (spot.aisle != null) return { key: `a${spot.aisle}`, label: `Aisle ${spot.aisle}`, order: spot.aisle, aisle: true };
+    const s = state.shop.sections.find((x) => x.id === spot.section_id);
+    return s ? { key: `s${s.id}`, label: s.name, order: s.position, section: s } : { key: 'unsorted', label: 'Unsorted', order: -1 };
+  }
+  // Groups in walking order: by number, a section before an aisle with the same number, then by name.
+  const groupOrder = (a, b) => a.order - b.order || (a.aisle ? 1 : 0) - (b.aisle ? 1 : 0) || a.label.localeCompare(b.label);
+  function groupBy(rows, loc, product) {
+    const groups = new Map();
+    for (const r of rows) {
+      const g = shopSpot(product(r), loc);
+      if (!groups.has(g.key)) groups.set(g.key, { ...g, rows: [] });
+      groups.get(g.key).rows.push(r);
+    }
+    return [...groups.values()].sort(groupOrder);
+  }
+
+  // The cheapest store for a product, keeping the one being shopped at when it's as cheap.
+  function bestPrice(p, store) {
+    const here = itemCost(p, store);
+    let best = here != null ? { store, cents: here } : null;
+    for (const s of state.shop.stores) {
+      const c = itemCost(p, s.id);
+      if (c != null && (!best || c < best.cents)) best = { store: s.id, cents: c };
+    }
+    return best;
+  }
+
+  // The trip so far and still to come. What's been ticked off counts at the store it was bought
+  // at. What's left counts at this store, and at whichever store is cheapest for each item; only
+  // items with a price here count, so the two can be compared.
+  function shopTotals(rows, store) {
+    const out = { spent: new Map(), spentTotal: 0, remaining: 0, unpriced: 0, split: new Map(), saving: 0 };
+    for (const { it, p } of rows) {
+      if (it.done_at) {
+        const at = boughtAt(it, p, store);
+        const c = itemCost(p, at);
+        if (c != null) { out.spent.set(at, (out.spent.get(at) || 0) + c * it.qty); out.spentTotal += c * it.qty; }
+        continue;
+      }
+      const here = itemCost(p, store);
+      if (here == null) { out.unpriced += 1; continue; }
+      const best = bestPrice(p, store);
+      out.remaining += here * it.qty;
+      out.split.set(best.store, (out.split.get(best.store) || 0) + best.cents * it.qty);
+      out.saving += (here - best.cents) * it.qty;
+    }
+    return out;
+  }
+  // The store a ticked item counts at: where it was bought, or this one when that isn't known
+  // (ticked before a store was chosen) or has no price.
+  const boughtAt = (it, p, store) => (it.done_store_id && itemCost(p, it.done_store_id) != null ? it.done_store_id : store);
+  // What a row costs: at the store it was bought at once ticked off, otherwise at this one.
+  const rowCost = ({ it, p }, store) => { const c = itemCost(p, it.done_at ? boughtAt(it, p, store) : store); return c == null ? null : c * it.qty; };
+  // The same, buying it wherever is cheapest if it's still to get.
+  const rowBest = (r, store) => { const b = !r.it.done_at && itemCost(r.p, store) != null ? bestPrice(r.p, store) : null; return b ? b.cents * r.it.qty : rowCost(r, store); };
+
+  // The totals under the list: tiles for the whole shop, what's spent, what's left and the best
+  // it could be; a bar of where the money goes; and a line per store.
+  function shopSummary(t, store) {
+    const money2 = (c) => moneyFmt.format((c || 0) / 100);
+    const best = t.remaining - t.saving;
+    const after = t.spentTotal + best;
+    const used = state.shop.stores.filter((s) => t.spent.get(s.id) || t.split.get(s.id));
+    const across = state.shop.stores.filter((s) => t.spent.get(s.id)).length;
+    const whole = t.spentTotal + best;
+    const seg = (s, cents, hatch) => (cents ? html`<span class="sum-seg ${hatch ? 'hatch' : ''}" style="--seg:${s.color || 'var(--muted)'};flex-grow:${cents}"
+      title="${s.name}: ${money2(cents)} ${hatch ? 'to buy' : 'spent'}"></span>` : '');
+    const tile = (label, cents, sub, cls = '') => html`<div class="sum-tile"><span class="sum-label">${label}</span><b class="sum-num num">${money2(cents)}</b><span class="sum-sub ${cls}">${sub}</span></div>`;
+    return html`<div class="card shop-sum">
+      <div class="sum-tiles">
+        ${tile('Total shop', t.spentTotal + t.remaining, 'before savings')}
+        ${tile('Spent so far', t.spentTotal, across ? `across ${across} ${across === 1 ? 'store' : 'stores'}` : 'nothing ticked yet')}
+        ${tile('Still to buy', t.remaining, !store ? 'choose a store to price it' : t.unpriced ? `${t.unpriced} ${t.unpriced === 1 ? 'item' : 'items'} without a price` : `at ${storeName(store)}`, t.unpriced || !store ? 'warn' : '')}
+        <div class="sum-tile sum-best">
+          <div class="sum-best-head"><span class="sum-label">Total after savings</span>${t.saving ? html`<span class="sum-pill">Save ${money2(t.saving)}</span>` : ''}</div>
+          <b class="sum-num num">${money2(after)}</b>
+          <span class="sum-sub">${t.saving ? `${money2(best)} left to buy by shopping around` : 'Already the best price for what\'s left'}</span>
+        </div>
+      </div>
+      ${whole ? html`<div class="sum-bar" role="img" aria-label="Spent and still to buy, by store">
+          ${used.map((s) => seg(s, t.spent.get(s.id), false))}${used.map((s) => seg(s, t.split.get(s.id), true))}</div>
+        <div class="sum-legend"><span><i class="sum-key"></i>Spent</span><span><i class="sum-key hatch"></i>Still to buy (cheapest store)</span></div>` : ''}
+      ${used.length ? html`<div class="sum-table" role="table">
+        <div class="sum-tr sum-th" role="row"><span role="columnheader">Store</span><span role="columnheader">Spent</span><span role="columnheader">To buy</span><span role="columnheader">Store total</span></div>
+        ${used.map((s) => {
+          const sp = t.spent.get(s.id) || 0; const tb = t.split.get(s.id) || 0;
+          return html`<div class="sum-tr" role="row"><span role="cell">${shopTag(s.name, s.color)}</span><span role="cell" class="num">${sp ? money2(sp) : '—'}</span>
+            <span role="cell" class="num ${tb ? 'good' : 'muted'}">${tb ? `+ ${money2(tb)}` : '—'}</span><span role="cell" class="num"><b>${money2(sp + tb)}</b></span></div>`;
+        })}
+        <div class="sum-tr sum-tt" role="row"><span role="cell">Total</span><span role="cell" class="num">${money2(t.spentTotal)}</span>
+          <span role="cell" class="num good">${money2(best)}</span><span role="cell" class="num good">${money2(after)}</span></div>
+      </div>` : ''}
+    </div>`;
+  }
+
+  const shopCollapsed = () => { try { return new Set(JSON.parse(recall('shop:collapsed') || '[]')); } catch { return new Set(); } };
+
+  // Best buy here: as cheap here as anywhere, or with no price anywhere yet (so nothing is hidden
+  // that might be cheapest here).
+  function bestHere(p, store) {
+    if (itemCost(p, store) == null) return state.shop.stores.every((s) => itemCost(p, s.id) == null);
+    return bestPrice(p, store).store === store;
+  }
+  const bestOnly = () => recall('shop:best') === '1';
+  const SEARCH_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m20 20-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+  const LIST_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+
+  function renderShopping() {
+    const shop = state.shop;
+    const loc = shopLocation();
+    const store = loc ? loc.store_id : null;
+    const money2 = (c) => moneyFmt.format((c || 0) / 100);
+    const rows = shop.items.map((it) => ({ it, p: shopProduct(it.product_id) })).filter((r) => r.p);
+    const filter = store && bestOnly();
+    const left = rows.filter((r) => !r.it.done_at);
+    const bestCount = store ? left.filter((r) => bestHere(r.p, store)).length : 0;
+    const shown = filter ? rows.filter((r) => r.it.done_at || bestHere(r.p, store)) : rows;
+    const groups = groupBy(shown, loc, (r) => r.p);
+    const collapsed = shopCollapsed();
+    const keyOf = (g) => `${loc ? loc.id : 0}:${g.key}`;
+    const anyShut = groups.some((g) => collapsed.has(keyOf(g)));
+    const done = rows.length - left.length;
+
+    const head = loc
+      ? html`<div class="shop-store">
+          <span class="store-badge" style="--tag:${storeColour(store)}" aria-hidden="true">${storeName(store).slice(0, 1).toUpperCase()}</span>
+          <div class="grow"><div class="store-kicker">Shopping at</div>
+            <div class="store-title"><b>${storeName(store)}</b> <span>${loc.name}</span></div></div>
+          <button type="button" data-action="shop-change">Change store</button></div>`
+      : shop.locations.length
+        ? html`<div class="shop-store"><div class="grow"><div class="store-kicker">Shopping at</div><div class="store-title"><b>Choose a store</b></div></div>
+            <button type="button" class="primary" data-action="shop-change">Choose store</button></div>`
+        : html`<div class="shop-store"><p class="muted small grow">Add the stores you shop at to sort the list by aisle and compare prices.</p>
+            <button type="button" class="primary" data-action="shop-stores">+ Add a store location</button></div>`;
+
+    const row = ({ it, p }) => {
+      const g = shopSpot(p, loc);
+      const price = store ? itemCost(p, store) : null;
+      const cost = rowCost({ it, p }, store);
+      const best = store && price != null ? bestPrice(p, store) : null;
+      const cheaper = best && best.store !== store ? best : null;
+      const got = Boolean(it.done_at);
+      const at = got && it.done_store_id;
+      return html`<li class="shop-item ${got ? 'got' : ''}" data-name="${productLabel(p).toLowerCase()}" data-pname="${p.name.toLowerCase()}">
+        <input type="checkbox" data-action="shop-tick" data-id="${it.id}" ${raw(got ? 'checked' : '')} aria-label="${got ? 'Not got' : 'Got'} ${p.name}">
+        <div class="si-name" data-action="shop-item" data-id="${it.id}">
+          <div class="title">${p.name}${sizeLabel(p) ? html` <span class="shop-size">${sizeLabel(p)}</span>` : ''}</div>
+          ${!got && cheaper ? html`<span class="shop-deal-pill">${storeDot(cheaper.store)}${storeName(cheaper.store)} ${money2(cheaper.cents)} · save ${money((price - cheaper.cents) * it.qty)}</span>` : ''}
+        </div>
+        <div class="si-who">${got ? html`${it.done_by_name ? html`<span class="who-init" style="--tag:${it.done_by_colour || 'var(--brand)'}" title="Checked off by ${it.done_by_name}">${it.done_by_name.slice(0, 1).toUpperCase()}</span>` : ''}
+          ${at ? html`<span class="who-at">${storeDot(at)}${storeName(at)}</span>` : ''}`
+          : loc && g.key === 'unsorted' ? html`<button type="button" class="linkish small" data-action="shop-spot" data-id="${p.id}">Set aisle</button>` : ''}</div>
+        <div class="si-qty">${got ? html`<span class="shop-qty">×${it.qty}</span>` : html`<span class="stepper">
+          <button type="button" data-action="shop-qty" data-id="${it.id}" data-step="-1" aria-label="One less ${p.name}">−</button>
+          <span class="shop-qty" aria-label="${it.qty} of ${p.name}">${it.qty}</span>
+          <button type="button" data-action="shop-qty" data-id="${it.id}" data-step="1" aria-label="One more ${p.name}">+</button></span>`}</div>
+        <div class="si-total num">${cost != null ? money2(cost) : got ? '—'
+          : html`<button type="button" class="linkish small" data-action="shop-item" data-id="${it.id}">+ price</button>`}</div>
+      </li>`;
+    };
+
+    const section = (g) => {
+      const key = keyOf(g);
+      const shut = collapsed.has(key);
+      const gotShut = collapsed.has(`${key}:got`);
+      const todo = g.rows.filter((r) => !r.it.done_at).sort((a, b) => a.p.name.localeCompare(b.p.name));
+      const got = g.rows.filter((r) => r.it.done_at).sort((a, b) => a.p.name.localeCompare(b.p.name));
+      const sub = g.rows.reduce((t, r) => t + (rowCost(r, store) ?? 0), 0);
+      const optimal = g.rows.reduce((t, r) => t + (rowBest(r, store) ?? 0), 0);
+      // A folded section has no rows on the page, so the search reads its names from here.
+      const names = shut ? { names: g.rows.map((r) => productLabel(r.p).toLowerCase()).join('|'), pnames: g.rows.map((r) => r.p.name.toLowerCase()).join('|') } : {};
+      return html`<section class="card shop-sec ${shut ? 'shut' : ''} ${g.key === 'unsorted' ? 'unsorted' : ''} ${todo.length ? '' : 'all-got'}" data-names="${names.names ?? ''}" data-pnames="${names.pnames ?? ''}">
+        <button type="button" class="shop-gtoggle" data-action="shop-fold" data-key="${key}" aria-expanded="${shut ? 'false' : 'true'}">
+          <span class="chev">${shut ? '▸' : '▾'}</span><span class="g-name">${g.label}</span>
+          <span class="g-count">${todo.length ? `${todo.length} left` : 'All got'}</span>
+          <span class="g-right">${optimal < sub ? html`<span class="g-best-pill">Cheapest <b>${money2(optimal)}</b> · save ${money(sub - optimal)}</span>` : ''}
+            <b class="num g-total">${sub ? money2(sub) : '—'}</b></span></button>
+        ${shut ? '' : html`
+          ${g.key === 'unsorted' && loc && todo.length ? html`<p class="muted small shop-hint">Set where these are at ${locLabel(loc)} and they'll be sorted from now on.</p>` : ''}
+          <ul class="shop-rows">${todo.map(row)}
+            ${got.length ? html`<li class="shop-gothead"><button type="button" class="linkish small" data-action="shop-fold" data-key="${key}:got" aria-expanded="${gotShut ? 'false' : 'true'}">
+              <span class="chev">${gotShut ? '▸' : '▾'}</span>Got ${got.length}</button></li>${gotShut ? '' : got.map(row)}` : ''}</ul>`}
+      </section>`;
+    };
+
+    const tools = rows.length ? html`<div class="shop-tools">
+        ${store ? html`<button type="button" class="best-toggle" role="switch" aria-checked="${filter ? 'true' : 'false'}" data-action="shop-best">
+          <span class="switch" aria-hidden="true"></span>Best buys at ${storeDot(store)}<b>${storeName(store)}</b><span class="muted">${bestCount} of ${left.length}</span></button>` : ''}
+        <span class="spacer"></span>
+        ${groups.length ? html`<button type="button" class="linkish small" data-action="shop-fold-all" data-open="${anyShut ? '1' : ''}">${anyShut ? 'Expand all' : 'Collapse all'}</button>` : ''}
+        ${loc ? html`<button type="button" class="mini" data-action="shop-sections" data-id="${loc.id}">${raw(LIST_ICON)} Edit categories</button>` : ''}
+      </div>
+      <div class="shop-cols" aria-hidden="true"><span></span><span></span><span>Got by · at</span><span>Qty</span><span>Total</span></div>` : '';
+
+    const totals = rows.length ? shopSummary(shopTotals(rows, store), store) : '';
+
+    return html`
+      <div class="card shop-top">
+        ${head}
+        <div class="shop-add">
+          <form id="shop-add" class="shop-search" autocomplete="off">
+            <span class="search-ico">${raw(SEARCH_ICON)}</span>
+            <label for="shop-name" class="sr-only">Search or add an item</label>
+            ${combo({ id: 'shop-name', name: 'name', value: '', options: [...new Set(shop.products.map((p) => p.name))], placeholder: 'Search or add an item, like Milk' })}
+            <span class="search-end">
+              <button type="button" class="search-clear" data-action="shop-search-clear" aria-label="Clear the search" hidden>✕</button>
+              <button type="submit" class="primary">Add</button>
+            </span>
+          </form>
+          <button type="button" data-action="shop-products">${raw(LIST_ICON)} Saved products</button>
+        </div>
+        ${rows.length ? html`<div class="shop-progress"><span><b>${done} of ${rows.length}</b> got</span>
+          <span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="${rows.length}" aria-valuenow="${done}"><i style="width:${Math.round((done / rows.length) * 100)}%"></i></span></div>` : ''}
+      </div>
+      ${tools}
+      ${rows.length ? html`<div class="shop-list">${groups.length ? groups.map(section)
+          : html`<div class="card"><p class="empty">Nothing left that's cheapest at ${storeName(store)}. Turn off Best buys to see everything.</p></div>`}</div>
+        <p class="empty shop-nomatch" hidden>Nothing on the list matches. Press Add to add it.</p>
+        ${done ? html`<div class="shop-clear"><button type="button" class="danger" data-action="shop-clear">Clear ${done} ticked ${done === 1 ? 'item' : 'items'}</button></div>` : ''}
+        ${totals}`
+        : html`<div class="card"><p class="empty">Nothing on this list. Add an item above, or pick from your saved products.</p></div>`}
+      <p class="tab-hint">Tick things off as they go in the trolley. They drop to the bottom of their category until you clear them, and stay in Saved products for next time.</p>`;
+  }
+
+  // Typing in the box filters the list as you go; Add puts it on the list.
+  // Typing an item's full name highlights it on the list and scrolls to it.
+  let shopFound = null;
+  function shopFilter(q) {
+    const words = q.trim().toLowerCase();
+    let any = false;
+    let found = null;
+    document.querySelectorAll('.shop-sec').forEach((sec) => {
+      let seen = 0;
+      if (sec.classList.contains('shut')) {
+        const same = Boolean(words) && sec.dataset.pnames.split('|').includes(words);
+        seen = !words || same || sec.dataset.names.split('|').some((n) => n.includes(words)) ? 1 : 0;
+        sec.classList.toggle('found', same);
+        if (same && !found) found = sec;
+      }
+      sec.querySelectorAll('.shop-item').forEach((li) => {
+        const hit = !words || li.dataset.name.includes(words);
+        const same = Boolean(words) && li.dataset.pname === words;
+        li.hidden = !hit;
+        li.classList.toggle('found', same);
+        if (same && !found) found = li;
+        if (hit) seen += 1;
+      });
+      sec.hidden = Boolean(words) && !seen;
+      if (seen) any = true;
+    });
+    const none = document.querySelector('.shop-nomatch');
+    if (none) none.hidden = !words || any;
+    const clear = document.querySelector('.search-clear');
+    if (clear) clear.hidden = !q;
+    if (found && found !== shopFound) {
+      // It's already on the list, so close the suggestions that would cover it.
+      const input = document.getElementById('shop-name');
+      setTimeout(() => { if (input) closeCombo(input); found.scrollIntoView({ block: 'center', behavior: 'smooth' }); });
+    }
+    shopFound = found;
+  }
+  document.addEventListener('input', (ev) => { if (ev.target.id === 'shop-name') shopFilter(ev.target.value); });
+
+  async function shopAdd(name) {
+    if (!name) return;
+    const before = state.shop.items.length;
+    await api('POST', '/shop/items', { list: state.shop.list, name });
+    await loadShop(state.shop.list);
+    render();
+    if (state.shop.items.length === before) toast(`Added another ${name}`);
+  }
+
+  document.addEventListener('submit', async (ev) => {
+    if (ev.target.id !== 'shop-add') return;
+    ev.preventDefault();
+    const input = ev.target.elements.name;
+    try {
+      await shopAdd(input.value.trim());
+      document.getElementById('shop-name')?.focus();
+    } catch (err) { toast(err.message); }
+  });
+  // Picking a known item from the suggestions adds it straight away.
+  document.addEventListener('change', async (ev) => {
+    if (ev.target.id === 'shop-name' && ev.target.dataset.picked) {
+      delete ev.target.dataset.picked;
+      try { await shopAdd(ev.target.value.trim()); document.getElementById('shop-name')?.focus(); } catch (err) { toast(err.message); }
+    }
+  });
+
+  // Live updates: while the list is open, check every few seconds whether anyone changed it.
+  // A change waits while a popup is open or something is being typed.
+  setInterval(async () => {
+    if (!state.shop || !location.hash.startsWith('#/shopping') || document.visibilityState !== 'visible') return;
+    if ($modal.open || $prompt.open || document.getElementById('shop-name')?.value) return;
+    try {
+      const { rev } = await api('GET', '/shop/rev');
+      if (rev === state.shop.rev || $modal.open || $prompt.open) return;
+      await shopReload();
+    } catch { /* tried again shortly */ }
+  }, 5000);
+
+  // Which store location is being shopped at, grouped by store.
+  function shopChange() {
+    const loc = shopLocation();
+    openForm({
+      title: 'Shopping at',
+      body: html`${state.shop.stores.map((s) => {
+        const locs = state.shop.locations.filter((l) => l.store_id === s.id);
+        return html`<div class="store-head"><h3 class="form-section">${storeDot(s.id)}${s.name}</h3>
+            <button type="button" class="linkish small" data-action="shop-store-edit" data-id="${s.id}" data-back="change" aria-label="Edit ${s.name}">Edit</button>
+            <button type="button" class="icon ghost" data-action="shop-store-delete" data-id="${s.id}" data-back="change" aria-label="Remove ${s.name}" title="Remove ${s.name}">${BIN_ICON}</button></div>
+          <div class="spot-grid named">${locs.map((l) => html`<span class="loc-pick">
+              <button type="button" class="spot-btn ${loc && loc.id === l.id ? 'on' : ''}" data-pick-loc="${l.id}">${l.name}</button>
+              <button type="button" class="loc-del" data-action="shop-loc-delete" data-id="${l.id}" data-back="change" aria-label="Remove ${locLabel(l)}" title="Remove ${locLabel(l)}">${BIN_ICON}</button></span>`)}
+            <button type="button" class="spot-btn add" data-action="shop-loc-new" data-id="${s.id}" data-back="change">+ ${locs.length ? 'Another' : 'Add a'} ${s.name}</button></div>`;
+      })}
+        <div class="spot-grid named other"><button type="button" class="spot-btn add" data-action="shop-stores">Add or change stores</button></div>`,
+      noActions: true,
+      afterRender: (form) => {
+        form.onclick = (ev) => {
+          const b = ev.target.closest('[data-pick-loc]');
+          if (!b) return;
+          remember('shop:location', b.dataset.pickLoc);
+          closeForm();
+          render();
+        };
+      },
+    });
+  }
+
+  // The aisle picker: every aisle and this location's sections as buttons, one tap to choose.
+  function spotPicker(p, loc, onPick) {
+    state.spotFor = p.id;
+    const spot = p.spots[loc.id];
+    const on = (k) => (spot && ((k.aisle != null && spot.aisle === k.aisle) || (k.section && spot.section_id === k.section) || (k.missing && spot.missing)) ? 'on' : '');
+    const btn = (k, label) => html`<button type="button" class="spot-btn ${on(k)}" data-spot="${JSON.stringify(k)}">${label}</button>`;
+    const aisles = Array.from({ length: state.shop.max_aisle + 1 }, (_, n) => btn({ aisle: n }, String(n)));
+    openForm({
+      title: `Where's ${p.name}?`,
+      body: html`<p class="muted small">At ${locLabel(loc)}. It's remembered for this store only.</p>
+        <h3 class="form-section">Aisle</h3><div class="spot-grid">${aisles}</div>
+        <h3 class="form-section">Category</h3><div class="spot-grid named">${sectionsAt(loc.id).map((s) => btn({ section: s.id }, s.name))}
+          <button type="button" class="spot-btn add" data-action="shop-section-new" data-id="${loc.id}">+ Category</button></div>
+        <div class="spot-grid named other">${btn({ missing: true }, `Not sold at ${storeName(loc.store_id)}`)}${spot ? btn({}, 'Unsorted') : ''}</div>`,
+      noActions: true,
+      afterRender: (form) => {
+        form.onclick = async (ev) => {
+          const b = ev.target.closest('[data-spot]');
+          if (!b) return;
+          const k = JSON.parse(b.dataset.spot);
+          try {
+            await api('PUT', `/shop/products/${p.id}/spot`, { location_id: loc.id, aisle: k.aisle ?? null, section_id: k.section ?? null, missing: Boolean(k.missing) });
+            form.onclick = null;
+            closeForm();
+            await shopReload();
+            if (onPick) onPick();
+          } catch (err) { form.querySelector('#form-error').textContent = err.message; }
+        };
+      },
+    });
+  }
+
+  // A product: its name, size, a price at each store, and where it is here. Opened from the list
+  // (with how many, and taking it off), or from Saved products (with forgetting it).
+  function shopProductForm(p, { item = null, back = null } = {}) {
+    const loc = shopLocation();
+    const spot = loc ? shopSpot(p, loc) : null;
+    const reopen = () => { const again = shopProduct(p.id); if (again) shopProductForm(again, { item: item && state.shop.items.find((x) => x.id === item.id), back }); };
+    openForm({
+      title: productLabel(p),
+      body: html`<div class="field"><label for="sp-name">Name</label><input id="sp-name" name="name" value="${p.name}" required></div>
+        <div class="fields three">
+          <div class="field"><label for="sp-size">Size</label><input id="sp-size" name="size" inputmode="decimal" placeholder="Like 2 or 500" value="${p.size ?? ''}"></div>
+          <div class="field"><label for="sp-unit">Unit</label><select id="sp-unit" name="unit"><option value="">None</option>
+            ${state.shop.units.map((u) => html`<option ${raw(p.unit === u ? 'selected' : '')}>${u}</option>`)}</select></div>
+          ${item ? html`<div class="field"><label for="sp-qty">How many</label><input id="sp-qty" name="qty" type="number" min="1" max="99" inputmode="numeric" value="${item.qty}"></div>` : ''}
+        </div>
+        <h3 class="form-section">Price<span class="muted small">Leave blank if you don't know it</span></h3>
+        <div class="field"><label for="sp-per">Price is</label><select id="sp-per" name="price_per">
+          ${state.shop.price_per.map((k) => html`<option value="${k}" ${raw(p.price_per === k ? 'selected' : '')}>${PER_LABELS[k] || k}</option>`)}</select>
+          <p class="muted small">Per kg or per L works out the cost from the size: $10 per kg for 500 g is $5.</p></div>
+        <div class="fields three">${state.shop.stores.map((s) => html`<div class="field"><label for="sp-${s.id}">${storeDot(s.id)}${s.name}</label>
+          <input id="sp-${s.id}" name="price-${s.id}" inputmode="decimal" placeholder="$" value="${moneyInput(p.prices[s.id])}"></div>`)}</div>
+        ${loc ? html`<h3 class="form-section">At ${locLabel(loc)}</h3>
+          <div class="row"><span>${spot.label}</span><button type="button" class="mini" data-spot-change>Change</button></div>` : ''}`,
+      lead: item ? html`<button type="button" class="danger" data-action="shop-remove" data-id="${item.id}">Take off list</button>`
+        : html`<button type="button" class="danger" data-action="shop-forget" data-id="${p.id}">Forget</button>`,
+      afterRender: (form) => {
+        const change = form.querySelector('[data-spot-change]');
+        if (change) change.onclick = () => spotPicker(p, loc, reopen);
+      },
+      onSave: async (form) => {
+        const qty = item ? Number(val(form, 'qty')) : null;
+        if (item && (!Number.isInteger(qty) || qty < 1 || qty > 99)) throw new Error('How many should be a whole number from 1 to 99.');
+        const size = val(form, 'size');
+        if (size && Number.isNaN(Number(size))) throw new Error('The size should be a number, like 2 or 500.');
+        const prices = {};
+        for (const s of state.shop.stores) prices[s.id] = moneyVal(form, `price-${s.id}`, `The ${s.name} price`);
+        await api('PATCH', `/shop/products/${p.id}`, { name: val(form, 'name'), size: size === '' ? null : Number(size), unit: val(form, 'unit') || null, price_per: val(form, 'price_per') || 'each', prices });
+        if (item && qty !== item.qty) await api('PATCH', `/shop/items/${item.id}`, { qty });
+        await loadShop(state.shop.list);
+        if (back) setTimeout(back); // once this popup has closed
+      },
+    });
+  }
+
+  // Everything bought before, as buttons under their aisles here. A tap puts it on the list (or
+  // adds one more); in edit mode a tap opens it instead.
+  function productList() {
+    const loc = shopLocation();
+    const store = loc ? loc.store_id : null;
+    const body = () => {
+      const q = (state.productQuery || '').trim().toLowerCase();
+      const onList = new Map(state.shop.items.map((it) => [it.product_id, it]));
+      const list = state.shop.products.filter((p) => !q || productLabel(p).toLowerCase().includes(q))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      if (!list.length) return html`<p class="empty">${state.shop.products.length ? 'Nothing matches.' : 'Things you add to a list show here.'}</p>`;
+      const groups = loc ? groupBy(list, loc, (p) => p) : [{ key: 'all', label: 'All products', rows: list }];
+      return html`${groups.map((g) => html`<h3 class="form-section">${g.label}</h3><div class="prod-grid">${g.rows.map((p) => {
+        const it = onList.get(p.id);
+        const on = it && !it.done_at;
+        const price = store != null ? p.prices[store] : null;
+        const meta = [sizeLabel(p), price != null ? `${money(price)}${pricePerText(p)}` : ''].filter(Boolean).join(' · ');
+        return html`<button type="button" class="prod-btn ${on ? 'on' : ''}" data-prod="${p.id}">
+          <span class="prod-name">${p.name}</span>${meta ? html`<span class="prod-meta">${meta}</span>` : ''}
+          ${on ? html`<span class="prod-badge">×${it.qty}</span>` : ''}</button>`;
+      })}</div>`)}`;
+    };
+    const editing = () => Boolean(state.productEdit);
+    openForm({
+      title: 'Saved products',
+      body: html`<div class="prod-tools">
+          <label for="prod-q" class="sr-only">Search saved products</label>
+          <input id="prod-q" type="search" placeholder="Search" value="${state.productQuery || ''}" autocomplete="off">
+          <button type="button" class="mini ${editing() ? 'primary' : ''}" id="prod-edit" aria-pressed="${editing() ? 'true' : 'false'}">${editing() ? 'Done editing' : 'Edit'}</button>
+        </div>
+        <p class="muted small" id="prod-help">${editing() ? 'Tap a product to change its name, size, prices or aisle.' : `Tap to add to the list. Tap again for one more.${loc ? ` Sorted by aisle at ${locLabel(loc)}.` : ''}`}</p>
+        <div id="prod-body">${body()}</div>`,
+      afterRender: (form) => {
+        const redraw = () => { form.querySelector('#prod-body').innerHTML = body().s; };
+        form.querySelector('#prod-q').oninput = (ev) => { state.productQuery = ev.target.value; redraw(); };
+        form.onclick = async (ev) => {
+          if (ev.target.closest('#prod-edit')) { state.productEdit = !state.productEdit; productList(); return; }
+          const b = ev.target.closest('[data-prod]');
+          if (!b) return;
+          const p = shopProduct(Number(b.dataset.prod));
+          if (editing()) { shopProductForm(p, { back: productList }); return; }
+          try {
+            await api('POST', '/shop/items', { list: state.shop.list, product_id: p.id });
+            await loadShop(state.shop.list);
+            redraw();
+            render();
+          } catch (err) { form.querySelector('#form-error').textContent = err.message; }
+        };
+      },
+    });
+  }
+
+  // The household's stores, each with its locations, and a section list for each location.
+  function shopStores() {
+    const locs = state.shop.locations;
+    openForm({
+      title: 'Stores',
+      body: html`<p class="muted small">Add each store you shop at. Aisles are remembered separately for each location.</p>
+        ${state.shop.stores.map((s) => {
+          const list = locs.filter((l) => l.store_id === s.id);
+          return html`<div class="store-head"><h3 class="form-section">${storeDot(s.id)}${s.name}</h3>
+              <button type="button" class="mini" data-action="shop-store-edit" data-id="${s.id}">Edit</button>
+              <button type="button" class="icon ghost" data-action="shop-store-delete" data-id="${s.id}" aria-label="Remove ${s.name}" title="Remove">${BIN_ICON}</button></div>
+            ${list.length ? html`<ul class="list">${list.map((l) => html`<li><div class="grow"><div class="title">${l.name}</div></div>
+              <button type="button" class="mini" data-action="shop-sections" data-id="${l.id}">Categories</button>
+              <button type="button" class="mini" data-action="shop-loc-rename" data-id="${l.id}">Rename</button>
+              <button type="button" class="icon ghost" data-action="shop-loc-delete" data-id="${l.id}" aria-label="Remove ${locLabel(l)}" title="Remove">${BIN_ICON}</button></li>`)}</ul>`
+              : ''}
+            <button type="button" class="mini" data-action="shop-loc-new" data-id="${s.id}">+ Add a ${s.name}</button>`;
+        })}
+        <div class="store-new"><button type="button" data-action="shop-store-new">+ Add a store</button></div>`,
+    });
+  }
+
+  const ORDER_HELP = 'The order puts a category among the aisles: 0.1 to 0.9 come before Aisle 1, and 21 comes after Aisle 20. It isn\'t shown on the list.';
+  function orderVal(s, name) {
+    const n = Number(s);
+    if (s === '' || !Number.isFinite(n) || n < 0 || n > 99 || Math.round(n * 100) !== n * 100) throw new Error(`The order for ${name} should be a number from 0 to 99, like 3 or 0.2.`);
+    return n;
+  }
+
+  // A location's named sections, and where each sits among the aisles.
+  function shopSections(locId) {
+    const loc = state.shop.locations.find((l) => l.id === locId);
+    if (!loc) return shopStores();
+    const list = sectionsAt(locId);
+    openForm({
+      title: `Edit categories at ${locLabel(loc)}`,
+      body: html`<p class="muted small">${ORDER_HELP}</p>
+        <div class="sec-head muted small"><span>Name</span><span>Order</span></div>
+        <ul class="list sec-list">${list.map((s) => html`<li>
+          <input name="name-${s.id}" value="${s.name}" aria-label="Category name">
+          <input name="pos-${s.id}" inputmode="decimal" value="${s.position}" aria-label="Order of ${s.name}" class="sec-pos">
+          <button type="button" class="icon ghost" data-action="shop-section-delete" data-id="${s.id}" aria-label="Remove ${s.name}" title="Remove">${BIN_ICON}</button></li>`)}</ul>
+        <button type="button" class="mini" data-action="shop-section-new" data-id="${loc.id}">+ Add a category</button>`,
+      lead: html`<button type="button" data-action="shop-stores">Back</button>`,
+      onSave: async (form) => {
+        for (const s of list) {
+          const name = val(form, `name-${s.id}`);
+          if (!name) throw new Error('Every category needs a name.');
+          const position = orderVal(val(form, `pos-${s.id}`), name);
+          if (name !== s.name || position !== s.position) await api('PATCH', `/shop/sections/${s.id}`, { name, position });
+        }
+        await loadShop(state.shop.list);
+      },
+    });
+  }
+
+  Object.assign(actions, {
+    'shop-tick': async (el) => {
+      const it = state.shop.items.find((x) => x.id === Number(el.dataset.id));
+      if (!it) return;
+      el.closest('li')?.classList.toggle('got', !it.done_at);
+      await api('PATCH', `/shop/items/${it.id}`, { done: !it.done_at, store_id: shopLocation()?.store_id ?? null });
+      await shopReload();
+      // That was the last one: offer to clear the list for next time.
+      if (!it.done_at && state.shop.items.length && state.shop.items.every((x) => x.done_at)) {
+        const ok = await askChoice({ title: 'Complete shopping list?',
+          text: html`<p>Everything on this list is ticked off.</p>
+            <p><b>Complete</b> clears the list, ready for next time. Everything stays in Saved products.</p>
+            <p><b>Keep</b> leaves the list as it is. You can clear it later with the <b>Clear ticked items</b> button at the bottom.</p>`,
+          choices: [{ label: 'Keep', value: 'no' }, { label: 'Complete', value: 'yes', primary: true }] });
+        if (ok === 'yes') {
+          await api('POST', '/shop/items/clear', { list: state.shop.list });
+          await shopReload();
+          toast('Shopping list complete');
+        }
+      }
+    },
+    'shop-qty': async (el) => {
+      const it = state.shop.items.find((x) => x.id === Number(el.dataset.id));
+      if (!it) return;
+      const qty = it.qty + Number(el.dataset.step);
+      if (qty < 1) {
+        const p = shopProduct(it.product_id);
+        const ok = await askChoice({ title: 'Take this off the list?', text: html`<p><b>${p ? productLabel(p) : 'This item'}</b></p><p>It stays in Saved products for next time.</p>`,
+          choices: [{ label: 'Keep it', value: 'no' }, { label: 'Take off', value: 'yes', danger: true }] });
+        if (ok !== 'yes') return;
+        await api('DELETE', `/shop/items/${it.id}`);
+      } else if (qty <= 99) {
+        await api('PATCH', `/shop/items/${it.id}`, { qty });
+      }
+      await shopReload();
+    },
+    'shop-search-clear': () => {
+      const input = document.getElementById('shop-name');
+      if (!input) return;
+      input.value = '';
+      shopFilter('');
+      input.focus();
+    },
+    'shop-best': () => { remember('shop:best', bestOnly() ? null : '1'); render(); },
+    'shop-fold-all': (el) => {
+      const set = shopCollapsed();
+      const keys = [...document.querySelectorAll('.shop-gtoggle[data-key]')].map((b) => b.dataset.key);
+      for (const k of keys) { if (el.dataset.open) set.delete(k); else set.add(k); }
+      remember('shop:collapsed', JSON.stringify([...set]));
+      render();
+    },
+    'shop-fold': (el) => {
+      const set = shopCollapsed();
+      if (set.has(el.dataset.key)) set.delete(el.dataset.key); else set.add(el.dataset.key);
+      remember('shop:collapsed', JSON.stringify([...set]));
+      render();
+    },
+    'shop-clear': async () => {
+      const list = state.shop.items;
+      const got = list.filter((it) => it.done_at).length;
+      const left = list.length - got;
+      const ok = await askChoice({ title: 'Clear ticked items?',
+        text: html`<p>${got} ticked ${got === 1 ? 'item comes' : 'items come'} off the list.${left ? ` The ${left} not ticked stay${left === 1 ? 's' : ''} on it for next time.` : ''}</p><p>They stay in Saved products.</p>`,
+        choices: [{ label: 'Keep them', value: 'no' }, { label: 'Clear', value: 'yes', primary: true }] });
+      if (ok !== 'yes') return;
+      await api('POST', '/shop/items/clear', { list: state.shop.list });
+      await shopReload();
+      toast(`Cleared ${got} ${got === 1 ? 'item' : 'items'}`);
+    },
+    'shop-item': (el) => {
+      const it = state.shop.items.find((x) => x.id === Number(el.dataset.id));
+      const p = it && shopProduct(it.product_id);
+      if (p) shopProductForm(p, { item: it });
+    },
+    'shop-remove': async (el) => {
+      await api('DELETE', `/shop/items/${el.dataset.id}`);
+      closeForm();
+      await shopReload();
+      toast('Taken off the list');
+    },
+    'shop-forget': async (el) => {
+      const p = shopProduct(Number(el.dataset.id));
+      if (!p) return;
+      const ok = await askChoice({ title: 'Forget this product?', text: html`<p><b>${productLabel(p)}</b></p><p>It comes off every list, and its prices and aisles are forgotten.</p>`,
+        choices: [{ label: 'Keep it', value: 'no' }, { label: 'Forget', value: 'yes', danger: true }] });
+      if (ok !== 'yes') return;
+      await api('DELETE', `/shop/products/${p.id}`);
+      await shopReload();
+      productList();
+    },
+    'shop-spot': (el) => {
+      const loc = shopLocation();
+      const p = shopProduct(Number(el.dataset.id));
+      if (loc && p) spotPicker(p, loc);
+    },
+    'shop-products': () => { state.productQuery = ''; state.productEdit = false; productList(); },
+    'shop-change': () => shopChange(),
+    'shop-stores': () => shopStores(),
+    'shop-sections': (el) => shopSections(Number(el.dataset.id)),
+    'shop-store-new': async () => {
+      const name = await askText('Add a store', 'Name, like IGA');
+      if (!name) return;
+      await api('POST', '/shop/stores', { name });
+      await shopReload();
+      shopStores();
+    },
+    'shop-store-edit': (el) => {
+      const s = state.shop.stores.find((x) => x.id === Number(el.dataset.id));
+      if (!s) return;
+      const back = el.dataset.back === 'change' ? shopChange : shopStores;
+      openForm({
+        title: `Edit ${s.name}`,
+        body: html`<div class="fields">
+          <div class="field"><label for="st-name">Name</label><input id="st-name" name="name" value="${s.name}" required></div>
+          <div class="field color-field"><label for="st-color">Colour</label><input id="st-color" type="color" name="color" value="${/^#[0-9a-f]{6}$/i.test(s.color || '') ? s.color : '#64748b'}"></div></div>`,
+        lead: html`<button type="button" data-action="${back === shopChange ? 'shop-change' : 'shop-stores'}">Back</button>`,
+        onSave: async (form) => {
+          await api('PATCH', `/shop/stores/${s.id}`, { name: val(form, 'name'), color: val(form, 'color') });
+          await loadShop(state.shop.list);
+          setTimeout(back); // back where it was opened from, once this popup has closed
+        },
+      });
+    },
+    'shop-store-delete': async (el) => {
+      const s = state.shop.stores.find((x) => x.id === Number(el.dataset.id));
+      if (!s) return;
+      const ok = await askChoice({ title: 'Remove this store?', text: html`<p><b>${s.name}</b></p><p>Its locations, and the aisles and prices kept for it, are forgotten. Your lists stay.</p>`,
+        choices: [{ label: 'Keep it', value: 'no' }, { label: 'Remove', value: 'yes', danger: true }] });
+      if (ok !== 'yes') return;
+      await api('DELETE', `/shop/stores/${s.id}`);
+      await shopReload();
+      (el.dataset.back === 'change' ? shopChange : shopStores)();
+    },
+    'shop-loc-new': async (el) => {
+      const store = Number(el.dataset.id);
+      const name = await askText(`Add a ${storeName(store)}`, 'Suburb or name, like Castletown');
+      if (!name) return;
+      const l = await api('POST', '/shop/locations', { store_id: store, name });
+      if (!shopLocation()) remember('shop:location', l.id);
+      await shopReload();
+      (el.dataset.back === 'change' ? shopChange : shopStores)();
+    },
+    'shop-loc-rename': async (el) => {
+      const l = state.shop.locations.find((x) => x.id === Number(el.dataset.id));
+      const name = l && await askText(`Rename ${locLabel(l)}`, 'Suburb or name', l.name);
+      if (!name) return;
+      await api('PATCH', `/shop/locations/${l.id}`, { name });
+      await shopReload();
+      shopStores();
+    },
+    'shop-loc-delete': async (el) => {
+      const l = state.shop.locations.find((x) => x.id === Number(el.dataset.id));
+      if (!l) return;
+      const ok = await askChoice({ title: 'Remove this location?', text: html`<p><b>${locLabel(l)}</b></p><p>Where things are at this location is forgotten. Your lists and prices stay.</p>`,
+        choices: [{ label: 'Keep it', value: 'no' }, { label: 'Remove', value: 'yes', danger: true }] });
+      if (ok !== 'yes') return;
+      await api('DELETE', `/shop/locations/${l.id}`);
+      await shopReload();
+      (el.dataset.back === 'change' ? shopChange : shopStores)();
+    },
+    'shop-section-new': async (el) => {
+      const locId = Number(el.dataset.id);
+      const name = await askText('Add a category', 'Name, like Pet food');
+      if (!name) return;
+      const pos = await askText(`Where does ${name} go?`, 'Order among the aisles (0.1 is before Aisle 1, 21 after Aisle 20)', '21', { inputmode: 'decimal' });
+      if (pos === null) return;
+      await api('POST', '/shop/sections', { location_id: locId, name, position: orderVal(pos.trim(), name) });
+      await shopReload();
+      // Added while choosing where something is: back to that choice.
+      const p = el.closest('.spot-grid') && shopProduct(state.spotFor);
+      if (p && shopLocation()) spotPicker(p, shopLocation()); else shopSections(locId);
+    },
+    'shop-section-delete': async (el) => {
+      const s = state.shop.sections.find((x) => x.id === Number(el.dataset.id));
+      if (!s) return;
+      const ok = await askChoice({ title: 'Remove this category?', text: html`<p><b>${s.name}</b></p><p>Anything in it goes back to Unsorted at this store.</p>`,
+        choices: [{ label: 'Keep it', value: 'no' }, { label: 'Remove', value: 'yes', danger: true }] });
+      if (ok !== 'yes') return;
+      await api('DELETE', `/shop/sections/${s.id}`);
+      await shopReload();
+      shopSections(s.location_id);
+    },
+  });
+
   // ---------- Combo box (see combo()) ----------
 
   function openCombo(input, showAll) {
@@ -4177,6 +4921,7 @@ sudo docker compose up -d --build</pre>`;
   }
   function pickCombo(input, value) {
     input.value = value;
+    input.dataset.picked = '1'; // chosen from the list, not just typed
     closeCombo(input);
     input.dispatchEvent(new Event('change', { bubbles: true }));
   }
@@ -4226,6 +4971,13 @@ sudo docker compose up -d --build</pre>`;
           render: () => html`${renderLoans()}<p class="tab-hint">Loan repayments feed into deposits like any other bill.</p>` },
       },
     },
+    shopping: {
+      title: 'Shopping', sub: 'What to buy, in aisle order',
+      tabs: {
+        shared: { label: 'Shared', count: () => state.shop.counts.shared, render: renderShopping },
+        mine: { label: 'Mine', count: () => state.shop.counts.mine, render: renderShopping },
+      },
+    },
     goals: {
       title: 'Goals', sub: 'Things to save for and pay back',
       tabs: {
@@ -4252,7 +5004,7 @@ sudo docker compose up -d --build</pre>`;
     return html`<div class="sec-pin ${name === 'budget' ? 'on' : ''}">
       <div class="page-head sec-head">
         <div><h1>${sec.title}</h1><p class="muted small">${sec.sub}</p></div>
-        <button class="primary add-btn" data-action="${t.action}" ${raw(t.kind ? `data-kind="${t.kind}"` : '')} aria-label="${t.add}"><span class="add-full">+ ${t.add}</span><span class="add-short" aria-hidden="true">+</span></button>
+        ${t.add ? html`<button class="primary add-btn" data-action="${t.action}" ${raw(t.kind ? `data-kind="${t.kind}"` : '')} aria-label="${t.add}"><span class="add-full">+ ${t.add}</span><span class="add-short" aria-hidden="true">+</span></button>` : ''}
       </div>
       <div class="sec-tabs" role="tablist" aria-label="${sec.title}">${Object.entries(sec.tabs).map(([key, x]) => {
         const on = key === tab;
@@ -4291,6 +5043,7 @@ sudo docker compose up -d --build</pre>`;
     const seq = ++renderSeq;
     try {
       let out;
+      if (page === 'shopping' && (!state.shop || state.shop.list !== sub)) await loadShop(sub);
       if (SECTIONS[page]) out = renderSection(page, sub);
       else if (page === 'overview' && sub === 'analytics') out = await renderAnalytics();
       else if (page === 'settings') {

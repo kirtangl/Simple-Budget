@@ -1761,3 +1761,182 @@ dialog.loan-modal .error:empty { display: none; }
   .sec-pin.on { position: sticky; top: var(--top-h, 58px); z-index: 7; margin: -16px -16px 0; padding: 16px 16px 16px; background: var(--bg); }
   .sec-pin.on .sec-tabs { margin-bottom: 0; }
 }
+
+/* Shopping */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
+/* The store at the top, the search-or-add box and progress. */
+.shop-store { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.shop-store .grow { flex: 1; min-width: 0; }
+.shop-store p { margin: 0; }
+.store-badge { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border-radius: 10px; background: var(--tag); color: #fff; font-size: 1.25rem; font-weight: 800; }
+.store-kicker { font-size: .7rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.store-title { overflow-wrap: anywhere; }
+.store-title b { font-size: 1.35rem; font-weight: 800; }
+.store-title span { margin-left: 4px; color: var(--muted); }
+.shop-add { display: flex; flex-wrap: wrap; gap: 8px; }
+.shop-search { position: relative; display: flex; align-items: center; flex: 1 1 280px; min-width: 0; }
+.shop-search .combo { flex: 1; min-width: 0; }
+.shop-search input#shop-name { width: 100%; padding-left: 38px; padding-right: 106px; min-height: 48px; }
+.search-ico { position: absolute; left: 13px; top: 50%; z-index: 1; display: flex; color: var(--muted); transform: translateY(-50%); pointer-events: none; }
+/* Clear and Add sit inside the box, with the same gap above, below and to the right. */
+.search-end { position: absolute; top: 8px; right: 8px; bottom: 8px; z-index: 1; display: flex; align-items: stretch; gap: 4px; }
+.search-end button { min-height: 0; padding: 0 14px; }
+.search-end .search-clear { padding: 0 8px; border-color: transparent; background: transparent; color: var(--muted); font-size: .9rem; }
+.search-end .search-clear:hover { color: var(--text); }
+.search-end .search-clear[hidden] { display: none; }
+.shop-item.found, .shop-sec.found > .shop-gtoggle { background: var(--brand-soft); }
+.shop-add > button, button.mini { display: inline-flex; align-items: center; gap: 6px; }
+.shop-add > button { flex: none; margin-left: auto; }
+.shop-progress { display: flex; align-items: center; gap: 12px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); font-size: .82rem; white-space: nowrap; }
+.shop-progress .bar { flex: 1; height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.shop-progress .bar i { display: block; height: 100%; border-radius: inherit; background: var(--brand); }
+/* Best buys, collapse all and the column titles. */
+.shop-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 16px 0 6px; }
+.shop-tools .spacer { flex: 1; }
+.best-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 0; padding: 6px 12px 6px 8px; border-radius: 999px; font-size: .85rem; font-weight: 400; }
+.best-toggle b { font-weight: 700; }
+.best-toggle .muted { margin-left: 4px; font-size: .78rem; }
+.best-toggle .store-dot { margin: 0 0 0 2px; width: 8px; height: 8px; }
+.switch { position: relative; width: 30px; height: 18px; margin-right: 4px; border-radius: 999px; background: var(--line); transition: background .15s; }
+.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--card); box-shadow: 0 1px 2px rgb(0 0 0 / .3); transition: transform .15s; }
+.best-toggle[aria-checked="true"] { border-color: var(--brand); }
+.best-toggle[aria-checked="true"] .switch { background: var(--brand); }
+.best-toggle[aria-checked="true"] .switch::after { transform: translateX(12px); }
+/* One grid for the column titles and every row, so the columns line up across categories. */
+.shop-cols, .shop-item { display: grid; grid-template-columns: 24px minmax(0, 1fr) 170px 112px 84px; column-gap: 12px; align-items: center; }
+.shop-cols { padding: 0 16px 6px; font-size: .68rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.shop-cols > span:nth-child(4) { text-align: center; }
+.shop-cols > span:nth-child(5) { text-align: right; }
+.shop-list { margin-top: 0; }
+/* Each aisle or category folds away, like the expense groups on the Budget. */
+.shop-sec { padding: 0; margin-bottom: 12px; overflow: hidden; }
+.shop-gtoggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 0; padding: 12px 16px; border: 0; border-radius: 0;
+  background: none; box-shadow: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.shop-gtoggle:hover { background: color-mix(in srgb, var(--text) 4%, var(--card)); }
+.shop-gtoggle .g-name { overflow-wrap: anywhere; }
+.shop-gtoggle .g-right { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.g-total { font-size: .95rem; color: var(--text); }
+.g-best-pill { padding: 2px 10px; border: 1px solid color-mix(in srgb, var(--paid) 45%, var(--card)); border-radius: 999px;
+  background: color-mix(in srgb, var(--paid) 10%, var(--card)); color: var(--paid); font-size: .75rem; white-space: nowrap; }
+.shop-sec.unsorted .g-name { color: var(--due); }
+.shop-sec.all-got .g-name { color: var(--muted); }
+.shop-hint { margin: -4px 16px 6px; }
+.shop-rows { list-style: none; margin: 0; padding: 0; }
+.shop-item { padding: 9px 16px; border-top: 1px solid var(--line); }
+.shop-item > input[type="checkbox"] { width: 22px; height: 22px; margin: 0; cursor: pointer; }
+.si-name { min-width: 0; cursor: pointer; }
+.si-name .title { font-weight: 600; overflow-wrap: anywhere; }
+.si-who { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: .8rem; color: var(--muted); }
+.si-qty { display: flex; justify-content: center; }
+.si-total { text-align: right; font-weight: 600; }
+.shop-size { font-weight: 400; font-size: .85em; color: var(--muted); white-space: nowrap; }
+.shop-deal-pill { display: inline-flex; align-items: center; margin-top: 4px; padding: 1px 9px; border: 1px solid color-mix(in srgb, var(--paid) 45%, var(--card)); border-radius: 999px;
+  color: var(--paid); font-size: .75rem; }
+.shop-deal-pill .store-dot { width: 7px; height: 7px; margin-right: 5px; }
+.who-init { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 50%; background: color-mix(in srgb, var(--tag) 55%, var(--card));
+  color: #fff; font-size: .68rem; font-weight: 700; }
+.who-at { display: inline-flex; align-items: center; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.who-at .store-dot { width: 7px; height: 7px; margin-right: 5px; flex: none; }
+.shop-item.got .title { font-weight: 400; color: var(--muted); }
+.shop-item.got .si-total, .shop-item.got .shop-qty { color: var(--muted); font-weight: 400; }
+.shop-item.got > input { opacity: .8; }
+.shop-qty { font-weight: 600; color: var(--brand); min-width: 1.6em; text-align: center; }
+.stepper { display: inline-flex; align-items: center; gap: 6px; }
+.stepper button { min-width: 30px; min-height: 30px; padding: 0; border-radius: 50%; font-size: 1.05rem; line-height: 1; }
+.shop-gothead { padding: 6px 16px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--text) 2%, var(--card)); }
+.shop-gothead button { color: var(--muted); text-decoration: none; }
+.shop-gothead .chev { margin-right: 4px; }
+.shop-nomatch { margin: 0 0 12px; }
+.shop-clear { display: flex; justify-content: flex-end; margin: 0 0 12px; }
+.shop-clear button.danger { background: color-mix(in srgb, var(--danger) 10%, var(--card)); border-color: color-mix(in srgb, var(--danger) 45%, var(--card)); font-weight: 600; }
+.shop-clear button.danger:hover { background: color-mix(in srgb, var(--danger) 16%, var(--card)); }
+.sec-head { display: flex; justify-content: space-between; padding: 0 56px 0 2px; }
+@media (max-width: 720px) {
+  .shop-cols { display: none; }
+  .shop-item { grid-template-columns: 22px minmax(0, 1fr) auto; grid-template-areas: "chk name total" ". who qty"; row-gap: 6px; padding: 10px 14px; }
+  .shop-item > input { grid-area: chk; }
+  .si-name { grid-area: name; }
+  .si-who { grid-area: who; }
+  .si-qty { grid-area: qty; justify-content: flex-end; }
+  .si-total { grid-area: total; }
+  .si-who:empty { display: none; }
+  .shop-item:not(.got) .si-who:empty + .si-qty { grid-column: 2 / 4; }
+  .shop-gtoggle { padding: 12px 14px; flex-wrap: wrap; row-gap: 4px; }
+  .store-title b { font-size: 1.15rem; }
+  .shop-store { align-items: flex-start; }
+  .store-title span { margin-left: 0; }
+  .store-badge { width: 36px; height: 36px; font-size: 1.1rem; }
+  .shop-store > button { padding: 8px 12px; }
+}
+/* The totals under the list. */
+.shop-sum { padding: 18px 20px; }
+.sum-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.35fr); align-items: stretch; }
+.sum-tile { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 4px 18px; border-left: 1px solid var(--line); }
+.sum-tile:first-child { padding-left: 0; border-left: 0; }
+.sum-label { font-size: .85rem; color: color-mix(in srgb, var(--text) 72%, var(--card)); }
+.sum-num { font-size: 1.6rem; font-weight: 700; line-height: 1.2; }
+.sum-sub { font-size: .75rem; color: var(--muted); }
+.sum-sub.warn { color: var(--due); }
+.sum-tile.sum-best { margin-left: 12px; padding: 12px 16px; border: 1px solid color-mix(in srgb, var(--paid) 45%, var(--card)); border-radius: 12px;
+  background: color-mix(in srgb, var(--paid) 10%, var(--card)); }
+.sum-best .sum-num, .sum-best .sum-sub { color: var(--paid); }
+.sum-best-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sum-pill { padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, var(--paid) 22%, var(--card)); color: var(--paid); font-size: .72rem; font-weight: 600; white-space: nowrap; }
+.sum-bar { display: flex; gap: 2px; height: 12px; margin: 18px 0 8px; border-radius: 999px; overflow: hidden; }
+.sum-seg { min-width: 3px; background: var(--seg); }
+.sum-seg.hatch, .sum-key.hatch { background: repeating-linear-gradient(135deg, var(--seg, var(--muted)) 0 3px, color-mix(in srgb, var(--seg, var(--muted)) 30%, var(--card)) 3px 6px); }
+.sum-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .75rem; color: var(--muted); }
+.sum-key { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 2px; background: var(--muted); vertical-align: -1px; }
+.sum-table { margin-top: 14px; }
+.sum-tr { display: grid; grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr)); gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); font-size: .92rem; }
+.sum-tr > span:not(:first-child) { text-align: right; }
+.sum-th { border-top: 0; font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.sum-tt { font-weight: 700; }
+.sum-tr .good { color: var(--paid); }
+.sum-tr .muted { color: var(--muted); }
+@media (max-width: 720px) {
+  .shop-sum { padding: 16px; }
+  .sum-tiles { grid-template-columns: 1fr 1fr; row-gap: 14px; }
+  .sum-tile { padding: 0 0 0 14px; }
+  .sum-tile:nth-child(3) { padding-left: 0; border-left: 0; }
+  .sum-tile.sum-best { grid-column: 1 / -1; margin-left: 0; border-left: 1px solid color-mix(in srgb, var(--paid) 45%, var(--card)); padding: 12px 14px; }
+  .sum-num { font-size: 1.3rem; }
+  .sum-tr { font-size: .82rem; gap: 6px; }
+}
+/* A store or login in its own colour. White text on the colour reads in every theme. */
+.shop-tag { display: inline-block; padding: 0 7px; border-radius: 999px; background: var(--tag); color: #fff; font-size: .75rem; font-weight: 600; line-height: 1.6; }
+.shop-item.got .shop-who { color: var(--muted); }
+.store-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+/* The aisle picker: big enough to tap in a shop. */
+.spot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: 6px; margin: 8px 0 4px; }
+.spot-grid.named { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+.spot-grid.other { margin-top: 12px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.spot-btn { min-height: 44px; padding: 6px; }
+.spot-btn.on { background: var(--brand); border-color: var(--brand); color: var(--on-brand); }
+.spot-btn.add { border-style: dashed; color: var(--muted); }
+/* A location to pick in Change store, with a small bin to remove it. */
+.loc-pick { position: relative; display: flex; }
+.loc-pick .spot-btn { flex: 1; min-width: 0; padding-right: 30px; }
+.loc-del { position: absolute; top: 50%; right: 4px; min-width: 0; min-height: 0; padding: 5px; border: 0; background: transparent; color: var(--muted); transform: translateY(-50%); }
+.loc-del:hover { color: var(--danger); }
+.spot-btn.on + .loc-del { color: var(--on-brand); }
+.fields.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 560px) { .fields.three { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* The product list: buttons under their aisles. */
+.prod-tools { display: flex; gap: 8px; align-items: center; }
+.prod-tools input { flex: 1; min-width: 0; }
+#prod-body { max-height: min(60vh, 560px); overflow-y: auto; }
+.prod-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; margin: 6px 0 4px; }
+.prod-btn { position: relative; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; min-height: 52px;
+  padding: 6px 10px; text-align: left; font-weight: 600; }
+.prod-name { overflow-wrap: anywhere; padding-right: 22px; }
+.prod-meta { font-size: .75rem; font-weight: 400; color: var(--muted); }
+.prod-btn.on { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 12%, var(--card)); }
+.prod-badge { position: absolute; top: 4px; right: 6px; font-size: .75rem; color: var(--brand); }
+.store-head { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+.store-head h3.form-section { flex: 1; min-width: 0; margin: 0; padding: 0; border: 0; }
+.store-new { margin-top: 16px; }
+.sec-list > li { gap: 8px; }
+.sec-list input { flex: 1; min-width: 0; }
+.sec-list input.sec-pos { flex: none; width: 72px; }

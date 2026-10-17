@@ -2,6 +2,7 @@
 
 const express = require('express');
 const { transaction, getSetting, setSetting, fillAccountColours } = require('./db');
+const { exportShop, importShop } = require('./shop');
 const budget = require('./budget');
 
 class BadRequest extends Error {}
@@ -906,7 +907,8 @@ function createApi(db) {
 // A backup is a JSON file:
 //   { app: 'simple-budget', format_version, exported_at, settings: {...},
 //     accounts: [...], payees: [...], categories: [{..., subcategories: [...]}],
-//     expenses: [...], incomes: [...], goals: [...], goal_groups: [...], loans: [...] }
+//     expenses: [...], incomes: [...], goals: [...], goal_groups: [...], loans: [...],
+//     shopping: { stores, locations, sections, products, prices, spots, items } }
 //
 // To keep old backups restorable as the app grows:
 //   - Bump BACKUP_FORMAT_VERSION when the shape of the file changes, and add a
@@ -948,6 +950,8 @@ function exportBackup(db) {
     // Who made each change isn't kept: logins aren't part of a backup.
     amount_history: db.prepare('SELECT kind, item_id, field, on_date, value, frequency, before_value FROM amount_history ORDER BY id').all()
       .map((row) => ({ ...row })),
+    // The shopping list stands apart from the budget, so it's restored whole (src/shop.js).
+    shopping: exportShop(db),
   };
 }
 
@@ -1141,6 +1145,14 @@ function importBackup(db, input) {
     if (budget.HELD_BASES.includes(s.held_basis)) setSetting(db, 'held_basis', s.held_basis);
     const days = Number(s.pay_custom_days);
     if (Number.isInteger(days) && days >= 1 && days <= 366) setSetting(db, 'pay_custom_days', String(days));
+
+    if (data.shopping && typeof data.shopping === 'object') {
+      const shop = importShop(db, data.shopping);
+      if (shop) {
+        counts.shop_products = shop.products;
+        if (shop.skipped) warnings.push(`Left out ${shop.skipped} shopping list ${shop.skipped === 1 ? 'entry' : 'entries'} that didn't fit.`);
+      }
+    }
   });
 
   return { ok: true, format_version: Number(input.format_version) || 1, counts, warnings };
