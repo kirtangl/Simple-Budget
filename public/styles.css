@@ -1777,11 +1777,17 @@ button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
 .shop-add { display: flex; flex-wrap: wrap; gap: 8px; }
 .shop-search { position: relative; display: flex; align-items: center; flex: 1 1 280px; min-width: 0; }
 .shop-search .combo { flex: 1; min-width: 0; }
-.shop-search input#shop-name { width: 100%; padding-left: 38px; padding-right: 76px; }
+.shop-search input#shop-name { width: 100%; padding-left: 38px; padding-right: 100px; }
 .search-ico { position: absolute; left: 13px; top: 50%; z-index: 1; display: flex; color: var(--muted); transform: translateY(-50%); pointer-events: none; }
-.shop-search button[type="submit"] { position: absolute; right: 5px; top: 50%; z-index: 1; min-height: 0; padding: 6px 14px; transform: translateY(-50%); }
+/* Clear and Add sit inside the box, with the same gap above, below and to the right. */
+.search-end { position: absolute; top: 5px; right: 5px; bottom: 5px; z-index: 1; display: flex; align-items: stretch; gap: 4px; }
+.search-end button { min-height: 0; padding: 0 14px; }
+.search-end .search-clear { padding: 0 8px; border-color: transparent; background: transparent; color: var(--muted); font-size: .9rem; }
+.search-end .search-clear:hover { color: var(--text); }
+.search-end .search-clear[hidden] { display: none; }
+.shop-item.found, .shop-sec.found > .shop-gtoggle { background: var(--brand-soft); }
 .shop-add > button, button.mini { display: inline-flex; align-items: center; gap: 6px; }
-.shop-add > button { flex: none; }
+.shop-add > button { flex: none; margin-left: auto; }
 .shop-progress { display: flex; align-items: center; gap: 12px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); font-size: .82rem; white-space: nowrap; }
 .shop-progress .bar { flex: 1; height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
 .shop-progress .bar i { display: block; height: 100%; border-radius: inherit; background: var(--brand); }
@@ -1858,7 +1864,9 @@ button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
   .shop-item:not(.got) .si-who:empty + .si-qty { grid-column: 2 / 4; }
   .shop-gtoggle { padding: 12px 14px; flex-wrap: wrap; row-gap: 4px; }
   .store-title b { font-size: 1.15rem; }
-  .store-badge { width: 40px; height: 40px; }
+  .shop-store { align-items: flex-start; }
+  .store-title span { margin-left: 0; }
+  .store-badge { width: 36px; height: 36px; font-size: 1.1rem; }
   .shop-store > button { padding: 8px 12px; }
 }
 /* The totals under the list. */

@@ -4345,7 +4345,7 @@ sudo docker compose up -d --build</pre>`;
       const cheaper = best && best.store !== store ? best : null;
       const got = Boolean(it.done_at);
       const at = got && it.done_store_id;
-      return html`<li class="shop-item ${got ? 'got' : ''}" data-name="${productLabel(p).toLowerCase()}">
+      return html`<li class="shop-item ${got ? 'got' : ''}" data-name="${productLabel(p).toLowerCase()}" data-pname="${p.name.toLowerCase()}">
         <input type="checkbox" data-action="shop-tick" data-id="${it.id}" ${raw(got ? 'checked' : '')} aria-label="${got ? 'Not got' : 'Got'} ${p.name}">
         <div class="si-name" data-action="shop-item" data-id="${it.id}">
           <div class="title">${p.name}${sizeLabel(p) ? html` <span class="shop-size">${sizeLabel(p)}</span>` : ''}</div>
@@ -4371,7 +4371,9 @@ sudo docker compose up -d --build</pre>`;
       const got = g.rows.filter((r) => r.it.done_at).sort((a, b) => a.p.name.localeCompare(b.p.name));
       const sub = g.rows.reduce((t, r) => t + (rowCost(r, store) ?? 0), 0);
       const optimal = g.rows.reduce((t, r) => t + (rowBest(r, store) ?? 0), 0);
-      return html`<section class="card shop-sec ${shut ? 'shut' : ''} ${g.key === 'unsorted' ? 'unsorted' : ''} ${todo.length ? '' : 'all-got'}">
+      // A folded section has no rows on the page, so the search reads its names from here.
+      const names = shut ? { names: g.rows.map((r) => productLabel(r.p).toLowerCase()).join('|'), pnames: g.rows.map((r) => r.p.name.toLowerCase()).join('|') } : {};
+      return html`<section class="card shop-sec ${shut ? 'shut' : ''} ${g.key === 'unsorted' ? 'unsorted' : ''} ${todo.length ? '' : 'all-got'}" data-names="${names.names ?? ''}" data-pnames="${names.pnames ?? ''}">
         <button type="button" class="shop-gtoggle" data-action="shop-fold" data-key="${key}" aria-expanded="${shut ? 'false' : 'true'}">
           <span class="chev">${shut ? '▸' : '▾'}</span><span class="g-name">${g.label}</span>
           <span class="g-count">${todo.length ? `${todo.length} left` : 'All got'}</span>
@@ -4404,7 +4406,10 @@ sudo docker compose up -d --build</pre>`;
             <span class="search-ico">${raw(SEARCH_ICON)}</span>
             <label for="shop-name" class="sr-only">Search or add an item</label>
             ${combo({ id: 'shop-name', name: 'name', value: '', options: [...new Set(shop.products.map((p) => p.name))], placeholder: 'Search or add an item, like Milk' })}
-            <button type="submit" class="primary">Add</button>
+            <span class="search-end">
+              <button type="button" class="search-clear" data-action="shop-search-clear" aria-label="Clear the search" hidden>✕</button>
+              <button type="submit" class="primary">Add</button>
+            </span>
           </form>
           <button type="button" data-action="shop-products">${raw(LIST_ICON)} Saved products</button>
         </div>
@@ -4422,21 +4427,41 @@ sudo docker compose up -d --build</pre>`;
   }
 
   // Typing in the box filters the list as you go; Add puts it on the list.
+  // Typing an item's full name highlights it on the list and scrolls to it.
+  let shopFound = null;
   function shopFilter(q) {
     const words = q.trim().toLowerCase();
     let any = false;
+    let found = null;
     document.querySelectorAll('.shop-sec').forEach((sec) => {
       let seen = 0;
+      if (sec.classList.contains('shut')) {
+        const same = Boolean(words) && sec.dataset.pnames.split('|').includes(words);
+        seen = !words || same || sec.dataset.names.split('|').some((n) => n.includes(words)) ? 1 : 0;
+        sec.classList.toggle('found', same);
+        if (same && !found) found = sec;
+      }
       sec.querySelectorAll('.shop-item').forEach((li) => {
         const hit = !words || li.dataset.name.includes(words);
+        const same = Boolean(words) && li.dataset.pname === words;
         li.hidden = !hit;
+        li.classList.toggle('found', same);
+        if (same && !found) found = li;
         if (hit) seen += 1;
       });
-      sec.hidden = Boolean(words) && !seen && !sec.classList.contains('shut');
+      sec.hidden = Boolean(words) && !seen;
       if (seen) any = true;
     });
     const none = document.querySelector('.shop-nomatch');
     if (none) none.hidden = !words || any;
+    const clear = document.querySelector('.search-clear');
+    if (clear) clear.hidden = !q;
+    if (found && found !== shopFound) {
+      // It's already on the list, so close the suggestions that would cover it.
+      const input = document.getElementById('shop-name');
+      setTimeout(() => { if (input) closeCombo(input); found.scrollIntoView({ block: 'center', behavior: 'smooth' }); });
+    }
+    shopFound = found;
   }
   document.addEventListener('input', (ev) => { if (ev.target.id === 'shop-name') shopFilter(ev.target.value); });
 
@@ -4722,6 +4747,13 @@ sudo docker compose up -d --build</pre>`;
         await api('PATCH', `/shop/items/${it.id}`, { qty });
       }
       await shopReload();
+    },
+    'shop-search-clear': () => {
+      const input = document.getElementById('shop-name');
+      if (!input) return;
+      input.value = '';
+      shopFilter('');
+      input.focus();
     },
     'shop-best': () => { remember('shop:best', bestOnly() ? null : '1'); render(); },
     'shop-fold-all': (el) => {
