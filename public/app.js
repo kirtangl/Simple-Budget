@@ -4299,21 +4299,43 @@ sudo docker compose up -d --build</pre>`;
 
   const shopCollapsed = () => { try { return new Set(JSON.parse(recall('shop:collapsed') || '[]')); } catch { return new Set(); } };
 
+  // Best buy here: as cheap here as anywhere, or with no price anywhere yet (so nothing is hidden
+  // that might be cheapest here).
+  function bestHere(p, store) {
+    if (itemCost(p, store) == null) return state.shop.stores.every((s) => itemCost(p, s.id) == null);
+    return bestPrice(p, store).store === store;
+  }
+  const bestOnly = () => recall('shop:best') === '1';
+  const SEARCH_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m20 20-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+  const LIST_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+
   function renderShopping() {
     const shop = state.shop;
     const loc = shopLocation();
     const store = loc ? loc.store_id : null;
+    const money2 = (c) => moneyFmt.format((c || 0) / 100);
     const rows = shop.items.map((it) => ({ it, p: shopProduct(it.product_id) })).filter((r) => r.p);
-    const groups = groupBy(rows, loc, (r) => r.p);
+    const filter = store && bestOnly();
+    const left = rows.filter((r) => !r.it.done_at);
+    const bestCount = store ? left.filter((r) => bestHere(r.p, store)).length : 0;
+    const shown = filter ? rows.filter((r) => r.it.done_at || bestHere(r.p, store)) : rows;
+    const groups = groupBy(shown, loc, (r) => r.p);
     const collapsed = shopCollapsed();
-    const done = rows.filter((r) => r.it.done_at).length;
+    const keyOf = (g) => `${loc ? loc.id : 0}:${g.key}`;
+    const anyShut = groups.some((g) => collapsed.has(keyOf(g)));
+    const done = rows.length - left.length;
 
-    const where = shop.locations.length
-      ? html`<div class="shop-where">
-          <div class="grow"><div class="muted small">Shopping at</div><h2>${loc ? html`${storeDot(loc.store_id)}${locLabel(loc)}` : 'Choose a store'}</h2></div>
-          <button type="button" class="linkish small" data-action="shop-change">${loc ? 'Change' : 'Choose'}</button></div>`
-      : html`<div class="shop-where"><p class="muted small grow">Add the stores you shop at to sort the list by aisle and compare prices.</p>
-          <button type="button" class="primary" data-action="shop-stores">+ Add a store location</button></div>`;
+    const head = loc
+      ? html`<div class="shop-store">
+          <span class="store-badge" style="--tag:${storeColour(store)}" aria-hidden="true">${storeName(store).slice(0, 1).toUpperCase()}</span>
+          <div class="grow"><div class="store-kicker">Shopping at</div>
+            <div class="store-title"><b>${storeName(store)}</b> <span>${loc.name}</span></div></div>
+          <button type="button" data-action="shop-change">Change store</button></div>`
+      : shop.locations.length
+        ? html`<div class="shop-store"><div class="grow"><div class="store-kicker">Shopping at</div><div class="store-title"><b>Choose a store</b></div></div>
+            <button type="button" class="primary" data-action="shop-change">Choose store</button></div>`
+        : html`<div class="shop-store"><p class="muted small grow">Add the stores you shop at to sort the list by aisle and compare prices.</p>
+            <button type="button" class="primary" data-action="shop-stores">+ Add a store location</button></div>`;
 
     const row = ({ it, p }) => {
       const g = shopSpot(p, loc);
@@ -4322,66 +4344,101 @@ sudo docker compose up -d --build</pre>`;
       const best = store && price != null ? bestPrice(p, store) : null;
       const cheaper = best && best.store !== store ? best : null;
       const got = Boolean(it.done_at);
-      return html`<li class="shop-item ${got ? 'got' : ''}">
+      const at = got && it.done_store_id;
+      return html`<li class="shop-item ${got ? 'got' : ''}" data-name="${productLabel(p).toLowerCase()}">
         <input type="checkbox" data-action="shop-tick" data-id="${it.id}" ${raw(got ? 'checked' : '')} aria-label="${got ? 'Not got' : 'Got'} ${p.name}">
-        <div class="grow" data-action="shop-item" data-id="${it.id}">
+        <div class="si-name" data-action="shop-item" data-id="${it.id}">
           <div class="title">${p.name}${sizeLabel(p) ? html` <span class="shop-size">${sizeLabel(p)}</span>` : ''}</div>
-          ${got ? html`<div class="meta shop-who" title="Checked off${it.done_by_name ? ` by ${it.done_by_name}` : ''}${it.done_store_id ? `, bought at ${storeName(it.done_store_id)}` : ''}">${it.done_by_name ? shopTag(it.done_by_name, it.done_by_colour) : 'Got'}${it.done_store_id ? html` – ${shopTag(storeName(it.done_store_id), storeColour(it.done_store_id))}` : ''}</div>`
-            : cheaper ? html`<div class="meta shop-deal">${money(cheaper.cents)} at ${storeName(cheaper.store)} · save ${money((price - cheaper.cents) * it.qty)}</div>` : ''}
+          ${!got && cheaper ? html`<span class="shop-deal-pill">${storeDot(cheaper.store)}${storeName(cheaper.store)} ${money2(cheaper.cents)} · save ${money((price - cheaper.cents) * it.qty)}</span>` : ''}
         </div>
-        <div class="shop-ctrl">
-          ${loc && !got && g.key === 'unsorted' ? html`<button type="button" class="mini" data-action="shop-spot" data-id="${p.id}">Set aisle</button>` : ''}
-          ${got ? html`<span class="shop-qty">×${it.qty}</span>` : html`<span class="stepper">
-            <button type="button" data-action="shop-qty" data-id="${it.id}" data-step="-1" aria-label="One less ${p.name}">−</button>
-            <span class="shop-qty" aria-label="${it.qty} of ${p.name}">×${it.qty}</span>
-            <button type="button" data-action="shop-qty" data-id="${it.id}" data-step="1" aria-label="One more ${p.name}">+</button></span>`}
-          <span class="num shop-price">${cost != null ? money(cost) : ''}</span>
-        </div>
+        <div class="si-who">${got ? html`${it.done_by_name ? html`<span class="who-init" style="--tag:${it.done_by_colour || 'var(--brand)'}" title="Checked off by ${it.done_by_name}">${it.done_by_name.slice(0, 1).toUpperCase()}</span>` : ''}
+          ${at ? html`<span class="who-at">${storeDot(at)}${storeName(at)}</span>` : ''}`
+          : loc && g.key === 'unsorted' ? html`<button type="button" class="linkish small" data-action="shop-spot" data-id="${p.id}">Set aisle</button>` : ''}</div>
+        <div class="si-qty">${got ? html`<span class="shop-qty">×${it.qty}</span>` : html`<span class="stepper">
+          <button type="button" data-action="shop-qty" data-id="${it.id}" data-step="-1" aria-label="One less ${p.name}">−</button>
+          <span class="shop-qty" aria-label="${it.qty} of ${p.name}">${it.qty}</span>
+          <button type="button" data-action="shop-qty" data-id="${it.id}" data-step="1" aria-label="One more ${p.name}">+</button></span>`}</div>
+        <div class="si-total num">${cost != null ? money2(cost) : got ? '—'
+          : html`<button type="button" class="linkish small" data-action="shop-item" data-id="${it.id}">+ price</button>`}</div>
       </li>`;
     };
 
     const section = (g) => {
-      const key = `${loc ? loc.id : 0}:${g.key}`;
+      const key = keyOf(g);
       const shut = collapsed.has(key);
+      const gotShut = collapsed.has(`${key}:got`);
       const todo = g.rows.filter((r) => !r.it.done_at).sort((a, b) => a.p.name.localeCompare(b.p.name));
       const got = g.rows.filter((r) => r.it.done_at).sort((a, b) => a.p.name.localeCompare(b.p.name));
       const sub = g.rows.reduce((t, r) => t + (rowCost(r, store) ?? 0), 0);
       const optimal = g.rows.reduce((t, r) => t + (rowBest(r, store) ?? 0), 0);
       return html`<section class="card shop-sec ${shut ? 'shut' : ''} ${g.key === 'unsorted' ? 'unsorted' : ''} ${todo.length ? '' : 'all-got'}">
-        <div class="shop-ghead">
-          <button type="button" class="shop-gtoggle" data-action="shop-fold" data-key="${key}" aria-expanded="${shut ? 'false' : 'true'}">
-            <span class="chev">${shut ? '▸' : '▾'}</span><span class="g-name">${g.label}</span>
-            <span class="g-count">${todo.length ? `${todo.length} to get` : 'All got'}</span>
-            ${sub ? html`<span class="g-right num">${money(sub)}${optimal < sub ? html`<span class="g-sep" aria-hidden="true"></span><span class="g-best" title="Buying each where it's cheapest">(${money(optimal)})</span>` : ''}</span>` : ''}</button>
-          ${g.section ? html`<button type="button" class="linkish small" data-action="shop-section-edit" data-id="${g.section.id}" aria-label="Edit ${g.label}">Edit</button>` : ''}
-        </div>
+        <button type="button" class="shop-gtoggle" data-action="shop-fold" data-key="${key}" aria-expanded="${shut ? 'false' : 'true'}">
+          <span class="chev">${shut ? '▸' : '▾'}</span><span class="g-name">${g.label}</span>
+          <span class="g-count">${todo.length ? `${todo.length} left` : 'All got'}</span>
+          <span class="g-right">${optimal < sub ? html`<span class="g-best-pill">Cheapest <b>${money2(optimal)}</b> · save ${money(sub - optimal)}</span>` : ''}
+            <b class="num g-total">${sub ? money2(sub) : '—'}</b></span></button>
         ${shut ? '' : html`
           ${g.key === 'unsorted' && loc && todo.length ? html`<p class="muted small shop-hint">Set where these are at ${locLabel(loc)} and they'll be sorted from now on.</p>` : ''}
-          <ul class="list shop-rows">${todo.map(row)}
-            ${got.length ? html`<li class="shop-sep" aria-hidden="true"><span>Got</span></li>${got.map(row)}` : ''}</ul>`}
+          <ul class="shop-rows">${todo.map(row)}
+            ${got.length ? html`<li class="shop-gothead"><button type="button" class="linkish small" data-action="shop-fold" data-key="${key}:got" aria-expanded="${gotShut ? 'false' : 'true'}">
+              <span class="chev">${gotShut ? '▸' : '▾'}</span>Got ${got.length}</button></li>${gotShut ? '' : got.map(row)}` : ''}</ul>`}
       </section>`;
     };
+
+    const tools = rows.length ? html`<div class="shop-tools">
+        ${store ? html`<button type="button" class="best-toggle" role="switch" aria-checked="${filter ? 'true' : 'false'}" data-action="shop-best">
+          <span class="switch" aria-hidden="true"></span>Best buys at ${storeDot(store)}<b>${storeName(store)}</b><span class="muted">${bestCount} of ${left.length}</span></button>` : ''}
+        <span class="spacer"></span>
+        ${groups.length ? html`<button type="button" class="linkish small" data-action="shop-fold-all" data-open="${anyShut ? '1' : ''}">${anyShut ? 'Expand all' : 'Collapse all'}</button>` : ''}
+        ${loc ? html`<button type="button" class="mini" data-action="shop-sections" data-id="${loc.id}">${raw(LIST_ICON)} Edit categories</button>` : ''}
+      </div>
+      <div class="shop-cols" aria-hidden="true"><span></span><span></span><span>Got by · at</span><span>Qty</span><span>Total</span></div>` : '';
 
     const totals = rows.length ? shopSummary(shopTotals(rows, store), store) : '';
 
     return html`
       <div class="card shop-top">
-        ${where}
+        ${head}
         <div class="shop-add">
-          <form id="shop-add" autocomplete="off">
-            <label for="shop-name" class="sr-only">Add an item</label>
-            ${combo({ id: 'shop-name', name: 'name', value: '', options: [...new Set(shop.products.map((p) => p.name))], placeholder: 'Add an item, like Milk' })}
+          <form id="shop-add" class="shop-search" autocomplete="off">
+            <span class="search-ico">${raw(SEARCH_ICON)}</span>
+            <label for="shop-name" class="sr-only">Search or add an item</label>
+            ${combo({ id: 'shop-name', name: 'name', value: '', options: [...new Set(shop.products.map((p) => p.name))], placeholder: 'Search or add an item, like Milk' })}
             <button type="submit" class="primary">Add</button>
           </form>
-          <button type="button" data-action="shop-products">Product list</button>
+          <button type="button" data-action="shop-products">${raw(LIST_ICON)} Saved products</button>
         </div>
+        ${rows.length ? html`<div class="shop-progress"><span><b>${done} of ${rows.length}</b> got</span>
+          <span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="${rows.length}" aria-valuenow="${done}"><i style="width:${Math.round((done / rows.length) * 100)}%"></i></span></div>` : ''}
       </div>
-      ${rows.length ? html`<div class="shop-list">${groups.map(section)}</div>
-        ${done ? html`<div class="shop-clear"><button type="button" data-action="shop-clear">Clear ${done} ticked ${done === 1 ? 'item' : 'items'}</button></div>` : ''}
+      ${tools}
+      ${rows.length ? html`<div class="shop-list">${groups.length ? groups.map(section)
+          : html`<div class="card"><p class="empty">Nothing left that's cheapest at ${storeName(store)}. Turn off Best buys to see everything.</p></div>`}</div>
+        <p class="empty shop-nomatch" hidden>Nothing on the list matches. Press Add to add it.</p>
+        ${done ? html`<div class="shop-clear"><button type="button" class="danger" data-action="shop-clear">Clear ${done} ticked ${done === 1 ? 'item' : 'items'}</button></div>` : ''}
         ${totals}`
-        : html`<div class="card"><p class="empty">Nothing on this list. Add an item above, or pick from the product list.</p></div>`}
-      <p class="tab-hint">Tick things off as they go in the trolley. They drop to the bottom of their section until you clear them, and stay in the product list for next time.</p>`;
+        : html`<div class="card"><p class="empty">Nothing on this list. Add an item above, or pick from your saved products.</p></div>`}
+      <p class="tab-hint">Tick things off as they go in the trolley. They drop to the bottom of their category until you clear them, and stay in Saved products for next time.</p>`;
   }
+
+  // Typing in the box filters the list as you go; Add puts it on the list.
+  function shopFilter(q) {
+    const words = q.trim().toLowerCase();
+    let any = false;
+    document.querySelectorAll('.shop-sec').forEach((sec) => {
+      let seen = 0;
+      sec.querySelectorAll('.shop-item').forEach((li) => {
+        const hit = !words || li.dataset.name.includes(words);
+        li.hidden = !hit;
+        if (hit) seen += 1;
+      });
+      sec.hidden = Boolean(words) && !seen && !sec.classList.contains('shut');
+      if (seen) any = true;
+    });
+    const none = document.querySelector('.shop-nomatch');
+    if (none) none.hidden = !words || any;
+  }
+  document.addEventListener('input', (ev) => { if (ev.target.id === 'shop-name') shopFilter(ev.target.value); });
 
   async function shopAdd(name) {
     if (!name) return;
@@ -4457,8 +4514,8 @@ sudo docker compose up -d --build</pre>`;
       title: `Where's ${p.name}?`,
       body: html`<p class="muted small">At ${locLabel(loc)}. It's remembered for this store only.</p>
         <h3 class="form-section">Aisle</h3><div class="spot-grid">${aisles}</div>
-        <h3 class="form-section">Section</h3><div class="spot-grid named">${sectionsAt(loc.id).map((s) => btn({ section: s.id }, s.name))}
-          <button type="button" class="spot-btn add" data-action="shop-section-new" data-id="${loc.id}">+ Section</button></div>
+        <h3 class="form-section">Category</h3><div class="spot-grid named">${sectionsAt(loc.id).map((s) => btn({ section: s.id }, s.name))}
+          <button type="button" class="spot-btn add" data-action="shop-section-new" data-id="${loc.id}">+ Category</button></div>
         <div class="spot-grid named other">${btn({ missing: true }, `Not sold at ${storeName(loc.store_id)}`)}${spot ? btn({}, 'Unsorted') : ''}</div>`,
       noActions: true,
       afterRender: (form) => {
@@ -4479,7 +4536,7 @@ sudo docker compose up -d --build</pre>`;
   }
 
   // A product: its name, size, a price at each store, and where it is here. Opened from the list
-  // (with how many, and taking it off), or from the product list (with forgetting it).
+  // (with how many, and taking it off), or from Saved products (with forgetting it).
   function shopProductForm(p, { item = null, back = null } = {}) {
     const loc = shopLocation();
     const spot = loc ? shopSpot(p, loc) : null;
@@ -4546,9 +4603,9 @@ sudo docker compose up -d --build</pre>`;
     };
     const editing = () => Boolean(state.productEdit);
     openForm({
-      title: 'Product list',
+      title: 'Saved products',
       body: html`<div class="prod-tools">
-          <label for="prod-q" class="sr-only">Search the product list</label>
+          <label for="prod-q" class="sr-only">Search saved products</label>
           <input id="prod-q" type="search" placeholder="Search" value="${state.productQuery || ''}" autocomplete="off">
           <button type="button" class="mini ${editing() ? 'primary' : ''}" id="prod-edit" aria-pressed="${editing() ? 'true' : 'false'}">${editing() ? 'Done editing' : 'Edit'}</button>
         </div>
@@ -4586,7 +4643,7 @@ sudo docker compose up -d --build</pre>`;
               <button type="button" class="mini" data-action="shop-store-edit" data-id="${s.id}">Edit</button>
               <button type="button" class="icon ghost" data-action="shop-store-delete" data-id="${s.id}" aria-label="Remove ${s.name}" title="Remove">${BIN_ICON}</button></div>
             ${list.length ? html`<ul class="list">${list.map((l) => html`<li><div class="grow"><div class="title">${l.name}</div></div>
-              <button type="button" class="mini" data-action="shop-sections" data-id="${l.id}">Sections</button>
+              <button type="button" class="mini" data-action="shop-sections" data-id="${l.id}">Categories</button>
               <button type="button" class="mini" data-action="shop-loc-rename" data-id="${l.id}">Rename</button>
               <button type="button" class="icon ghost" data-action="shop-loc-delete" data-id="${l.id}" aria-label="Remove ${locLabel(l)}" title="Remove">${BIN_ICON}</button></li>`)}</ul>`
               : ''}
@@ -4596,7 +4653,7 @@ sudo docker compose up -d --build</pre>`;
     });
   }
 
-  const ORDER_HELP = 'The order puts a section among the aisles: 0.1 to 0.9 come before Aisle 1, and 21 comes after Aisle 20. It isn\'t shown on the list.';
+  const ORDER_HELP = 'The order puts a category among the aisles: 0.1 to 0.9 come before Aisle 1, and 21 comes after Aisle 20. It isn\'t shown on the list.';
   function orderVal(s, name) {
     const n = Number(s);
     if (s === '' || !Number.isFinite(n) || n < 0 || n > 99 || Math.round(n * 100) !== n * 100) throw new Error(`The order for ${name} should be a number from 0 to 99, like 3 or 0.2.`);
@@ -4609,42 +4666,22 @@ sudo docker compose up -d --build</pre>`;
     if (!loc) return shopStores();
     const list = sectionsAt(locId);
     openForm({
-      title: `Sections at ${locLabel(loc)}`,
+      title: `Edit categories at ${locLabel(loc)}`,
       body: html`<p class="muted small">${ORDER_HELP}</p>
+        <div class="sec-head muted small"><span>Name</span><span>Order</span></div>
         <ul class="list sec-list">${list.map((s) => html`<li>
-          <input name="name-${s.id}" value="${s.name}" aria-label="Section name">
+          <input name="name-${s.id}" value="${s.name}" aria-label="Category name">
           <input name="pos-${s.id}" inputmode="decimal" value="${s.position}" aria-label="Order of ${s.name}" class="sec-pos">
           <button type="button" class="icon ghost" data-action="shop-section-delete" data-id="${s.id}" aria-label="Remove ${s.name}" title="Remove">${BIN_ICON}</button></li>`)}</ul>
-        <button type="button" class="mini" data-action="shop-section-new" data-id="${loc.id}">+ Add a section</button>`,
+        <button type="button" class="mini" data-action="shop-section-new" data-id="${loc.id}">+ Add a category</button>`,
       lead: html`<button type="button" data-action="shop-stores">Back</button>`,
       onSave: async (form) => {
         for (const s of list) {
           const name = val(form, `name-${s.id}`);
-          if (!name) throw new Error('Every section needs a name.');
+          if (!name) throw new Error('Every category needs a name.');
           const position = orderVal(val(form, `pos-${s.id}`), name);
           if (name !== s.name || position !== s.position) await api('PATCH', `/shop/sections/${s.id}`, { name, position });
         }
-        await loadShop(state.shop.list);
-      },
-    });
-  }
-
-  // One section, from the Edit button on its heading in the list.
-  function shopSectionForm(s) {
-    const loc = state.shop.locations.find((l) => l.id === s.location_id);
-    openForm({
-      title: `Edit ${s.name}`,
-      body: html`<p class="muted small">At ${loc ? locLabel(loc) : 'this store'}. ${ORDER_HELP}</p>
-        <div class="fields">
-          <div class="field"><label for="sec-name">Name</label><input id="sec-name" name="name" value="${s.name}" required></div>
-          <div class="field"><label for="sec-pos">Order</label><input id="sec-pos" name="position" inputmode="decimal" value="${s.position}"></div>
-        </div>
-        <p class="muted small">Here now: ${sectionsAt(s.location_id).map((x) => `${x.name} ${x.position}`).join(', ')}</p>`,
-      lead: html`<button type="button" class="danger" data-action="shop-section-delete" data-id="${s.id}">Remove</button>`,
-      onSave: async (form) => {
-        const name = val(form, 'name');
-        if (!name) throw new Error('The section needs a name.');
-        await api('PATCH', `/shop/sections/${s.id}`, { name, position: orderVal(val(form, 'position'), name) });
         await loadShop(state.shop.list);
       },
     });
@@ -4657,6 +4694,19 @@ sudo docker compose up -d --build</pre>`;
       el.closest('li')?.classList.toggle('got', !it.done_at);
       await api('PATCH', `/shop/items/${it.id}`, { done: !it.done_at, store_id: shopLocation()?.store_id ?? null });
       await shopReload();
+      // That was the last one: offer to clear the list for next time.
+      if (!it.done_at && state.shop.items.length && state.shop.items.every((x) => x.done_at)) {
+        const ok = await askChoice({ title: 'Complete shopping list?',
+          text: html`<p>Everything on this list is ticked off.</p>
+            <p><b>Complete</b> clears the list, ready for next time. Everything stays in Saved products.</p>
+            <p><b>Keep</b> leaves the list as it is. You can clear it later with the <b>Clear ticked items</b> button at the bottom.</p>`,
+          choices: [{ label: 'Keep', value: 'no' }, { label: 'Complete', value: 'yes', primary: true }] });
+        if (ok === 'yes') {
+          await api('POST', '/shop/items/clear', { list: state.shop.list });
+          await shopReload();
+          toast('Shopping list complete');
+        }
+      }
     },
     'shop-qty': async (el) => {
       const it = state.shop.items.find((x) => x.id === Number(el.dataset.id));
@@ -4664,7 +4714,7 @@ sudo docker compose up -d --build</pre>`;
       const qty = it.qty + Number(el.dataset.step);
       if (qty < 1) {
         const p = shopProduct(it.product_id);
-        const ok = await askChoice({ title: 'Take this off the list?', text: html`<p><b>${p ? productLabel(p) : 'This item'}</b></p><p>It stays in the product list for next time.</p>`,
+        const ok = await askChoice({ title: 'Take this off the list?', text: html`<p><b>${p ? productLabel(p) : 'This item'}</b></p><p>It stays in Saved products for next time.</p>`,
           choices: [{ label: 'Keep it', value: 'no' }, { label: 'Take off', value: 'yes', danger: true }] });
         if (ok !== 'yes') return;
         await api('DELETE', `/shop/items/${it.id}`);
@@ -4672,6 +4722,14 @@ sudo docker compose up -d --build</pre>`;
         await api('PATCH', `/shop/items/${it.id}`, { qty });
       }
       await shopReload();
+    },
+    'shop-best': () => { remember('shop:best', bestOnly() ? null : '1'); render(); },
+    'shop-fold-all': (el) => {
+      const set = shopCollapsed();
+      const keys = [...document.querySelectorAll('.shop-gtoggle[data-key]')].map((b) => b.dataset.key);
+      for (const k of keys) { if (el.dataset.open) set.delete(k); else set.add(k); }
+      remember('shop:collapsed', JSON.stringify([...set]));
+      render();
     },
     'shop-fold': (el) => {
       const set = shopCollapsed();
@@ -4684,7 +4742,7 @@ sudo docker compose up -d --build</pre>`;
       const got = list.filter((it) => it.done_at).length;
       const left = list.length - got;
       const ok = await askChoice({ title: 'Clear ticked items?',
-        text: html`<p>${got} ticked ${got === 1 ? 'item comes' : 'items come'} off the list.${left ? ` The ${left} not ticked stay${left === 1 ? 's' : ''} on it for next time.` : ''}</p><p>They stay in the product list.</p>`,
+        text: html`<p>${got} ticked ${got === 1 ? 'item comes' : 'items come'} off the list.${left ? ` The ${left} not ticked stay${left === 1 ? 's' : ''} on it for next time.` : ''}</p><p>They stay in Saved products.</p>`,
         choices: [{ label: 'Keep them', value: 'no' }, { label: 'Clear', value: 'yes', primary: true }] });
       if (ok !== 'yes') return;
       await api('POST', '/shop/items/clear', { list: state.shop.list });
@@ -4721,7 +4779,6 @@ sudo docker compose up -d --build</pre>`;
     'shop-change': () => shopChange(),
     'shop-stores': () => shopStores(),
     'shop-sections': (el) => shopSections(Number(el.dataset.id)),
-    'shop-section-edit': (el) => { const s = state.shop.sections.find((x) => x.id === Number(el.dataset.id)); if (s) shopSectionForm(s); },
     'shop-store-new': async () => {
       const name = await askText('Add a store', 'Name, like IGA');
       if (!name) return;
@@ -4785,7 +4842,7 @@ sudo docker compose up -d --build</pre>`;
     },
     'shop-section-new': async (el) => {
       const locId = Number(el.dataset.id);
-      const name = await askText('Add a section', 'Name, like Pet food');
+      const name = await askText('Add a category', 'Name, like Pet food');
       if (!name) return;
       const pos = await askText(`Where does ${name} go?`, 'Order among the aisles (0.1 is before Aisle 1, 21 after Aisle 20)', '21', { inputmode: 'decimal' });
       if (pos === null) return;
@@ -4798,13 +4855,12 @@ sudo docker compose up -d --build</pre>`;
     'shop-section-delete': async (el) => {
       const s = state.shop.sections.find((x) => x.id === Number(el.dataset.id));
       if (!s) return;
-      const ok = await askChoice({ title: 'Remove this section?', text: html`<p><b>${s.name}</b></p><p>Anything in it goes back to Unsorted at this store.</p>`,
+      const ok = await askChoice({ title: 'Remove this category?', text: html`<p><b>${s.name}</b></p><p>Anything in it goes back to Unsorted at this store.</p>`,
         choices: [{ label: 'Keep it', value: 'no' }, { label: 'Remove', value: 'yes', danger: true }] });
       if (ok !== 'yes') return;
-      const fromList = !el.closest('.sec-list');
       await api('DELETE', `/shop/sections/${s.id}`);
       await shopReload();
-      if (fromList) closeForm(); else shopSections(s.location_id);
+      shopSections(s.location_id);
     },
   });
 

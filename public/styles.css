@@ -1765,49 +1765,102 @@ dialog.loan-modal .error:empty { display: none; }
 /* Shopping */
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
-.shop-where { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-.shop-where .grow { flex: 1; min-width: 0; }
-.shop-where h2 { margin: 0; font-size: 1.15rem; overflow-wrap: anywhere; }
-.shop-where p { margin: 0; }
+/* The store at the top, the search-or-add box and progress. */
+.shop-store { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.shop-store .grow { flex: 1; min-width: 0; }
+.shop-store p { margin: 0; }
+.store-badge { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border-radius: 10px; background: var(--tag); color: #fff; font-size: 1.25rem; font-weight: 800; }
+.store-kicker { font-size: .7rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.store-title { overflow-wrap: anywhere; }
+.store-title b { font-size: 1.35rem; font-weight: 800; }
+.store-title span { margin-left: 4px; color: var(--muted); }
 .shop-add { display: flex; flex-wrap: wrap; gap: 8px; }
-.shop-add form { display: flex; gap: 8px; flex: 1 1 260px; min-width: 0; }
-.shop-add .combo { flex: 1; min-width: 0; }
+.shop-search { position: relative; display: flex; align-items: center; flex: 1 1 280px; min-width: 0; }
+.shop-search .combo { flex: 1; min-width: 0; }
+.shop-search input#shop-name { width: 100%; padding-left: 38px; padding-right: 76px; }
+.search-ico { position: absolute; left: 13px; top: 50%; z-index: 1; display: flex; color: var(--muted); transform: translateY(-50%); pointer-events: none; }
+.shop-search button[type="submit"] { position: absolute; right: 5px; top: 50%; z-index: 1; min-height: 0; padding: 6px 14px; transform: translateY(-50%); }
+.shop-add > button, button.mini { display: inline-flex; align-items: center; gap: 6px; }
 .shop-add > button { flex: none; }
-.shop-list { margin-top: 16px; }
-/* Each aisle or section folds away, like the expense groups on the Budget. */
+.shop-progress { display: flex; align-items: center; gap: 12px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); font-size: .82rem; white-space: nowrap; }
+.shop-progress .bar { flex: 1; height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.shop-progress .bar i { display: block; height: 100%; border-radius: inherit; background: var(--brand); }
+/* Best buys, collapse all and the column titles. */
+.shop-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 16px 0 6px; }
+.shop-tools .spacer { flex: 1; }
+.best-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 0; padding: 6px 12px 6px 8px; border-radius: 999px; font-size: .85rem; font-weight: 400; }
+.best-toggle b { font-weight: 700; }
+.best-toggle .muted { margin-left: 4px; font-size: .78rem; }
+.best-toggle .store-dot { margin: 0 0 0 2px; width: 8px; height: 8px; }
+.switch { position: relative; width: 30px; height: 18px; margin-right: 4px; border-radius: 999px; background: var(--line); transition: background .15s; }
+.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--card); box-shadow: 0 1px 2px rgb(0 0 0 / .3); transition: transform .15s; }
+.best-toggle[aria-checked="true"] { border-color: var(--brand); }
+.best-toggle[aria-checked="true"] .switch { background: var(--brand); }
+.best-toggle[aria-checked="true"] .switch::after { transform: translateX(12px); }
+/* One grid for the column titles and every row, so the columns line up across categories. */
+.shop-cols, .shop-item { display: grid; grid-template-columns: 24px minmax(0, 1fr) 170px 112px 84px; column-gap: 12px; align-items: center; }
+.shop-cols { padding: 0 16px 6px; font-size: .68rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.shop-cols > span:nth-child(4) { text-align: center; }
+.shop-cols > span:nth-child(5) { text-align: right; }
+.shop-list { margin-top: 0; }
+/* Each aisle or category folds away, like the expense groups on the Budget. */
 .shop-sec { padding: 0; margin-bottom: 12px; overflow: hidden; }
-.shop-ghead { display: flex; align-items: center; gap: 8px; padding-right: 12px; }
-.shop-gtoggle { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; min-height: 0; padding: 12px 4px 12px 16px; border: 0; border-radius: 0;
+.shop-gtoggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 0; padding: 12px 16px; border: 0; border-radius: 0;
   background: none; box-shadow: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .shop-gtoggle:hover { background: color-mix(in srgb, var(--text) 4%, var(--card)); }
 .shop-gtoggle .g-name { overflow-wrap: anywhere; }
+.shop-gtoggle .g-right { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.g-total { font-size: .95rem; color: var(--text); }
+.g-best-pill { padding: 2px 10px; border: 1px solid color-mix(in srgb, var(--paid) 45%, var(--card)); border-radius: 999px;
+  background: color-mix(in srgb, var(--paid) 10%, var(--card)); color: var(--paid); font-size: .75rem; white-space: nowrap; }
 .shop-sec.unsorted .g-name { color: var(--due); }
 .shop-sec.all-got .g-name { color: var(--muted); }
-.shop-hint { margin: -4px 16px 4px; }
-.shop-rows { margin: 0 16px 8px; }
-.shop-item { gap: 6px 10px; flex-wrap: wrap; }
-.shop-item .grow { flex: 1 1 120px; }
-/* Set aisle, how many and the price stay together, dropping under the name when there isn't room. */
-.shop-ctrl { display: flex; align-items: center; gap: 10px; margin-left: auto; }
-.shop-item > input[type="checkbox"] { flex: none; width: 24px; height: 24px; margin: 0; cursor: pointer; }
-.shop-item .grow { cursor: pointer; min-width: 0; }
-.shop-item .title { overflow-wrap: anywhere; }
+.shop-hint { margin: -4px 16px 6px; }
+.shop-rows { list-style: none; margin: 0; padding: 0; }
+.shop-item { padding: 9px 16px; border-top: 1px solid var(--line); }
+.shop-item > input[type="checkbox"] { width: 22px; height: 22px; margin: 0; cursor: pointer; }
+.si-name { min-width: 0; cursor: pointer; }
+.si-name .title { font-weight: 600; overflow-wrap: anywhere; }
+.si-who { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: .8rem; color: var(--muted); }
+.si-qty { display: flex; justify-content: center; }
+.si-total { text-align: right; font-weight: 600; }
 .shop-size { font-weight: 400; font-size: .85em; color: var(--muted); white-space: nowrap; }
-.shop-item.got .title, .shop-item.got .shop-price, .shop-item.got .shop-qty { color: var(--muted); }
-.shop-item.got .title { text-decoration: line-through; }
-.shop-item.got > input, .shop-item.got .title, .shop-item.got .shop-ctrl { opacity: .7; }
-.shop-qty { font-weight: 600; color: var(--brand); min-width: 2.2em; text-align: center; flex: none; }
-.shop-price { flex: none; min-width: 3.6em; text-align: right; }
-.stepper { display: inline-flex; align-items: center; gap: 2px; flex: none; }
-.stepper button { min-width: 32px; min-height: 32px; padding: 0; border-radius: 50%; font-size: 1.05rem; line-height: 1; }
-.list > li.shop-sep { display: flex; align-items: center; gap: 10px; padding: 6px 0 2px; border: 0; font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
-.shop-sep::before, .shop-sep::after { content: ''; flex: 1; border-top: 1px dashed var(--line); }
-.shop-deal, .list .meta.shop-deal { color: var(--paid); }
+.shop-deal-pill { display: inline-flex; align-items: center; margin-top: 4px; padding: 1px 9px; border: 1px solid color-mix(in srgb, var(--paid) 45%, var(--card)); border-radius: 999px;
+  color: var(--paid); font-size: .75rem; }
+.shop-deal-pill .store-dot { width: 7px; height: 7px; margin-right: 5px; }
+.who-init { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 50%; background: color-mix(in srgb, var(--tag) 55%, var(--card));
+  color: #fff; font-size: .68rem; font-weight: 700; }
+.who-at { display: inline-flex; align-items: center; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.who-at .store-dot { width: 7px; height: 7px; margin-right: 5px; flex: none; }
+.shop-item.got .title { font-weight: 400; color: var(--muted); }
+.shop-item.got .si-total, .shop-item.got .shop-qty { color: var(--muted); font-weight: 400; }
+.shop-item.got > input { opacity: .8; }
+.shop-qty { font-weight: 600; color: var(--brand); min-width: 1.6em; text-align: center; }
+.stepper { display: inline-flex; align-items: center; gap: 6px; }
+.stepper button { min-width: 30px; min-height: 30px; padding: 0; border-radius: 50%; font-size: 1.05rem; line-height: 1; }
+.shop-gothead { padding: 6px 16px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--text) 2%, var(--card)); }
+.shop-gothead button { color: var(--muted); text-decoration: none; }
+.shop-gothead .chev { margin-right: 4px; }
+.shop-nomatch { margin: 0 0 12px; }
 .shop-clear { display: flex; justify-content: flex-end; margin: 0 0 12px; }
-.g-best { color: var(--paid); font-weight: 600; }
-.g-sep { display: inline-block; width: 1px; height: 12px; margin: 0 8px; background: var(--line); vertical-align: -1px; }
-/* Ticked items: the same tags, quietened like the rest of the row. */
-.shop-item.got .shop-tag { background: color-mix(in srgb, var(--tag) 30%, var(--card)); color: var(--text); }
+.shop-clear button.danger { background: color-mix(in srgb, var(--danger) 10%, var(--card)); border-color: color-mix(in srgb, var(--danger) 45%, var(--card)); font-weight: 600; }
+.shop-clear button.danger:hover { background: color-mix(in srgb, var(--danger) 16%, var(--card)); }
+.sec-head { display: flex; justify-content: space-between; padding: 0 56px 0 2px; }
+@media (max-width: 720px) {
+  .shop-cols { display: none; }
+  .shop-item { grid-template-columns: 22px minmax(0, 1fr) auto; grid-template-areas: "chk name total" ". who qty"; row-gap: 6px; padding: 10px 14px; }
+  .shop-item > input { grid-area: chk; }
+  .si-name { grid-area: name; }
+  .si-who { grid-area: who; }
+  .si-qty { grid-area: qty; justify-content: flex-end; }
+  .si-total { grid-area: total; }
+  .si-who:empty { display: none; }
+  .shop-item:not(.got) .si-who:empty + .si-qty { grid-column: 2 / 4; }
+  .shop-gtoggle { padding: 12px 14px; flex-wrap: wrap; row-gap: 4px; }
+  .store-title b { font-size: 1.15rem; }
+  .store-badge { width: 40px; height: 40px; }
+  .shop-store > button { padding: 8px 12px; }
+}
 /* The totals under the list. */
 .shop-sum { padding: 18px 20px; }
 .sum-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.35fr); align-items: stretch; }
