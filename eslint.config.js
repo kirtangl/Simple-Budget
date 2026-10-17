@@ -14,6 +14,11 @@ module.exports = [
     files: ['src/**/*.js', 'scripts/**/*.js', 'test/**/*.js', 'eslint.config.js'],
     languageOptions: { ecmaVersion: 2024, sourceType: 'commonjs', globals: globals.node },
   },
+  // The price-checker runs in Node, and hands some functions to the store's page to run there.
+  {
+    files: ['price-checker/**/*.js'],
+    languageOptions: { ecmaVersion: 2024, sourceType: 'commonjs', globals: { ...globals.node, ...globals.browser } },
+  },
   {
     files: ['public/**/*.js'],
     languageOptions: { ecmaVersion: 2024, sourceType: 'script', globals: globals.browser },

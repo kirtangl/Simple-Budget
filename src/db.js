@@ -393,6 +393,24 @@ const MIGRATIONS = [
     PRIMARY KEY (product_id, store_id)
   );
   `,
+  // 23: automatic prices from the price-checker. Which of its stores each store is (the chains by
+  // name), a price's normal price while it's on special, when a matched product was last looked
+  // for and not found, and a cheaper similar product seen at any store (only ever a hint).
+  `
+  ALTER TABLE shop_stores ADD COLUMN checker TEXT;
+  UPDATE shop_stores SET checker = lower(name) WHERE lower(name) IN ('woolworths', 'coles', 'aldi');
+  ALTER TABLE shop_prices ADD COLUMN was_cents INTEGER;
+  ALTER TABLE shop_matches ADD COLUMN missing_at TEXT;
+  CREATE TABLE shop_similar (
+    product_id INTEGER PRIMARY KEY REFERENCES shop_products(id) ON DELETE CASCADE,
+    store_id INTEGER NOT NULL REFERENCES shop_stores(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    size TEXT,
+    price_cents INTEGER NOT NULL,
+    url TEXT NOT NULL,
+    seen_at TEXT NOT NULL
+  );
+  `,
 ];
 
 function openDatabase(file) {

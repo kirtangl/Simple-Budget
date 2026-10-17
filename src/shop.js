@@ -7,6 +7,7 @@
 
 const express = require('express');
 const { transaction, getSetting } = require('./db');
+const { CheckerError } = require('./checker');
 
 const MAX_AISLE = 20;
 const UNITS = ['g', 'kg', 'mL', 'L', 'each', 'pack'];
@@ -71,6 +72,37 @@ const searchUrl = (v) => {
   if (!ok) throw new BadRequest('The search link should start with https:// and have {q} where the product name goes.');
   return s;
 };
+// The stores the price-checker knows, and the chains that are them.
+const CHECKER_STORES = ['woolworths', 'coles', 'aldi'];
+const checkerOf = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  if (!CHECKER_STORES.includes(v)) throw new BadRequest(`Automatic prices can come from ${CHECKER_STORES.join(', ')}.`);
+  return v;
+};
+// The supermarkets change prices on Wednesday mornings, so a price checked before 9am last
+// Wednesday (the server's time) is out of date. As SQLite writes datetime('now'), in UTC.
+function priceDay(now = new Date()) {
+  const d = new Date(now);
+  d.setHours(9, 0, 0, 0);
+  d.setDate(d.getDate() - ((d.getDay() + 4) % 7));
+  if (d > now) d.setDate(d.getDate() - 7);
+  return d.toISOString().slice(0, 19).replace('T', ' ');
+}
+// A size written by a store, like "750g", "2 L" or "6 pack", in g, mL or how many.
+function measureOf(text) {
+  const m = /(\d+(?:\.\d+)?)\s*(kg|g|ml|l|pk|pack|each)\b/i.exec(String(text || ''));
+  if (!m) return null;
+  const n = Number(m[1]);
+  const u = m[2].toLowerCase();
+  if (u === 'kg') return ['weight', n * 1000];
+  if (u === 'g') return ['weight', n];
+  if (u === 'l') return ['volume', n * 1000];
+  if (u === 'ml') return ['volume', n];
+  return ['count', n];
+}
+const WORDS_SKIPPED = new Set(['the', 'and', 'with', 'for', 'pack', 'each']);
+const wordsOf = (s) => new Set(String(s || '').toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 2 && !WORDS_SKIPPED.has(w)));
+
 // Pricing by weight or volume needs a size it can be worked out from.
 function pricePer(per, size, unit) {
   if (!(per in PRICE_PER)) throw new BadRequest(`The price should be per ${Object.keys(PRICE_PER).join(', ')}.`);
@@ -81,7 +113,7 @@ function pricePer(per, size, unit) {
 }
 const body = (req) => (req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {});
 
-function createShop(db) {
+function createShop(db, { checker = null } = {}) {
   const router = express.Router();
   const count = (table, where = '', ...args) => db.prepare(`SELECT count(*) AS n FROM ${table} ${where}`).get(...args).n;
   const one = (sql, ...args) => { const r = db.prepare(sql).get(...args); return r ? { ...r } : null; };
@@ -115,10 +147,16 @@ function createShop(db) {
   function productsView() {
     const prices = all('SELECT * FROM shop_prices');
     const spots = all('SELECT * FROM shop_spots');
+    const matches = all('SELECT * FROM shop_matches');
+    const similar = new Map(all('SELECT * FROM shop_similar').map((x) => [x.product_id, x]));
     return all('SELECT * FROM shop_products ORDER BY name COLLATE NOCASE, size').map((p) => ({
       ...p,
       prices: Object.fromEntries(prices.filter((x) => x.product_id === p.id).map((x) => [x.store_id, x.price_cents])),
       checked: Object.fromEntries(prices.filter((x) => x.product_id === p.id).map((x) => [x.store_id, x.checked_at])),
+      was: Object.fromEntries(prices.filter((x) => x.product_id === p.id && x.was_cents).map((x) => [x.store_id, x.was_cents])),
+      matches: Object.fromEntries(matches.filter((x) => x.product_id === p.id)
+        .map((x) => [x.store_id, { url: x.url, name: x.name, size: x.size, missing_at: x.missing_at }])),
+      similar: similar.get(p.id) || null,
       spots: Object.fromEntries(spots.filter((x) => x.product_id === p.id)
         .map((x) => [x.location_id, { aisle: x.aisle, section_id: x.section_id, missing: Boolean(x.missing) }])),
     }));
@@ -135,6 +173,8 @@ function createShop(db) {
       max_aisle: MAX_AISLE,
       units: UNITS,
       price_per: Object.keys(PRICE_PER),
+      // Automatic prices, when there's a price-checker: what counts as up to date.
+      checker: checker && checker.on ? { stores: CHECKER_STORES, since: priceDay() } : null,
       stores: all('SELECT * FROM shop_stores ORDER BY sort_order, id'),
       locations: all('SELECT * FROM shop_locations ORDER BY name COLLATE NOCASE'),
       sections: all('SELECT * FROM shop_sections ORDER BY location_id, position, name COLLATE NOCASE'),
@@ -162,8 +202,9 @@ function createShop(db) {
     const n = count('shop_stores');
     if (n >= LIMITS.stores) throw new BadRequest(`That's more stores than the list can keep (${LIMITS.stores}).`);
     const c = b.color ? colour(b.color) : STORE_COLOURS[n % STORE_COLOURS.length];
-    const { lastInsertRowid } = db.prepare('INSERT INTO shop_stores (name, sort_order, color, search_url) VALUES (?, ?, ?, ?)')
-      .run(name, n, c, 'search_url' in b ? searchUrl(b.search_url) : KNOWN_SEARCH[name.toLowerCase()] || null);
+    const chain = CHECKER_STORES.includes(name.toLowerCase()) ? name.toLowerCase() : null;
+    const { lastInsertRowid } = db.prepare('INSERT INTO shop_stores (name, sort_order, color, search_url, checker) VALUES (?, ?, ?, ?, ?)')
+      .run(name, n, c, 'search_url' in b ? searchUrl(b.search_url) : KNOWN_SEARCH[name.toLowerCase()] || null, 'checker' in b ? checkerOf(b.checker) : chain);
     res.status(201).json(one('SELECT * FROM shop_stores WHERE id = ?', Number(lastInsertRowid)));
   });
 
@@ -175,7 +216,8 @@ function createShop(db) {
     const name = 'name' in b ? text(b.name, 'The store') : before.name;
     const c = 'color' in b ? colour(b.color) : before.color;
     const link = 'search_url' in b ? searchUrl(b.search_url) : before.search_url;
-    db.prepare('UPDATE shop_stores SET name = ?, color = ?, search_url = ? WHERE id = ?').run(name, c, link, id);
+    const auto = 'checker' in b ? checkerOf(b.checker) : before.checker;
+    db.prepare('UPDATE shop_stores SET name = ?, color = ?, search_url = ?, checker = ? WHERE id = ?').run(name, c, link, auto, id);
     res.json(one('SELECT * FROM shop_stores WHERE id = ?', id));
   });
 
@@ -285,6 +327,7 @@ function createShop(db) {
         if (cents === null) { db.prepare('DELETE FROM shop_prices WHERE product_id = ? AND store_id = ?').run(id, s); continue; }
         db.prepare(`INSERT INTO shop_prices (product_id, store_id, price_cents, checked_at) VALUES (?, ?, ?, datetime('now'))
           ON CONFLICT (product_id, store_id) DO UPDATE SET price_cents = excluded.price_cents,
+          was_cents = CASE WHEN price_cents <> excluded.price_cents THEN NULL ELSE was_cents END,
           checked_at = CASE WHEN price_cents <> excluded.price_cents OR ? THEN excluded.checked_at ELSE checked_at END`)
           .run(id, s, cents, checked.has(s) ? 1 : 0);
       }
@@ -390,7 +433,254 @@ function createShop(db) {
     res.json({ ok: true, cleared: changes });
   });
 
+  // ---------- Automatic prices (the price-checker) ----------
+
+  // The checks this app started, by the checker's job id: what each was for, so results go to
+  // the right products and stores. Kept for an hour.
+  const started = new Map();
+  const needChecker = () => {
+    if (!checker || !checker.on) throw new BadRequest('Automatic prices are not set up. See "Automatic prices" in the README.');
+  };
+  const checkerStores = (ids) => all('SELECT * FROM shop_stores WHERE checker IS NOT NULL ORDER BY sort_order, id')
+    .filter((s) => !ids || ids.includes(s.id));
+  const remember = (job, meta) => {
+    for (const [id, m] of started) if (Date.now() - m.at > 60 * 60e3) started.delete(id);
+    started.set(job.id, { ...meta, at: Date.now() });
+  };
+  const queryOf = (p) => (p.size && MEASURE[p.unit] ? `${p.name} ${p.size}${p.unit}` : p.name);
+  const startedJob = (id) => {
+    const meta = started.get(String(id));
+    if (!meta) throw new CheckerError('That check has finished.', 404);
+    return meta;
+  };
+  // The checker's job as the app sees it: stores by their ids here.
+  const jobView = (job, meta) => {
+    const byKey = Object.fromEntries(Object.entries(meta.stores).map(([sid, key]) => [key, Number(sid)]));
+    const stores = {};
+    for (const [key, st] of Object.entries(job.stores || {})) if (key in byKey) stores[byKey[key]] = st;
+    const out = { id: job.id, type: meta.type, state: job.state, waiting_for: job.waiting_for || 0, stores };
+    if (meta.type === 'find') {
+      out.product_id = meta.product_id;
+      out.results = {};
+      for (const [key, list] of Object.entries(job.results || {})) if (key in byKey) out.results[byKey[key]] = list;
+    } else {
+      out.total = Object.keys(meta.items).length;
+      out.changes = meta.changes || null;
+      out.missing = meta.missing || null;
+      out.unmatched = meta.unmatched;
+    }
+    return out;
+  };
+
+  // A product's prices from a search at every store (or just the stores given, for a new match).
+  router.post('/checker/find', async (req, res) => {
+    needChecker();
+    const b = body(req);
+    const p = one('SELECT * FROM shop_products WHERE id = ?', Number(b.product_id));
+    if (!p) return res.status(404).json({ error: 'Not found.' });
+    const stores = checkerStores(Array.isArray(b.store_ids) ? b.store_ids.map(Number) : null);
+    if (!stores.length) throw new BadRequest('None of your stores have automatic prices.');
+    const keys = {};
+    for (const s of stores) if (!Object.values(keys).includes(s.checker)) keys[s.id] = s.checker;
+    const job = await checker.start({ type: 'search', q: queryOf(p), stores: Object.values(keys) });
+    const meta = { type: 'find', product_id: p.id, stores: keys, all: !b.store_ids };
+    remember(job, meta);
+    res.status(201).json(jobView(job, meta));
+  });
+
+  // The products on a list whose matched prices are out of date: { list }. Products on the list not
+  // matched at a store come back as unmatched, to find.
+  router.post('/checker/update', async (req, res) => {
+    needChecker();
+    const [where, args] = onList(ownerOf(req, listOf(req)));
+    const since = priceDay();
+    const stores = checkerStores();
+    const products = all(`SELECT DISTINCT product_id AS id FROM shop_items WHERE done_at IS NULL AND ${where}`, ...args).map((r) => r.id);
+    const keys = {};
+    const items = {};
+    const toCheck = [];
+    const unmatched = [];
+    for (const pid of products) {
+      for (const s of stores) {
+        const m = one('SELECT * FROM shop_matches WHERE product_id = ? AND store_id = ?', pid, s.id);
+        if (!m) { unmatched.push({ product_id: pid, store_id: s.id }); continue; }
+        const price = one('SELECT checked_at FROM shop_prices WHERE product_id = ? AND store_id = ?', pid, s.id);
+        if (price && price.checked_at && price.checked_at >= since) continue;
+        const key = `${pid}:${s.id}`;
+        keys[s.id] = s.checker;
+        items[key] = [pid, s.id];
+        toCheck.push({ key, store: s.checker, url: m.url, name: m.name, size: m.size });
+      }
+    }
+    if (!toCheck.length) return res.json({ id: null, type: 'update', state: 'done', stores: {}, total: 0, changes: [], missing: [], unmatched });
+    const job = await checker.start({ type: 'refresh', items: toCheck });
+    const meta = { type: 'update', stores: keys, items, unmatched };
+    remember(job, meta);
+    follow(job.id);
+    res.status(201).json(jobView(job, meta));
+  });
+
+  // Saves an update's new prices once it's finished, whether or not anyone's still watching.
+  function follow(id) {
+    const meta = started.get(id);
+    if (!meta || meta.changes || Date.now() - meta.at > 60 * 60e3) return;
+    const again = () => setTimeout(() => follow(id), 2000).unref?.();
+    checker.get(id).then((job) => {
+      if (job.state === 'done' || job.state === 'cancelled') applyUpdate(job, meta);
+      else again();
+    }, (err) => { if (!(err instanceof CheckerError && err.status === 404)) again(); });
+  }
+
+  function applyUpdate(job, meta) {
+    if (meta.changes) return;
+    const changes = [];
+    const missing = [];
+    transaction(db, () => {
+      for (const r of Array.isArray(job.results) ? job.results : []) {
+        const target = meta.items[r.key];
+        if (!target) continue;
+        const [pid, sid] = target;
+        if (!r.found) {
+          if (!r.error) {
+            db.prepare("UPDATE shop_matches SET missing_at = datetime('now') WHERE product_id = ? AND store_id = ?").run(pid, sid);
+            missing.push({ product_id: pid, store_id: sid });
+          }
+          continue;
+        }
+        const cents = Number.isInteger(r.price_cents) && r.price_cents > 0 && r.price_cents <= 100000 ? r.price_cents : null;
+        if (!cents) continue;
+        const before = one('SELECT price_cents FROM shop_prices WHERE product_id = ? AND store_id = ?', pid, sid);
+        savePrice(pid, sid, cents, r.was_cents);
+        db.prepare('UPDATE shop_matches SET missing_at = NULL WHERE product_id = ? AND store_id = ?').run(pid, sid);
+        if (!before || before.price_cents !== cents) changes.push({ product_id: pid, store_id: sid, old_cents: before ? before.price_cents : null, new_cents: cents, special: Boolean(r.special) });
+      }
+    });
+    meta.changes = changes;
+    meta.missing = missing;
+    rev += 1;
+  }
+
+  const savePrice = (pid, sid, cents, was) => {
+    const normal = Number.isInteger(was) && was > cents && was <= 100000 ? was : null;
+    db.prepare(`INSERT INTO shop_prices (product_id, store_id, price_cents, was_cents, checked_at) VALUES (?, ?, ?, ?, datetime('now'))
+      ON CONFLICT (product_id, store_id) DO UPDATE SET price_cents = excluded.price_cents, was_cents = excluded.was_cents, checked_at = excluded.checked_at`)
+      .run(pid, sid, cents, normal);
+  };
+
+  router.get('/checker/jobs/:id', async (req, res) => {
+    const meta = startedJob(req.params.id);
+    const job = await checker.get(req.params.id);
+    if (meta.type === 'find' && job.state !== 'running' && job.state !== 'queued') meta.results = job.results;
+    if (meta.type === 'update' && (job.state === 'done' || job.state === 'cancelled')) applyUpdate(job, meta);
+    res.json(jobView(job, meta));
+  });
+  router.post('/checker/jobs/:id/cancel', async (req, res) => {
+    const meta = startedJob(req.params.id);
+    res.json(jobView(await checker.cancel(req.params.id), meta));
+  });
+  // Gave up on a bot check at a store: { store_id }.
+  router.post('/checker/jobs/:id/skip', async (req, res) => {
+    const meta = startedJob(req.params.id);
+    const key = meta.stores[Number(body(req).store_id)];
+    if (!key) return res.status(404).json({ error: 'Not found.' });
+    res.json(jobView(await checker.skip(req.params.id, key), meta));
+  });
+
+  // What a store's tab shows while it waits for a person to get past a bot check, and their clicks.
+  const keyOf = (id) => {
+    const s = one('SELECT checker FROM shop_stores WHERE id = ?', Number(id));
+    if (!s || !s.checker) throw new CheckerError('Not found.', 404);
+    return s.checker;
+  };
+  router.get('/checker/screen/:store', async (req, res) => {
+    needChecker();
+    const shot = await checker.screen(keyOf(req.params.store));
+    res.set({ 'Content-Type': 'image/jpeg', 'X-Width': String(shot.width || ''), 'X-Height': String(shot.height || '') }).send(shot.image);
+  });
+  router.post('/checker/input/:store', async (req, res) => {
+    needChecker();
+    const b = body(req);
+    if (!['click', 'down', 'move', 'up', 'key', 'text'].includes(b.type)) throw new BadRequest('That kind of input does not exist.');
+    const ev = { type: b.type, x: Number(b.x) || 0, y: Number(b.y) || 0 };
+    if (typeof b.key === 'string') ev.key = b.key.slice(0, 20);
+    if (typeof b.text === 'string') ev.text = b.text.slice(0, 100);
+    res.json(await checker.input(keyOf(req.params.store), ev));
+  });
+
+  // The store listings picked for a product from a find: { job, picks: { [store id]: result's index,
+  // or null for no match } }. Their prices are saved, and a cheaper similar product among all the
+  // results (by its price per g, mL or each) is kept as a hint.
+  router.put('/products/:id/matches', async (req, res) => {
+    const id = Number(req.params.id);
+    const p = one('SELECT * FROM shop_products WHERE id = ?', id);
+    if (!p) return res.status(404).json({ error: 'Not found.' });
+    const b = body(req);
+    const meta = startedJob(b.job);
+    if (meta.type !== 'find' || meta.product_id !== id) throw new BadRequest("That search wasn't for this product.");
+    if (!meta.results) meta.results = (await checker.get(b.job)).results;
+    const results = meta.results || {};
+    const picks = b.picks && typeof b.picks === 'object' ? Object.entries(b.picks) : [];
+    const chosen = new Set();
+    transaction(db, () => {
+      for (const [sid, index] of picks) {
+        const key = meta.stores[Number(sid)];
+        if (!key) throw new BadRequest('That store was not part of the search.');
+        if (index === null) { db.prepare('DELETE FROM shop_matches WHERE product_id = ? AND store_id = ?').run(id, Number(sid)); continue; }
+        const r = (results[key] || [])[int(index, 0, 1000, 'The pick')];
+        if (!r) throw new BadRequest('That result is not there.');
+        chosen.add(r);
+        db.prepare(`INSERT INTO shop_matches (product_id, store_id, url, name, size, missing_at) VALUES (?, ?, ?, ?, ?, NULL)
+          ON CONFLICT (product_id, store_id) DO UPDATE SET url = excluded.url, name = excluded.name, size = excluded.size, missing_at = NULL`)
+          .run(id, Number(sid), String(r.url).slice(0, 500), String(r.name).slice(0, 200), r.size ? String(r.size).slice(0, 40) : null);
+        savePrice(id, Number(sid), r.price_cents, r.was_cents);
+      }
+      const similar = cheaperSimilar(p, results, meta.stores, chosen);
+      if (similar) {
+        db.prepare(`INSERT INTO shop_similar (product_id, store_id, name, size, price_cents, url, seen_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+          ON CONFLICT (product_id) DO UPDATE SET store_id = excluded.store_id, name = excluded.name, size = excluded.size,
+          price_cents = excluded.price_cents, url = excluded.url, seen_at = excluded.seen_at`)
+          .run(id, similar.store_id, similar.name.slice(0, 200), similar.size ? String(similar.size).slice(0, 40) : null, similar.price_cents, String(similar.url).slice(0, 500));
+      } else if (meta.all) {
+        db.prepare('DELETE FROM shop_similar WHERE product_id = ?').run(id);
+      }
+    });
+    res.json(productView(id));
+  });
+
+  // The cheapest result, per g, mL or each, that's like the product (a word of its name in common,
+  // and a size from half to twice as big) and at least 5% cheaper than its best price now.
+  function cheaperSimilar(p, results, storeKeys, chosen) {
+    const own = p.size && MEASURE[p.unit] ? measureOf(`${p.size}${p.unit}`) : null;
+    const per = (price, size) => { const m = measureOf(size) || own; return m ? [m[0], price / m[1]] : null; };
+    let best = null;
+    for (const r of chosen) {
+      const x = per(r.price_cents, r.size);
+      if (x && (!best || x[1] < best[1])) best = x;
+    }
+    if (!best && own) {
+      const cheapest = one('SELECT min(price_cents) AS c FROM shop_prices WHERE product_id = ?', p.id).c;
+      if (cheapest) best = [own[0], cheapest / own[1]];
+    }
+    if (!best) return null;
+    const words = wordsOf(p.name);
+    const refSize = own ? own[1] : null;
+    let found = null;
+    for (const [sid, key] of Object.entries(storeKeys)) {
+      for (const r of results[key] || []) {
+        if (chosen.has(r) || r.available === false || !Number.isInteger(r.price_cents)) continue;
+        const m = measureOf(r.size);
+        if (!m || m[0] !== best[0]) continue;
+        if (refSize && (m[1] < refSize / 2 || m[1] > refSize * 2)) continue;
+        if (![...wordsOf(r.name)].some((w) => words.has(w))) continue;
+        const cost = r.price_cents / m[1];
+        if (cost < best[1] * 0.95 && (!found || cost < found.cost)) found = { ...r, store_id: Number(sid), cost };
+      }
+    }
+    return found;
+  }
+
   router.use((err, req, res, next) => {
+    if (err instanceof CheckerError) return res.status(err.status).json({ error: err.message });
     if (err instanceof BadRequest) return res.status(400).json({ error: err.message });
     if (err && /UNIQUE/.test(err.message)) return res.status(400).json({ error: 'That name is already used.' });
     next(err);
@@ -402,13 +692,14 @@ function createShop(db) {
 // ---------- Backup and restore ----------
 
 const SHOP_TABLES = {
-  stores: ['shop_stores', ['id', 'name', 'sort_order', 'color', 'search_url']],
+  stores: ['shop_stores', ['id', 'name', 'sort_order', 'color', 'search_url', 'checker']],
   locations: ['shop_locations', ['id', 'store_id', 'name']],
   sections: ['shop_sections', ['id', 'location_id', 'name', 'position']],
   products: ['shop_products', ['id', 'name', 'size', 'unit', 'price_per']],
-  prices: ['shop_prices', ['product_id', 'store_id', 'price_cents', 'checked_at']],
-  // Each product's own listing at a store, for automatic prices (filled in from 0.9.9).
-  matches: ['shop_matches', ['product_id', 'store_id', 'url', 'name', 'size']],
+  prices: ['shop_prices', ['product_id', 'store_id', 'price_cents', 'checked_at', 'was_cents']],
+  // Each product's own listing at a store, for automatic prices, and a cheaper similar one.
+  matches: ['shop_matches', ['product_id', 'store_id', 'url', 'name', 'size', 'missing_at']],
+  similar: ['shop_similar', ['product_id', 'store_id', 'name', 'size', 'price_cents', 'url', 'seen_at']],
   spots: ['shop_spots', ['product_id', 'location_id', 'aisle', 'section_id', 'missing']],
   items: ['shop_items', ['id', 'product_id', 'owner_id', 'qty', 'added_at', 'done_at', 'done_by', 'done_store_id']],
 };
@@ -439,4 +730,4 @@ function importShop(db, data) {
   return { products: db.prepare('SELECT count(*) AS n FROM shop_products').get().n, skipped };
 }
 
-module.exports = { createShop, exportShop, importShop, UNITS };
+module.exports = { createShop, exportShop, importShop, priceDay, UNITS };

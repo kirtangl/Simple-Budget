@@ -7,6 +7,7 @@ const { openDatabase, getSetting, setSetting } = require('./db');
 const { createAuth } = require('./auth');
 const { createApi } = require('./api');
 const { createShop } = require('./shop');
+const { createChecker } = require('./checker');
 const { createUpdates, UpdateError, compareVersions, parseVersion } = require('./updates');
 const { createBackups, BackupError } = require('./backups');
 const { createConfig, ConfigError, splitHosts } = require('./config');
@@ -66,7 +67,7 @@ function recordVersion(db, backups) {
   if (updated) setSetting(db, 'just_updated', JSON.stringify({ from: was || null, to: VERSION, at: now }));
 }
 
-function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
+function createApp({ db, secureCookies = false, fetchImpl, dataDir = null, checker = createChecker() }) {
   // Keep the cookie signing secret in the database so logins survive restarts.
   let secret = process.env.SESSION_SECRET || getSetting(db, 'session_secret');
   if (!secret) {
@@ -294,7 +295,7 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
     }
     res.json(advanced(req));
   });
-  app.use('/api/shop', auth.require, createShop(db));
+  app.use('/api/shop', auth.require, createShop(db, { checker }));
   app.use('/api', auth.require, createApi(db));
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
 
