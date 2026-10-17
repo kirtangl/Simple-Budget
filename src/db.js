@@ -6,6 +6,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 
+// An account with no colour of its own is shown in the palette colour for its place in the list
+// (public/app.js PALETTE). This saves that colour on it, so moving or removing an account
+// doesn't hand the others new colours.
+const ACCOUNT_PALETTE = ['#0f766e', '#2563eb', '#9333ea', '#ea580c', '#db2777', '#16a34a', '#ca8a04', '#0891b2', '#64748b', '#dc2626'];
+const FILL_ACCOUNT_COLOURS = `
+  WITH placed AS (SELECT id, (ROW_NUMBER() OVER (ORDER BY sort_order, name COLLATE NOCASE) - 1) % ${ACCOUNT_PALETTE.length} AS i FROM accounts)
+  UPDATE accounts SET color = CASE (SELECT i FROM placed WHERE placed.id = accounts.id)
+    ${ACCOUNT_PALETTE.map((c, i) => `WHEN ${i} THEN '${c}'`).join(' ')} END
+  WHERE color IS NULL OR color = '';
+`;
+const fillAccountColours = (db) => db.exec(FILL_ACCOUNT_COLOURS);
+
 const MIGRATIONS = [
   `
   CREATE TABLE accounts (
@@ -242,6 +254,8 @@ const MIGRATIONS = [
   `
   ALTER TABLE logins ADD COLUMN session_gen INTEGER NOT NULL DEFAULT 0;
   `,
+  // 18: accounts keep the colour they're shown in now, whatever order they're put in later.
+  FILL_ACCOUNT_COLOURS,
 ];
 
 function openDatabase(file) {
@@ -322,4 +336,4 @@ function setSetting(db, key, value) {
   settingStatement(db, 'set').run(key, value);
 }
 
-module.exports = { openDatabase, transaction, getSetting, setSetting };
+module.exports = { openDatabase, transaction, getSetting, setSetting, fillAccountColours };
