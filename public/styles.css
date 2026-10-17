@@ -1940,3 +1940,17 @@ button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
 .sec-list > li { gap: 8px; }
 .sec-list input { flex: 1; min-width: 0; }
 .sec-list input.sec-pos { flex: none; width: 72px; }
+/* Prices: when each was checked, and Look up on the store's website. */
+.price-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin-top: 3px; font-size: .78rem; }
+.price-age { color: var(--muted); }
+.price-age.old { color: var(--due); font-weight: 600; }
+.price-meta .linkish.small { font-size: .78rem; }
+a.lookup { color: var(--link); text-decoration: none; font-weight: 600; white-space: nowrap; }
+a.lookup:hover { text-decoration: underline; }
+.check-stores { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.check-stores .spot-btn { min-height: 40px; padding: 6px 12px; }
+.check-list > li { gap: 8px; align-items: center; }
+.check-list .title { overflow-wrap: anywhere; }
+.check-list input.check-price { flex: none; width: 84px; }
+.check-on { font-size: .72rem; font-weight: 600; color: var(--brand); white-space: nowrap; }
+.spot-btn.on .store-dot { box-shadow: 0 0 0 2px var(--on-brand); }

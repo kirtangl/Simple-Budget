@@ -2,6 +2,17 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v0.9.8 (17 October 2026)
+
+### New
+- **Look up** beside each store's price in a product opens that store's website already searched for the product, so you can check its price in a tap. Woolworths, Coles and Aldi have it built in. For any store you add, give it a **Search link** under **Edit**.
+- **Check prices**, above the list and in Saved products, shows one store at a time with the products that have no price there or an old one first, what's on the list before the rest. Type the new price, or press **Still right** if it hasn't changed.
+
+### Improved
+- Every price remembers when it was last checked ("Checked 2 weeks ago"), and prices older than four weeks show in orange with a **Still right** button.
+
+For whoever runs the server: nothing to do beyond updating as usual. Prices you already have count as checked on the day you update.
+
 ## v0.9.7 (17 October 2026)
 
 ### New

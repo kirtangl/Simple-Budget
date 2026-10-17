@@ -55,6 +55,22 @@ const colour = (v) => {
   if (typeof v !== 'string' || !/^#[0-9a-f]{6}$/i.test(v)) throw new BadRequest('The colour should look like #1f2937.');
   return v.toLowerCase();
 };
+// The chains' search links (also set by migration 22), filled in when one is added by name.
+const KNOWN_SEARCH = {
+  woolworths: 'https://www.woolworths.com.au/shop/search/products?searchTerm={q}',
+  coles: 'https://www.coles.com.au/search/products?q={q}',
+  aldi: 'https://www.aldi.com.au/results?q={q}',
+};
+// A store's search link: its website's search page with {q} where the product goes, like
+// https://www.example.com.au/search?q={q}. Blank for none.
+const searchUrl = (v) => {
+  if (v === null || v === undefined || (typeof v === 'string' && !v.trim())) return null;
+  const s = typeof v === 'string' ? v.trim() : '';
+  let ok = s.length <= 300 && s.includes('{q}');
+  try { ok = ok && new URL(s.replace(/\{q\}/g, 'x')).protocol === 'https:'; } catch { ok = false; }
+  if (!ok) throw new BadRequest('The search link should start with https:// and have {q} where the product name goes.');
+  return s;
+};
 // Pricing by weight or volume needs a size it can be worked out from.
 function pricePer(per, size, unit) {
   if (!(per in PRICE_PER)) throw new BadRequest(`The price should be per ${Object.keys(PRICE_PER).join(', ')}.`);
@@ -102,6 +118,7 @@ function createShop(db) {
     return all('SELECT * FROM shop_products ORDER BY name COLLATE NOCASE, size').map((p) => ({
       ...p,
       prices: Object.fromEntries(prices.filter((x) => x.product_id === p.id).map((x) => [x.store_id, x.price_cents])),
+      checked: Object.fromEntries(prices.filter((x) => x.product_id === p.id).map((x) => [x.store_id, x.checked_at])),
       spots: Object.fromEntries(spots.filter((x) => x.product_id === p.id)
         .map((x) => [x.location_id, { aisle: x.aisle, section_id: x.section_id, missing: Boolean(x.missing) }])),
     }));
@@ -145,7 +162,8 @@ function createShop(db) {
     const n = count('shop_stores');
     if (n >= LIMITS.stores) throw new BadRequest(`That's more stores than the list can keep (${LIMITS.stores}).`);
     const c = b.color ? colour(b.color) : STORE_COLOURS[n % STORE_COLOURS.length];
-    const { lastInsertRowid } = db.prepare('INSERT INTO shop_stores (name, sort_order, color) VALUES (?, ?, ?)').run(name, n, c);
+    const { lastInsertRowid } = db.prepare('INSERT INTO shop_stores (name, sort_order, color, search_url) VALUES (?, ?, ?, ?)')
+      .run(name, n, c, 'search_url' in b ? searchUrl(b.search_url) : KNOWN_SEARCH[name.toLowerCase()] || null);
     res.status(201).json(one('SELECT * FROM shop_stores WHERE id = ?', Number(lastInsertRowid)));
   });
 
@@ -156,7 +174,8 @@ function createShop(db) {
     const b = body(req);
     const name = 'name' in b ? text(b.name, 'The store') : before.name;
     const c = 'color' in b ? colour(b.color) : before.color;
-    db.prepare('UPDATE shop_stores SET name = ?, color = ? WHERE id = ?').run(name, c, id);
+    const link = 'search_url' in b ? searchUrl(b.search_url) : before.search_url;
+    db.prepare('UPDATE shop_stores SET name = ?, color = ?, search_url = ? WHERE id = ?').run(name, c, link, id);
     res.json(one('SELECT * FROM shop_stores WHERE id = ?', id));
   });
 
@@ -243,7 +262,8 @@ function createShop(db) {
     name, size ?? 0, unit ?? '', id);
   const sizeText = (size, unit) => (size ? ` (${size} ${unit})` : unit ? ` (${unit})` : '');
 
-  // { name?, size?, unit?, price_per?, prices?: { [store id]: cents | null } }
+  // { name?, size?, unit?, price_per?, prices?: { [store id]: cents | null }, checked?: [store ids] }.
+  // A changed price counts as checked today, and so does one in checked: looked at and still right.
   router.patch('/products/:id', (req, res) => {
     const id = Number(req.params.id);
     const before = one('SELECT * FROM shop_products WHERE id = ?', id);
@@ -258,11 +278,18 @@ function createShop(db) {
       if (!exists('shop_stores', s)) throw new BadRequest('That store no longer exists.');
       return [Number(s), cents === null || cents === '' ? null : int(cents, 0, 100000, 'The price')];
     });
+    const checked = new Set(Array.isArray(b.checked) ? b.checked.map(Number) : []);
     transaction(db, () => {
       db.prepare('UPDATE shop_products SET name = ?, size = ?, unit = ?, price_per = ? WHERE id = ?').run(name, size, unit, per, id);
       for (const [s, cents] of set) {
-        if (cents === null) db.prepare('DELETE FROM shop_prices WHERE product_id = ? AND store_id = ?').run(id, s);
-        else db.prepare('INSERT INTO shop_prices (product_id, store_id, price_cents) VALUES (?, ?, ?) ON CONFLICT (product_id, store_id) DO UPDATE SET price_cents = excluded.price_cents').run(id, s, cents);
+        if (cents === null) { db.prepare('DELETE FROM shop_prices WHERE product_id = ? AND store_id = ?').run(id, s); continue; }
+        db.prepare(`INSERT INTO shop_prices (product_id, store_id, price_cents, checked_at) VALUES (?, ?, ?, datetime('now'))
+          ON CONFLICT (product_id, store_id) DO UPDATE SET price_cents = excluded.price_cents,
+          checked_at = CASE WHEN price_cents <> excluded.price_cents OR ? THEN excluded.checked_at ELSE checked_at END`)
+          .run(id, s, cents, checked.has(s) ? 1 : 0);
+      }
+      for (const s of checked) {
+        if (!set.some(([x]) => x === s)) db.prepare("UPDATE shop_prices SET checked_at = datetime('now') WHERE product_id = ? AND store_id = ?").run(id, s);
       }
     });
     res.json(productView(id));
@@ -375,11 +402,13 @@ function createShop(db) {
 // ---------- Backup and restore ----------
 
 const SHOP_TABLES = {
-  stores: ['shop_stores', ['id', 'name', 'sort_order', 'color']],
+  stores: ['shop_stores', ['id', 'name', 'sort_order', 'color', 'search_url']],
   locations: ['shop_locations', ['id', 'store_id', 'name']],
   sections: ['shop_sections', ['id', 'location_id', 'name', 'position']],
   products: ['shop_products', ['id', 'name', 'size', 'unit', 'price_per']],
-  prices: ['shop_prices', ['product_id', 'store_id', 'price_cents']],
+  prices: ['shop_prices', ['product_id', 'store_id', 'price_cents', 'checked_at']],
+  // Each product's own listing at a store, for automatic prices (filled in from 0.9.9).
+  matches: ['shop_matches', ['product_id', 'store_id', 'url', 'name', 'size']],
   spots: ['shop_spots', ['product_id', 'location_id', 'aisle', 'section_id', 'missing']],
   items: ['shop_items', ['id', 'product_id', 'owner_id', 'qty', 'added_at', 'done_at', 'done_by', 'done_store_id']],
 };

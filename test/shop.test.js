@@ -238,3 +238,44 @@ test('shopping: kept in a backup and restored', () => withServer({}, async (call
   assert.equal((await call('POST', '/import', { ...backup, shopping: { locations: [], products: [] } })).status, 200);
   assert.equal((await call('GET', '/shop')).body.products.length, 1);
 }));
+
+test('shopping: store search links and when prices were checked', () => withServer({}, async (call) => {
+  // The chains come with their search links; a store added later has none unless it's a chain.
+  let shop = (await call('GET', '/shop')).body;
+  assert.match(shop.stores.find((s) => s.name === 'Coles').search_url, /^https:\/\/www\.coles\.com\.au\/.*\{q\}/);
+  const iga = (await call('POST', '/shop/stores', { name: 'IGA' })).body;
+  assert.equal(iga.search_url, null);
+  let r = await call('PATCH', `/shop/stores/${iga.id}`, { search_url: 'https://shop.example.com.au/search?q={q}' });
+  assert.equal(r.body.search_url, 'https://shop.example.com.au/search?q={q}');
+  for (const bad of ['http://shop.example.com.au/?q={q}', 'https://shop.example.com.au/', 'javascript:alert(1)//{q}']) {
+    assert.equal((await call('PATCH', `/shop/stores/${iga.id}`, { search_url: bad })).status, 400);
+  }
+  r = await call('PATCH', `/shop/stores/${iga.id}`, { search_url: '' });
+  assert.equal(r.body.search_url, null);
+
+  // A new or changed price is checked now; saving the same price again leaves its date alone,
+  // unless it's marked as checked (looked up and still right).
+  const id = (await call('POST', '/shop/items', { name: 'Oats' })).body.product_id;
+  let p = (await call('PATCH', `/shop/products/${id}`, { prices: { [iga.id]: 300 } })).body;
+  assert.ok(p.checked[iga.id]);
+  const old = '2026-01-01 00:00:00';
+  const backup = (await call('GET', '/export')).body;
+  backup.shopping.prices = backup.shopping.prices.map((x) => ({ ...x, checked_at: old }));
+  await call('POST', '/import', backup);
+  p = (await call('PATCH', `/shop/products/${id}`, { prices: { [iga.id]: 300 } })).body;
+  assert.equal(p.checked[iga.id], old);
+  p = (await call('PATCH', `/shop/products/${id}`, { prices: { [iga.id]: 300 }, checked: [iga.id] })).body;
+  assert.notEqual(p.checked[iga.id], old);
+  await call('POST', '/import', backup);
+  p = (await call('PATCH', `/shop/products/${id}`, { checked: [iga.id] })).body;
+  assert.notEqual(p.checked[iga.id], old);
+  await call('POST', '/import', backup);
+  p = (await call('PATCH', `/shop/products/${id}`, { prices: { [iga.id]: 320 } })).body;
+  assert.deepEqual([p.prices[iga.id], p.checked[iga.id] !== old], [320, true]);
+  // Kept in a backup, and an older backup without dates restores with none.
+  shop = (await call('GET', '/export')).body.shopping;
+  assert.equal(shop.stores.find((s) => s.name === 'Aldi').search_url, 'https://www.aldi.com.au/results?q={q}');
+  delete backup.shopping.prices[0].checked_at;
+  await call('POST', '/import', backup);
+  assert.equal((await call('GET', '/shop')).body.products[0].checked[iga.id], null);
+}));
