@@ -363,6 +363,15 @@ const MIGRATIONS = [
   );
   CREATE INDEX shop_items_owner ON shop_items (owner_id);
   `,
+  // 21: a colour for each store (the chains in their own), a product priced per kg or L as well as
+  // each, and the store something was ticked off at, so what's been spent can be shown.
+  `
+  ALTER TABLE shop_stores ADD COLUMN color TEXT;
+  UPDATE shop_stores SET color = CASE lower(name) WHEN 'woolworths' THEN '#178841' WHEN 'coles' THEN '#e01a22' WHEN 'aldi' THEN '#1f4fa3' END
+    WHERE color IS NULL;
+  ALTER TABLE shop_products ADD COLUMN price_per TEXT NOT NULL DEFAULT 'each';
+  ALTER TABLE shop_items ADD COLUMN done_store_id INTEGER REFERENCES shop_stores(id) ON DELETE SET NULL;
+  `,
 ];
 
 function openDatabase(file) {

@@ -87,9 +87,17 @@ test('shopping: the shared list and each login\'s own list', () => withServer({}
   assert.deepEqual(main.products.map((p) => p.name), ['Bread', 'Coffee', 'Tea']);
   const sams = (await sam('GET', '/shop?list=mine')).body;
   assert.deepEqual(sams.items.map((i) => i.id), [samsOwn.id]);
-  // Sam ticks off something on the shared list, and everyone sees who.
-  await sam('PATCH', `/shop/items/${bread.id}`, { done: true });
-  assert.equal((await call('GET', '/shop?list=shared')).body.items[0].done_by_name, 'Sam');
+  // Sam ticks off something on the shared list at Coles, and everyone sees who, in Sam's colour, and where.
+  const coles = main.stores.find((s) => s.name === 'Coles').id;
+  await call('PATCH', '/logins/' + (await call('GET', '/logins')).body.find((l) => l.name === 'Sam').id, { colour: '#aa3300' });
+  await sam('PATCH', `/shop/items/${bread.id}`, { done: true, store_id: coles });
+  let ticked = (await call('GET', '/shop?list=shared')).body.items[0];
+  assert.deepEqual([ticked.done_by_name, ticked.done_by_colour, ticked.done_store_id], ['Sam', '#aa3300', coles]);
+  await sam('PATCH', `/shop/items/${bread.id}`, { done: false });
+  ticked = (await call('GET', '/shop?list=shared')).body.items[0];
+  assert.deepEqual([ticked.done_by, ticked.done_store_id], [null, null]);
+  await sam('PATCH', `/shop/items/${bread.id}`, { done: true, store_id: 999 });
+  assert.equal((await call('GET', '/shop?list=shared')).body.items[0].done_store_id, null);
   // Someone else's own list can't be changed.
   assert.equal((await call('PATCH', `/shop/items/${samsOwn.id}`, { qty: 3 })).status, 404);
   assert.equal((await call('DELETE', `/shop/items/${samsOwn.id}`)).status, 404);
@@ -173,6 +181,19 @@ test('shopping: stores, locations, sections, aisles, sizes and prices', () => wi
   const typed = (await call('POST', '/shop/items', { name: 'pink lady apples' })).body.product_id;
   assert.ok(typed !== id && typed !== other);
 
+  // Priced per kg or L: needs a size it can be worked out from.
+  assert.equal((await call('PATCH', `/shop/products/${other}`, { price_per: 'kg' })).body.price_per, 'kg');
+  assert.equal((await call('PATCH', `/shop/products/${other}`, { price_per: 'L' })).body.error, 'To price per L, give the size in mL or L.');
+  assert.equal((await call('PATCH', `/shop/products/${typed}`, { price_per: '100g' })).status, 400);
+  assert.equal((await call('PATCH', `/shop/products/${other}`, { price_per: 'dozen' })).status, 400);
+  assert.equal((await call('PATCH', `/shop/products/${other}`, { size: 2, unit: 'L' })).status, 400);
+
+  // The chains come with their own colours; others get one, and any can be changed.
+  assert.deepEqual(shop.stores.map((s) => s.color), ['#178841', '#e01a22', '#1f4fa3', iga.color]);
+  assert.match(iga.color, /^#[0-9a-f]{6}$/);
+  assert.equal((await call('PATCH', `/shop/stores/${iga.id}`, { color: '#123ABC' })).body.color, '#123abc');
+  assert.equal((await call('PATCH', `/shop/stores/${iga.id}`, { color: 'red' })).status, 400);
+
   // Removing a store forgets its locations and prices.
   await call('DELETE', `/shop/stores/${iga.id}`);
   shop = (await call('GET', '/shop')).body;
@@ -195,8 +216,8 @@ test('shopping: kept in a backup and restored', () => withServer({}, async (call
   const loc = (await call('POST', '/shop/locations', { store_id: iga.id, name: 'Townsville' })).body;
   const item = (await call('POST', '/shop/items', { name: 'Cheese', qty: 2 })).body;
   await call('PUT', `/shop/products/${item.product_id}/spot`, { location_id: loc.id, aisle: 7 });
-  await call('PATCH', `/shop/products/${item.product_id}`, { size: 500, unit: 'g', prices: { [iga.id]: 650 } });
-  await call('PATCH', `/shop/items/${item.id}`, { done: true });
+  await call('PATCH', `/shop/products/${item.product_id}`, { size: 500, unit: 'g', price_per: 'kg', prices: { [iga.id]: 650 } });
+  await call('PATCH', `/shop/items/${item.id}`, { done: true, store_id: iga.id });
   const backup = (await call('GET', '/export')).body;
   assert.equal(backup.shopping.products.length, 1);
   await call('DELETE', `/shop/stores/${iga.id}`);
@@ -208,7 +229,9 @@ test('shopping: kept in a backup and restored', () => withServer({}, async (call
   assert.deepEqual(shop.stores.map((s) => s.name), ['Woolworths', 'Coles', 'Aldi', 'IGA']);
   assert.deepEqual(shop.items.map((i) => [i.qty, Boolean(i.done_at)]), [[2, true]]);
   const p = shop.products[0];
-  assert.deepEqual([p.size, p.unit, p.prices, p.spots[loc.id].aisle], [500, 'g', { [iga.id]: 650 }, 7]);
+  assert.deepEqual([p.size, p.unit, p.price_per, p.prices, p.spots[loc.id].aisle], [500, 'g', 'kg', { [iga.id]: 650 }, 7]);
+  assert.equal(shop.items[0].done_store_id, iga.id);
+  assert.equal(shop.stores[3].color, iga.color);
   // A backup from before the shopping list, or from the first 0.9.7 test, leaves it as it is.
   delete backup.shopping;
   await call('POST', '/import', backup);

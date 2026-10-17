@@ -10,6 +10,12 @@ const { transaction, getSetting } = require('./db');
 
 const MAX_AISLE = 20;
 const UNITS = ['g', 'kg', 'mL', 'L', 'each', 'pack'];
+// A price can be for each one, or by weight or volume, worked out from the size: $10 per kg for a
+// 500 g pack is $5. [what it's measured in, how many g or mL the price is for]
+const PRICE_PER = { each: null, kg: ['weight', 1000], '100g': ['weight', 100], L: ['volume', 1000], '100mL': ['volume', 100] };
+const MEASURE = { g: 'weight', kg: 'weight', mL: 'volume', L: 'volume' };
+// Colours for stores added later, after the chains' own.
+const STORE_COLOURS = ['#ea580c', '#9333ea', '#0891b2', '#db2777', '#ca8a04', '#64748b'];
 // Named sections a new location starts with. A section's order puts it among the aisles:
 // 0.1 to 0.9 come before Aisle 1 (in that order), and 21 comes after Aisle 20.
 const DEFAULT_SECTIONS = [['Produce', 0.1], ['Bakery', 0.2], ['Deli', 0.3], ['Meat', 0.4], ['Dairy', 21.1], ['Freezer', 21.2]];
@@ -45,6 +51,18 @@ function sizeOf(b) {
   if (size !== null && unit === null) throw new BadRequest('Pick a unit for the size, like g or L.');
   return { size, unit };
 }
+const colour = (v) => {
+  if (typeof v !== 'string' || !/^#[0-9a-f]{6}$/i.test(v)) throw new BadRequest('The colour should look like #1f2937.');
+  return v.toLowerCase();
+};
+// Pricing by weight or volume needs a size it can be worked out from.
+function pricePer(per, size, unit) {
+  if (!(per in PRICE_PER)) throw new BadRequest(`The price should be per ${Object.keys(PRICE_PER).join(', ')}.`);
+  if (PRICE_PER[per] && (!size || MEASURE[unit] !== PRICE_PER[per][0])) {
+    throw new BadRequest(`To price per ${per}, give the size in ${PRICE_PER[per][0] === 'weight' ? 'g or kg' : 'mL or L'}.`);
+  }
+  return per;
+}
 const body = (req) => (req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {});
 
 function createShop(db) {
@@ -74,8 +92,8 @@ function createShop(db) {
     if (!item || (item.owner_id !== null && item.owner_id !== req.login.id)) return null;
     return item;
   };
-  const loginNames = () => new Map([[0, getSetting(db, 'main_login_name') || 'Main'],
-    ...all('SELECT id, name FROM logins').map((l) => [l.id, l.name])]);
+  const loginsById = () => new Map([[0, { name: getSetting(db, 'main_login_name') || 'Main', colour: getSetting(db, 'main_colour') || null }],
+    ...all('SELECT id, name, colour FROM logins').map((l) => [l.id, { name: l.name, colour: l.colour || null }])]);
   const exists = (table, id) => Boolean(one(`SELECT id FROM ${table} WHERE id = ?`, Number(id)));
 
   function productsView() {
@@ -92,19 +110,23 @@ function createShop(db) {
   function view(req) {
     const list = listOf(req);
     const [where, args] = onList(ownerOf(req, list));
-    const names = loginNames();
+    const logins = loginsById();
     const mine = req.login.id;
     return {
       rev,
       list,
       max_aisle: MAX_AISLE,
       units: UNITS,
+      price_per: Object.keys(PRICE_PER),
       stores: all('SELECT * FROM shop_stores ORDER BY sort_order, id'),
       locations: all('SELECT * FROM shop_locations ORDER BY name COLLATE NOCASE'),
       sections: all('SELECT * FROM shop_sections ORDER BY location_id, position, name COLLATE NOCASE'),
       products: productsView(),
-      items: all(`SELECT id, product_id, qty, done_at, done_by FROM shop_items WHERE ${where} ORDER BY id`, ...args)
-        .map((it) => ({ ...it, done_by_name: it.done_at ? names.get(it.done_by) || null : null })),
+      items: all(`SELECT id, product_id, qty, done_at, done_by, done_store_id FROM shop_items WHERE ${where} ORDER BY id`, ...args)
+        .map((it) => {
+          const who = it.done_at ? logins.get(it.done_by) : null;
+          return { ...it, done_by_name: who ? who.name : null, done_by_colour: who ? who.colour : null };
+        }),
       counts: {
         shared: count('shop_items', 'WHERE owner_id IS NULL AND done_at IS NULL'),
         mine: count('shop_items', 'WHERE owner_id = ? AND done_at IS NULL', mine),
@@ -118,16 +140,23 @@ function createShop(db) {
   // ---------- Stores, their locations and the sections at each ----------
 
   router.post('/stores', (req, res) => {
-    const name = text(body(req).name, 'The store');
-    if (count('shop_stores') >= LIMITS.stores) throw new BadRequest(`That's more stores than the list can keep (${LIMITS.stores}).`);
-    const { lastInsertRowid } = db.prepare('INSERT INTO shop_stores (name, sort_order) VALUES (?, ?)').run(name, count('shop_stores'));
+    const b = body(req);
+    const name = text(b.name, 'The store');
+    const n = count('shop_stores');
+    if (n >= LIMITS.stores) throw new BadRequest(`That's more stores than the list can keep (${LIMITS.stores}).`);
+    const c = b.color ? colour(b.color) : STORE_COLOURS[n % STORE_COLOURS.length];
+    const { lastInsertRowid } = db.prepare('INSERT INTO shop_stores (name, sort_order, color) VALUES (?, ?, ?)').run(name, n, c);
     res.status(201).json(one('SELECT * FROM shop_stores WHERE id = ?', Number(lastInsertRowid)));
   });
 
   router.patch('/stores/:id', (req, res) => {
     const id = Number(req.params.id);
-    if (!exists('shop_stores', id)) return res.status(404).json({ error: 'Not found.' });
-    db.prepare('UPDATE shop_stores SET name = ? WHERE id = ?').run(text(body(req).name, 'The store'), id);
+    const before = one('SELECT * FROM shop_stores WHERE id = ?', id);
+    if (!before) return res.status(404).json({ error: 'Not found.' });
+    const b = body(req);
+    const name = 'name' in b ? text(b.name, 'The store') : before.name;
+    const c = 'color' in b ? colour(b.color) : before.color;
+    db.prepare('UPDATE shop_stores SET name = ?, color = ? WHERE id = ?').run(name, c, id);
     res.json(one('SELECT * FROM shop_stores WHERE id = ?', id));
   });
 
@@ -214,7 +243,7 @@ function createShop(db) {
     name, size ?? 0, unit ?? '', id);
   const sizeText = (size, unit) => (size ? ` (${size} ${unit})` : unit ? ` (${unit})` : '');
 
-  // { name?, size?, unit?, prices?: { [store id]: cents | null } }
+  // { name?, size?, unit?, price_per?, prices?: { [store id]: cents | null } }
   router.patch('/products/:id', (req, res) => {
     const id = Number(req.params.id);
     const before = one('SELECT * FROM shop_products WHERE id = ?', id);
@@ -222,6 +251,7 @@ function createShop(db) {
     const b = body(req);
     const name = 'name' in b ? text(b.name, 'The name') : before.name;
     const { size, unit } = 'size' in b || 'unit' in b ? sizeOf({ size: b.size, unit: b.unit }) : before;
+    const per = pricePer('price_per' in b ? b.price_per : before.price_per, size, unit);
     if (sameProduct(name, size, unit, id)) throw new BadRequest(`"${name}${sizeText(size, unit)}" is already in your product list.`);
     const prices = b.prices && typeof b.prices === 'object' ? Object.entries(b.prices) : [];
     const set = prices.map(([s, cents]) => {
@@ -229,7 +259,7 @@ function createShop(db) {
       return [Number(s), cents === null || cents === '' ? null : int(cents, 0, 100000, 'The price')];
     });
     transaction(db, () => {
-      db.prepare('UPDATE shop_products SET name = ?, size = ?, unit = ? WHERE id = ?').run(name, size, unit, id);
+      db.prepare('UPDATE shop_products SET name = ?, size = ?, unit = ?, price_per = ? WHERE id = ?').run(name, size, unit, per, id);
       for (const [s, cents] of set) {
         if (cents === null) db.prepare('DELETE FROM shop_prices WHERE product_id = ? AND store_id = ?').run(id, s);
         else db.prepare('INSERT INTO shop_prices (product_id, store_id, price_cents) VALUES (?, ?, ?) ON CONFLICT (product_id, store_id) DO UPDATE SET price_cents = excluded.price_cents').run(id, s, cents);
@@ -288,7 +318,7 @@ function createShop(db) {
       }
       const existing = one(`SELECT * FROM shop_items WHERE product_id = ? AND ${where}`, productId, ...args);
       if (existing && existing.done_at) {
-        db.prepare('UPDATE shop_items SET qty = ?, done_at = NULL, done_by = NULL WHERE id = ?').run(qty, existing.id);
+        db.prepare('UPDATE shop_items SET qty = ?, done_at = NULL, done_by = NULL, done_store_id = NULL WHERE id = ?').run(qty, existing.id);
         return { id: existing.id, added: false };
       }
       if (existing) {
@@ -302,17 +332,20 @@ function createShop(db) {
     res.status(result.added ? 201 : 200).json(one('SELECT id, product_id, qty, done_at FROM shop_items WHERE id = ?', result.id));
   });
 
-  // { qty } and/or { done: true | false }. Ticking off notes who did it.
+  // { qty } and/or { done: true | false, store_id }. Ticking off notes who did it, and at which store.
   router.patch('/items/:id', (req, res) => {
     const item = itemFor(req);
     if (!item) return res.status(404).json({ error: 'Not found.' });
     const b = body(req);
+    const store = b.store_id && exists('shop_stores', b.store_id) ? Number(b.store_id) : null;
     transaction(db, () => {
       if ('qty' in b) db.prepare('UPDATE shop_items SET qty = ? WHERE id = ?').run(int(b.qty, 1, 99, 'How many'), item.id);
-      if (b.done === true && !item.done_at) db.prepare("UPDATE shop_items SET done_at = datetime('now'), done_by = ? WHERE id = ?").run(req.login.id, item.id);
-      if (b.done === false) db.prepare('UPDATE shop_items SET done_at = NULL, done_by = NULL WHERE id = ?').run(item.id);
+      if (b.done === true && !item.done_at) {
+        db.prepare("UPDATE shop_items SET done_at = datetime('now'), done_by = ?, done_store_id = ? WHERE id = ?").run(req.login.id, store, item.id);
+      }
+      if (b.done === false) db.prepare('UPDATE shop_items SET done_at = NULL, done_by = NULL, done_store_id = NULL WHERE id = ?').run(item.id);
     });
-    res.json(one('SELECT id, product_id, qty, done_at, done_by FROM shop_items WHERE id = ?', item.id));
+    res.json(one('SELECT id, product_id, qty, done_at, done_by, done_store_id FROM shop_items WHERE id = ?', item.id));
   });
 
   // Taken off the list without being bought. It stays in the product list.
@@ -342,13 +375,13 @@ function createShop(db) {
 // ---------- Backup and restore ----------
 
 const SHOP_TABLES = {
-  stores: ['shop_stores', ['id', 'name', 'sort_order']],
+  stores: ['shop_stores', ['id', 'name', 'sort_order', 'color']],
   locations: ['shop_locations', ['id', 'store_id', 'name']],
   sections: ['shop_sections', ['id', 'location_id', 'name', 'position']],
-  products: ['shop_products', ['id', 'name', 'size', 'unit']],
+  products: ['shop_products', ['id', 'name', 'size', 'unit', 'price_per']],
   prices: ['shop_prices', ['product_id', 'store_id', 'price_cents']],
   spots: ['shop_spots', ['product_id', 'location_id', 'aisle', 'section_id', 'missing']],
-  items: ['shop_items', ['id', 'product_id', 'owner_id', 'qty', 'added_at', 'done_at', 'done_by']],
+  items: ['shop_items', ['id', 'product_id', 'owner_id', 'qty', 'added_at', 'done_at', 'done_by', 'done_store_id']],
 };
 
 function exportShop(db) {

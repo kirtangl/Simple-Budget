@@ -1795,7 +1795,7 @@ button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
 .shop-size { font-weight: 400; font-size: .85em; color: var(--muted); white-space: nowrap; }
 .shop-item.got .title, .shop-item.got .shop-price, .shop-item.got .shop-qty { color: var(--muted); }
 .shop-item.got .title { text-decoration: line-through; }
-.shop-item.got { opacity: .75; }
+.shop-item.got > input, .shop-item.got .title, .shop-item.got .shop-ctrl { opacity: .7; }
 .shop-qty { font-weight: 600; color: var(--brand); min-width: 2.2em; text-align: center; flex: none; }
 .shop-price { flex: none; min-width: 3.6em; text-align: right; }
 .stepper { display: inline-flex; align-items: center; gap: 2px; flex: none; }
@@ -1806,7 +1806,15 @@ button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
 .shop-clear { display: flex; justify-content: flex-end; margin: 0 0 12px; }
 .shop-totals { padding-top: 6px; }
 .shop-total { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 0; }
+.shop-total.grand { border-top: 1px solid var(--line); font-weight: 600; }
 .shop-total.save { color: var(--paid); border-top: 1px solid var(--line); }
+.shop-total.best b { color: var(--paid); }
+.g-best { color: var(--paid); font-weight: 600; }
+/* A store or login in its own colour. White text on the colour reads in every theme. */
+.shop-tag { display: inline-block; padding: 0 7px; border-radius: 999px; background: var(--tag); color: #fff; font-size: .75rem; font-weight: 600; line-height: 1.6; }
+.shop-item.got .shop-who { color: var(--muted); }
+.store-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+.shop-split > span { white-space: nowrap; }
 .shop-split { display: flex; flex-wrap: wrap; gap: 6px 14px; padding-top: 4px; font-size: .9rem; }
 .shop-split b { font-weight: 600; }
 /* The aisle picker: big enough to tap in a shop. */

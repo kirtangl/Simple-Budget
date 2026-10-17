@@ -6,12 +6,12 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 
 ### New
 - **Shopping**: a new tab with a shared shopping list, and one of your own under **Mine**. Type an item and press **Add**; anything you've added before is suggested as you type.
-- The store you're at shows as a heading at the top. Press **Change** to pick another. Woolworths, Coles and Aldi are there to start with, and **Add a store** adds others, like IGA. Each store can have several locations.
+- The store you're at shows as a heading at the top. Press **Change** to pick another. Woolworths, Coles and Aldi are there to start with, and **Add a store** adds others, like IGA. Each store can have several locations, and its own colour (Woolworths green, Coles red and Aldi blue to start).
 - The list is split into folding sections by aisle, from 0 to 20, with named sections like Produce, Deli, Meat, Dairy and Freezer slotted in where they are in that store. The named sections have an **Edit** button to change their name or order. The order takes decimals, so Produce 0.1, Bakery 0.2 and so on come before Aisle 1 in the order you set.
 - New items start in **Unsorted**. Tap **Set aisle** once and the item is sorted at that store from then on. Every location remembers its own aisles, and an item can be marked as not sold at a store.
-- Each item shows how many (×1, ×2 …) with − and + buttons. Tap an item to set its size and unit (like 2 L or 500 g) and its price at each store.
-- The totals show the cost at the store you're at, the **Total potential savings** if you bought each item wherever it's cheapest, and how that would split across the stores. When prices are the same, the store you're at is used.
-- Ticking something off greys it out and moves it to the bottom of its section, with who ticked it. Untick it if it was a mistake. **Clear ticked items** removes them once you're done, and keeps anything you didn't find on the list for next time.
+- Each item shows how many (×1, ×2 …) with − and + buttons. Tap an item to set its size and unit (like 2 L or 500 g) and its price at each store. A price can be each, or per kg, per 100 g, per L or per 100 mL, and the cost is worked out from the size: $10 per kg for 500 g is $5.
+- Ticking something off greys it out and moves it to the bottom of its section, showing who ticked it (in their colour) and which store it was bought at. Untick it if it was a mistake. **Clear ticked items** removes them once you're done, and keeps anything you didn't find on the list for next time.
+- The totals show what's been **Spent** at each store so far, the **Total remaining** at the store you're at, the **Total shop**, the **Total potential savings** if you bought what's left wherever it's cheapest, the **Total optimal remaining**, and how that would split across the stores. When prices are the same, the store you're at is used. Each section's heading shows its total, with the cheapest it could be in green brackets.
 - **Product list**, beside Add, shows everything you've bought before as buttons under their aisles at your store. Tap to add, tap again for one more, or press **Edit** to change a product.
 - The list updates by itself every few seconds, so when someone else ticks something off or adds something, you see it.
 
