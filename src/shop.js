@@ -7,6 +7,7 @@
 
 const express = require('express');
 const { transaction, getSetting } = require('./db');
+const { createPriceLookup, LookupError } = require('./prices');
 
 const MAX_AISLE = 20;
 const UNITS = ['g', 'kg', 'mL', 'L', 'each', 'pack'];
@@ -55,6 +56,22 @@ const colour = (v) => {
   if (typeof v !== 'string' || !/^#[0-9a-f]{6}$/i.test(v)) throw new BadRequest('The colour should look like #1f2937.');
   return v.toLowerCase();
 };
+// The chains' search links (also set by migration 22), filled in when one is added by name.
+const KNOWN_SEARCH = {
+  woolworths: 'https://www.woolworths.com.au/shop/search/products?searchTerm={q}',
+  coles: 'https://www.coles.com.au/search/products?q={q}',
+  aldi: 'https://www.aldi.com.au/results?q={q}',
+};
+// A store's search link: its website's search page with {q} where the product goes, like
+// https://www.example.com.au/search?q={q}. Blank for none.
+const searchUrl = (v) => {
+  if (v === null || v === undefined || (typeof v === 'string' && !v.trim())) return null;
+  const s = typeof v === 'string' ? v.trim() : '';
+  let ok = s.length <= 300 && s.includes('{q}');
+  try { ok = ok && new URL(s.replace(/\{q\}/g, 'x')).protocol === 'https:'; } catch { ok = false; }
+  if (!ok) throw new BadRequest('The search link should start with https:// and have {q} where the product name goes.');
+  return s;
+};
 // Pricing by weight or volume needs a size it can be worked out from.
 function pricePer(per, size, unit) {
   if (!(per in PRICE_PER)) throw new BadRequest(`The price should be per ${Object.keys(PRICE_PER).join(', ')}.`);
@@ -65,7 +82,7 @@ function pricePer(per, size, unit) {
 }
 const body = (req) => (req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {});
 
-function createShop(db) {
+function createShop(db, { lookup = createPriceLookup({ db }) } = {}) {
   const router = express.Router();
   const count = (table, where = '', ...args) => db.prepare(`SELECT count(*) AS n FROM ${table} ${where}`).get(...args).n;
   const one = (sql, ...args) => { const r = db.prepare(sql).get(...args); return r ? { ...r } : null; };
@@ -99,9 +116,12 @@ function createShop(db) {
   function productsView() {
     const prices = all('SELECT * FROM shop_prices');
     const spots = all('SELECT * FROM shop_spots');
+    const matches = all('SELECT * FROM shop_matches');
     return all('SELECT * FROM shop_products ORDER BY name COLLATE NOCASE, size').map((p) => ({
       ...p,
       prices: Object.fromEntries(prices.filter((x) => x.product_id === p.id).map((x) => [x.store_id, x.price_cents])),
+      checked: Object.fromEntries(prices.filter((x) => x.product_id === p.id).map((x) => [x.store_id, x.checked_at])),
+      matches: Object.fromEntries(matches.filter((x) => x.product_id === p.id).map((x) => [x.store_id, { url: x.url, name: x.name, size: x.size }])),
       spots: Object.fromEntries(spots.filter((x) => x.product_id === p.id)
         .map((x) => [x.location_id, { aisle: x.aisle, section_id: x.section_id, missing: Boolean(x.missing) }])),
     }));
@@ -118,7 +138,8 @@ function createShop(db) {
       max_aisle: MAX_AISLE,
       units: UNITS,
       price_per: Object.keys(PRICE_PER),
-      stores: all('SELECT * FROM shop_stores ORDER BY sort_order, id'),
+      stores: all('SELECT * FROM shop_stores ORDER BY sort_order, id').map((st) => ({ ...st, auto: Boolean(lookup.chainOf(st)) })),
+      lookup: lookup.status(),
       locations: all('SELECT * FROM shop_locations ORDER BY name COLLATE NOCASE'),
       sections: all('SELECT * FROM shop_sections ORDER BY location_id, position, name COLLATE NOCASE'),
       products: productsView(),
@@ -145,7 +166,8 @@ function createShop(db) {
     const n = count('shop_stores');
     if (n >= LIMITS.stores) throw new BadRequest(`That's more stores than the list can keep (${LIMITS.stores}).`);
     const c = b.color ? colour(b.color) : STORE_COLOURS[n % STORE_COLOURS.length];
-    const { lastInsertRowid } = db.prepare('INSERT INTO shop_stores (name, sort_order, color) VALUES (?, ?, ?)').run(name, n, c);
+    const { lastInsertRowid } = db.prepare('INSERT INTO shop_stores (name, sort_order, color, search_url) VALUES (?, ?, ?, ?)')
+      .run(name, n, c, 'search_url' in b ? searchUrl(b.search_url) : KNOWN_SEARCH[name.toLowerCase()] || null);
     res.status(201).json(one('SELECT * FROM shop_stores WHERE id = ?', Number(lastInsertRowid)));
   });
 
@@ -156,7 +178,8 @@ function createShop(db) {
     const b = body(req);
     const name = 'name' in b ? text(b.name, 'The store') : before.name;
     const c = 'color' in b ? colour(b.color) : before.color;
-    db.prepare('UPDATE shop_stores SET name = ?, color = ? WHERE id = ?').run(name, c, id);
+    const link = 'search_url' in b ? searchUrl(b.search_url) : before.search_url;
+    db.prepare('UPDATE shop_stores SET name = ?, color = ?, search_url = ? WHERE id = ?').run(name, c, link, id);
     res.json(one('SELECT * FROM shop_stores WHERE id = ?', id));
   });
 
@@ -243,7 +266,8 @@ function createShop(db) {
     name, size ?? 0, unit ?? '', id);
   const sizeText = (size, unit) => (size ? ` (${size} ${unit})` : unit ? ` (${unit})` : '');
 
-  // { name?, size?, unit?, price_per?, prices?: { [store id]: cents | null } }
+  // { name?, size?, unit?, price_per?, prices?: { [store id]: cents | null }, checked?: [store ids] }.
+  // A changed price counts as checked today, and so does one in checked: looked at and still right.
   router.patch('/products/:id', (req, res) => {
     const id = Number(req.params.id);
     const before = one('SELECT * FROM shop_products WHERE id = ?', id);
@@ -258,11 +282,18 @@ function createShop(db) {
       if (!exists('shop_stores', s)) throw new BadRequest('That store no longer exists.');
       return [Number(s), cents === null || cents === '' ? null : int(cents, 0, 100000, 'The price')];
     });
+    const checked = new Set(Array.isArray(b.checked) ? b.checked.map(Number) : []);
     transaction(db, () => {
       db.prepare('UPDATE shop_products SET name = ?, size = ?, unit = ?, price_per = ? WHERE id = ?').run(name, size, unit, per, id);
       for (const [s, cents] of set) {
-        if (cents === null) db.prepare('DELETE FROM shop_prices WHERE product_id = ? AND store_id = ?').run(id, s);
-        else db.prepare('INSERT INTO shop_prices (product_id, store_id, price_cents) VALUES (?, ?, ?) ON CONFLICT (product_id, store_id) DO UPDATE SET price_cents = excluded.price_cents').run(id, s, cents);
+        if (cents === null) { db.prepare('DELETE FROM shop_prices WHERE product_id = ? AND store_id = ?').run(id, s); continue; }
+        db.prepare(`INSERT INTO shop_prices (product_id, store_id, price_cents, checked_at) VALUES (?, ?, ?, datetime('now'))
+          ON CONFLICT (product_id, store_id) DO UPDATE SET price_cents = excluded.price_cents,
+          checked_at = CASE WHEN price_cents <> excluded.price_cents OR ? THEN excluded.checked_at ELSE checked_at END`)
+          .run(id, s, cents, checked.has(s) ? 1 : 0);
+      }
+      for (const s of checked) {
+        if (!set.some(([x]) => x === s)) db.prepare("UPDATE shop_prices SET checked_at = datetime('now') WHERE product_id = ? AND store_id = ?").run(id, s);
       }
     });
     res.json(productView(id));
@@ -297,6 +328,64 @@ function createShop(db) {
     const { changes } = db.prepare('DELETE FROM shop_products WHERE id = ?').run(Number(req.params.id));
     if (!changes) return res.status(404).json({ error: 'Not found.' });
     res.json({ ok: true });
+  });
+
+  // ---------- Automatic prices (src/prices.js) ----------
+
+  router.get('/lookup', (req, res) => res.json(lookup.status()));
+
+  // { key } to add or change the Apify key, { remove_key: true } to forget it, { weekly }.
+  router.put('/lookup', (req, res) => {
+    const b = body(req);
+    if (b.remove_key === true) lookup.setKey('');
+    else if (b.key !== undefined) {
+      const k = typeof b.key === 'string' ? b.key.trim() : '';
+      if (!/^[A-Za-z0-9_-]{10,200}$/.test(k)) throw new BadRequest("That doesn't look like an Apify key. It starts with apify_api_ and has no spaces.");
+      lookup.setKey(k);
+    }
+    if ('weekly' in b) lookup.setWeekly(b.weekly === true);
+    res.json(lookup.status());
+  });
+
+  router.post('/lookup/refresh', async (req, res) => {
+    const out = await lookup.refresh();
+    if (out.error && !out.updated) throw new BadRequest(out.error);
+    res.json({ ...out, status: lookup.status() });
+  });
+
+  // What each store sells under a name (the product's own name and size unless one is given).
+  router.post('/products/:id/find', async (req, res) => {
+    const p = one('SELECT * FROM shop_products WHERE id = ?', Number(req.params.id));
+    if (!p) return res.status(404).json({ error: 'Not found.' });
+    const b = body(req);
+    const q = b.q !== undefined ? text(b.q, 'The search') : `${p.name}${p.size ? ` ${p.size}${p.unit}` : ''}`;
+    res.json({ q, results: await lookup.find(q) });
+  });
+
+  // Matches a product to a store's own product, from a find, and saves its price as checked today:
+  // { store_id, url, name, size, price_cents }. { store_id, remove: true } unmatches it (the price stays).
+  router.put('/products/:id/match', (req, res) => {
+    const id = Number(req.params.id);
+    const b = body(req);
+    const store = Number(b.store_id);
+    if (!exists('shop_products', id) || !exists('shop_stores', store)) return res.status(404).json({ error: 'Not found.' });
+    if (b.remove === true) {
+      db.prepare('DELETE FROM shop_matches WHERE product_id = ? AND store_id = ?').run(id, store);
+      return res.json(productView(id));
+    }
+    const url = typeof b.url === 'string' ? b.url.trim() : '';
+    if (!/^https:\/\/[^\s]+$/i.test(url) || url.length > 500) throw new BadRequest("That product link doesn't look right.");
+    const name = typeof b.name === 'string' && b.name.trim() ? b.name.trim().slice(0, 200) : null;
+    if (!name) throw new BadRequest('The product needs a name.');
+    const size = typeof b.size === 'string' && b.size.trim() ? b.size.trim().slice(0, 40) : null;
+    const price = int(b.price_cents, 0, 100000, 'The price');
+    transaction(db, () => {
+      db.prepare(`INSERT INTO shop_matches (product_id, store_id, url, name, size) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (product_id, store_id) DO UPDATE SET url = excluded.url, name = excluded.name, size = excluded.size`).run(id, store, url, name, size);
+      db.prepare(`INSERT INTO shop_prices (product_id, store_id, price_cents, checked_at) VALUES (?, ?, ?, datetime('now'))
+        ON CONFLICT (product_id, store_id) DO UPDATE SET price_cents = excluded.price_cents, checked_at = excluded.checked_at`).run(id, store, price);
+    });
+    res.json(productView(id));
   });
 
   // ---------- The lists ----------
@@ -364,7 +453,7 @@ function createShop(db) {
   });
 
   router.use((err, req, res, next) => {
-    if (err instanceof BadRequest) return res.status(400).json({ error: err.message });
+    if (err instanceof BadRequest || err instanceof LookupError) return res.status(400).json({ error: err.message });
     if (err && /UNIQUE/.test(err.message)) return res.status(400).json({ error: 'That name is already used.' });
     next(err);
   });
@@ -375,11 +464,12 @@ function createShop(db) {
 // ---------- Backup and restore ----------
 
 const SHOP_TABLES = {
-  stores: ['shop_stores', ['id', 'name', 'sort_order', 'color']],
+  stores: ['shop_stores', ['id', 'name', 'sort_order', 'color', 'search_url']],
   locations: ['shop_locations', ['id', 'store_id', 'name']],
   sections: ['shop_sections', ['id', 'location_id', 'name', 'position']],
   products: ['shop_products', ['id', 'name', 'size', 'unit', 'price_per']],
-  prices: ['shop_prices', ['product_id', 'store_id', 'price_cents']],
+  prices: ['shop_prices', ['product_id', 'store_id', 'price_cents', 'checked_at']],
+  matches: ['shop_matches', ['product_id', 'store_id', 'url', 'name', 'size']],
   spots: ['shop_spots', ['product_id', 'location_id', 'aisle', 'section_id', 'missing']],
   items: ['shop_items', ['id', 'product_id', 'owner_id', 'qty', 'added_at', 'done_at', 'done_by', 'done_store_id']],
 };

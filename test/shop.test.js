@@ -238,3 +238,118 @@ test('shopping: kept in a backup and restored', () => withServer({}, async (call
   assert.equal((await call('POST', '/import', { ...backup, shopping: { locations: [], products: [] } })).status, 200);
   assert.equal((await call('GET', '/shop')).body.products.length, 1);
 }));
+
+test('shopping: store search links and when prices were checked', () => withServer({}, async (call) => {
+  // The chains come with their search links; a store added later has none unless it's a chain.
+  let shop = (await call('GET', '/shop')).body;
+  assert.match(shop.stores.find((s) => s.name === 'Coles').search_url, /^https:\/\/www\.coles\.com\.au\/.*\{q\}/);
+  const iga = (await call('POST', '/shop/stores', { name: 'IGA' })).body;
+  assert.equal(iga.search_url, null);
+  let r = await call('PATCH', `/shop/stores/${iga.id}`, { search_url: 'https://shop.example.com.au/search?q={q}' });
+  assert.equal(r.body.search_url, 'https://shop.example.com.au/search?q={q}');
+  for (const bad of ['http://shop.example.com.au/?q={q}', 'https://shop.example.com.au/', 'javascript:alert(1)//{q}']) {
+    assert.equal((await call('PATCH', `/shop/stores/${iga.id}`, { search_url: bad })).status, 400);
+  }
+  r = await call('PATCH', `/shop/stores/${iga.id}`, { search_url: '' });
+  assert.equal(r.body.search_url, null);
+
+  // A new or changed price is checked now; saving the same price again leaves its date alone,
+  // unless it's marked as checked (looked up and still right).
+  const id = (await call('POST', '/shop/items', { name: 'Oats' })).body.product_id;
+  let p = (await call('PATCH', `/shop/products/${id}`, { prices: { [iga.id]: 300 } })).body;
+  assert.ok(p.checked[iga.id]);
+  const old = '2026-01-01 00:00:00';
+  const backup = (await call('GET', '/export')).body;
+  backup.shopping.prices = backup.shopping.prices.map((x) => ({ ...x, checked_at: old }));
+  await call('POST', '/import', backup);
+  p = (await call('PATCH', `/shop/products/${id}`, { prices: { [iga.id]: 300 } })).body;
+  assert.equal(p.checked[iga.id], old);
+  p = (await call('PATCH', `/shop/products/${id}`, { prices: { [iga.id]: 300 }, checked: [iga.id] })).body;
+  assert.notEqual(p.checked[iga.id], old);
+  await call('POST', '/import', backup);
+  p = (await call('PATCH', `/shop/products/${id}`, { checked: [iga.id] })).body;
+  assert.notEqual(p.checked[iga.id], old);
+  await call('POST', '/import', backup);
+  p = (await call('PATCH', `/shop/products/${id}`, { prices: { [iga.id]: 320 } })).body;
+  assert.deepEqual([p.prices[iga.id], p.checked[iga.id] !== old], [320, true]);
+  // Kept in a backup, and an older backup without dates restores with none.
+  shop = (await call('GET', '/export')).body.shopping;
+  assert.equal(shop.stores.find((s) => s.name === 'Aldi').search_url, 'https://www.aldi.com.au/results?q={q}');
+  delete backup.shopping.prices[0].checked_at;
+  await call('POST', '/import', backup);
+  assert.equal((await call('GET', '/shop')).body.products[0].checked[iga.id], null);
+}));
+
+// A stand-in for the price lookup service: answers with made-up products for what's searched.
+function fakeLookup(catalogue, seen = []) {
+  return async (url, opts) => {
+    if (!String(url).startsWith('https://api.apify.com/')) return { ok: false, status: 404, json: async () => ({}) };
+    if (opts.headers.authorization !== 'Bearer apify_api_madeupkey123') return { ok: false, status: 401, json: async () => ({}) };
+    const input = JSON.parse(opts.body);
+    seen.push(input);
+    const rows = catalogue.filter((r) => input.chains.includes(r.chain)
+      && input.keywords.some((k) => r.name.toLowerCase().includes(k.toLowerCase().split(' ')[0])));
+    return { ok: true, status: 201, json: async () => rows };
+  };
+}
+
+test('shopping: automatic prices find, match and refresh', async () => {
+  const catalogue = [
+    { chain: 'woolworths', name: 'Woolworths Rolled Oats 750g', size: '750g', price: 2.8, url: 'https://www.woolworths.com.au/shop/productdetails/100001/oats' },
+    { chain: 'woolworths', name: 'Uncle Bob Quick Oats 500g', size: '500g', price: 4.5, url: 'https://www.woolworths.com.au/shop/productdetails/100002/quick-oats' },
+    { chain: 'coles', name: 'Coles Rolled Oats 750g', size: '750g', price: 3.0, url: 'https://www.coles.com.au/product/coles-rolled-oats-750g-200001' },
+    { chain: 'aldi', name: 'Oats without a link', size: '1kg', price: 3.1, url: 'not a link' },
+  ];
+  const seen = [];
+  await withServer({ fetchImpl: fakeLookup(catalogue, seen) }, async (call) => {
+    const stores = await storesOf(call);
+    const id = (await call('POST', '/shop/items', { name: 'Rolled oats' })).body.product_id;
+    // Nothing is looked up without a key, and a key is never sent back.
+    let r = await call('POST', `/shop/products/${id}/find`, {});
+    assert.equal(r.status, 400);
+    assert.equal((await call('PUT', '/shop/lookup', { key: 'not a key' })).status, 400);
+    r = await call('PUT', '/shop/lookup', { key: 'apify_api_wrongkey000' });
+    assert.deepEqual([r.body.key_set, JSON.stringify(r.body).includes('wrongkey')], [true, false]);
+    r = await call('POST', `/shop/products/${id}/find`, {});
+    assert.match(r.body.error, /turned down the key/);
+    await call('PUT', '/shop/lookup', { key: 'apify_api_madeupkey123' });
+
+    // Find shows each known store's products, leaving out results without a proper link.
+    r = await call('POST', `/shop/products/${id}/find`, { q: 'oats' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.results[stores.Woolworths].map((x) => x.price_cents), [280, 450]);
+    assert.equal(r.body.results[stores.Coles].length, 1);
+    assert.deepEqual(r.body.results[stores.Aldi], []);
+    assert.deepEqual(seen[0].chains.sort(), ['aldi', 'coles', 'woolworths']);
+    const shop = (await call('GET', '/shop')).body;
+    assert.deepEqual(shop.stores.map((s) => s.auto), [true, true, true]);
+
+    // Matching saves the store's product and its price.
+    const pick = r.body.results[stores.Woolworths][0];
+    let p = (await call('PUT', `/shop/products/${id}/match`, { store_id: stores.Woolworths, ...pick })).body;
+    assert.deepEqual([p.prices[stores.Woolworths], p.matches[stores.Woolworths].name], [280, 'Woolworths Rolled Oats 750g']);
+    await call('PUT', `/shop/products/${id}/match`, { store_id: stores.Coles, ...r.body.results[stores.Coles][0] });
+    assert.equal((await call('PUT', `/shop/products/${id}/match`, { store_id: stores.Coles, ...pick, url: 'javascript:x' })).status, 400);
+
+    // A refresh looks each match up at its own store only, and saves what changed.
+    catalogue[0].price = 3.2;
+    catalogue[2].url = 'https://www.coles.com.au/product/renamed';
+    catalogue[2].name = 'Coles Oats Renamed';
+    seen.length = 0;
+    r = await call('POST', '/shop/lookup/refresh', {});
+    assert.deepEqual([r.body.checked, r.body.updated, r.body.changed, r.body.missing], [2, 1, 1, 1]);
+    assert.deepEqual(seen.map((x) => x.chains), [['woolworths'], ['coles']]);
+    p = (await call('GET', '/shop')).body.products[0];
+    assert.deepEqual([p.prices[stores.Woolworths], p.prices[stores.Coles]], [320, 300]);
+    assert.equal((await call('GET', '/shop/lookup')).body.last.changed, 1);
+
+    // Unmatched, the price stays. Matches go in a backup, the key doesn't.
+    p = (await call('PUT', `/shop/products/${id}/match`, { store_id: stores.Coles, remove: true })).body;
+    assert.deepEqual([p.matches[stores.Coles], p.prices[stores.Coles]], [undefined, 300]);
+    const backup = (await call('GET', '/export')).body;
+    assert.equal(backup.shopping.matches.length, 1);
+    assert.equal(JSON.stringify(backup).includes('madeupkey'), false);
+    r = await call('PUT', '/shop/lookup', { remove_key: true, weekly: false });
+    assert.deepEqual([r.body.key_set, r.body.weekly], [false, false]);
+  });
+});

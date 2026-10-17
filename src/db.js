@@ -372,6 +372,27 @@ const MIGRATIONS = [
   ALTER TABLE shop_products ADD COLUMN price_per TEXT NOT NULL DEFAULT 'each';
   ALTER TABLE shop_items ADD COLUMN done_store_id INTEGER REFERENCES shop_stores(id) ON DELETE SET NULL;
   `,
+  // 22: a search link for each store (the chains get theirs), so a product can be looked up on the
+  // store's website, when each price was last checked (prices already kept count as checked now),
+  // and the store's own product each product is matched to, for automatic prices (src/prices.js).
+  `
+  ALTER TABLE shop_stores ADD COLUMN search_url TEXT;
+  UPDATE shop_stores SET search_url = CASE lower(name)
+    WHEN 'woolworths' THEN 'https://www.woolworths.com.au/shop/search/products?searchTerm={q}'
+    WHEN 'coles' THEN 'https://www.coles.com.au/search/products?q={q}'
+    WHEN 'aldi' THEN 'https://www.aldi.com.au/results?q={q}' END
+    WHERE search_url IS NULL;
+  ALTER TABLE shop_prices ADD COLUMN checked_at TEXT;
+  UPDATE shop_prices SET checked_at = datetime('now');
+  CREATE TABLE shop_matches (
+    product_id INTEGER NOT NULL REFERENCES shop_products(id) ON DELETE CASCADE,
+    store_id INTEGER NOT NULL REFERENCES shop_stores(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    name TEXT NOT NULL,
+    size TEXT,
+    PRIMARY KEY (product_id, store_id)
+  );
+  `,
 ];
 
 function openDatabase(file) {

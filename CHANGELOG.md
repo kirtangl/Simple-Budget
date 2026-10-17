@@ -2,6 +2,20 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v0.9.8 (17 October 2026)
+
+### New
+- **Automatic prices** for Shopping (optional). The supermarkets don't share their prices, so this uses Apify, a price lookup service that reads Woolworths, Coles, Aldi and IGA online. Set it up once under **Check prices** → **Set up** with a free Apify account (its free $5 a month should cover a weekly refresh of a household list).
+- **Find prices** in a product searches the stores for it and shows each store's matches with their price, size, unit price and any special. Tap **Use this** on the one you buy, and its price is saved and kept up to date.
+- Matched prices refresh once a week on their own, or straight away with **Refresh now** in Check prices. Online prices are sometimes different from the shelf.
+- **Look up** beside each store's price opens the store's website already searched for that product, so you can check a price yourself. It works without Apify, and for any store you add (give it a **Search link** under Edit).
+- **Check prices**, above the list and in Saved products, shows one store at a time with what has no price there or an old one first. Type the new price, or press **Still right** if it hasn't changed.
+
+### Improved
+- Every price remembers when it was last checked ("Checked 2 weeks ago"), and prices older than four weeks are shown in orange.
+
+For whoever runs the server: nothing to do beyond updating as usual. Automatic prices only run once someone adds an Apify key in the app, and the server then needs to reach api.apify.com. The key is kept in the database and isn't in backups; product matches are.
+
 ## v0.9.7 (17 October 2026)
 
 ### New
