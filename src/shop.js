@@ -1,18 +1,19 @@
 'use strict';
 
-// The shopping list: stores and their locations, the aisles and sections at each location,
-// products (with a price at each chain and a spot at each location), and the lists themselves.
-// It stands apart from the budget. The only link is logins: the shared list, or a login's own.
+// The shopping list: stores (Woolworths, Coles, Aldi, and any the household adds), their locations,
+// the aisles and named sections at each location, products (with a size, a price at each store and
+// a spot at each location), and the lists themselves. It stands apart from the budget. The only
+// link is logins: the shared list or a login's own, and who ticked something off.
 
 const express = require('express');
-const { transaction } = require('./db');
+const { transaction, getSetting } = require('./db');
 
-const STORES = ['woolworths', 'coles', 'aldi'];
 const MAX_AISLE = 20;
-// Named sections a new location starts with. A section's position puts it among the aisles:
-// 0 comes before Aisle 1, and 21 comes after Aisle 20.
-const DEFAULT_SECTIONS = [['Produce', 0], ['Bakery', 0], ['Deli', 0], ['Meat', 0], ['Dairy', 21], ['Freezer', 21]];
-const LIMITS = { locations: 50, sections: 60, products: 5000, items: 500 };
+const UNITS = ['g', 'kg', 'mL', 'L', 'each', 'pack'];
+// Named sections a new location starts with. A section's order puts it among the aisles:
+// 0.1 to 0.9 come before Aisle 1 (in that order), and 21 comes after Aisle 20.
+const DEFAULT_SECTIONS = [['Produce', 0.1], ['Bakery', 0.2], ['Deli', 0.3], ['Meat', 0.4], ['Dairy', 21.1], ['Freezer', 21.2]];
+const LIMITS = { stores: 20, locations: 50, sections: 60, products: 5000, items: 500 };
 
 class BadRequest extends Error {}
 
@@ -27,10 +28,23 @@ const int = (v, lo, hi, label) => {
   if (!Number.isInteger(n) || n < lo || n > hi) throw new BadRequest(`${label} should be a whole number from ${lo} to ${hi}.`);
   return n;
 };
-const store = (v) => {
-  if (!STORES.includes(v)) throw new BadRequest('Pick Woolworths, Coles or Aldi.');
-  return v;
+// A section's order: 0 to 99, with up to two decimal places (0.1, 0.25 ...).
+const order = (v) => {
+  const n = Number(v);
+  if (v === '' || v === null || !Number.isFinite(n) || n < 0 || n > 99 || Math.round(n * 100) !== n * 100) {
+    throw new BadRequest('The order should be a number from 0 to 99, like 3 or 0.2.');
+  }
+  return n;
 };
+// A product's size and unit, like 2 L or 500 g. Both can be left out; a size needs a unit.
+function sizeOf(b) {
+  const size = b.size === undefined || b.size === null || b.size === '' ? null : Number(b.size);
+  const unit = b.unit === undefined || b.unit === null || b.unit === '' ? null : b.unit;
+  if (size !== null && (!Number.isFinite(size) || size <= 0 || size > 100000)) throw new BadRequest('The size should be a number, like 2 or 500.');
+  if (unit !== null && !UNITS.includes(unit)) throw new BadRequest(`The unit should be one of ${UNITS.join(', ')}.`);
+  if (size !== null && unit === null) throw new BadRequest('Pick a unit for the size, like g or L.');
+  return { size, unit };
+}
 const body = (req) => (req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {});
 
 function createShop(db) {
@@ -39,57 +53,98 @@ function createShop(db) {
   const one = (sql, ...args) => { const r = db.prepare(sql).get(...args); return r ? { ...r } : null; };
   const all = (sql, ...args) => db.prepare(sql).all(...args).map((r) => ({ ...r }));
 
+  // Goes up with every change, so open lists can tell when to fetch again.
+  let rev = 1;
+  router.use((req, res, next) => {
+    if (req.method !== 'GET') res.on('finish', () => { if (res.statusCode < 400) rev += 1; });
+    next();
+  });
+
   // Which list a request means: the shared one (no owner), or the login's own.
-  const owner = (req, list) => (list === 'mine' ? req.login.id : null);
   const listOf = (req) => {
     const list = (req.query && req.query.list) || body(req).list || 'shared';
     if (list !== 'shared' && list !== 'mine') throw new BadRequest('That list does not exist.');
     return list;
   };
+  const ownerOf = (req, list) => (list === 'mine' ? req.login.id : null);
+  const onList = (who) => (who === null ? ['owner_id IS NULL', []] : ['owner_id = ?', [who]]);
   // An item is only reachable from the shared list or the login's own.
   const itemFor = (req) => {
     const item = one('SELECT * FROM shop_items WHERE id = ?', Number(req.params.id));
     if (!item || (item.owner_id !== null && item.owner_id !== req.login.id)) return null;
     return item;
   };
+  const loginNames = () => new Map([[0, getSetting(db, 'main_login_name') || 'Main'],
+    ...all('SELECT id, name FROM logins').map((l) => [l.id, l.name])]);
+  const exists = (table, id) => Boolean(one(`SELECT id FROM ${table} WHERE id = ?`, Number(id)));
 
-  function view(req) {
-    const list = listOf(req);
+  function productsView() {
     const prices = all('SELECT * FROM shop_prices');
     const spots = all('SELECT * FROM shop_spots');
-    const products = all('SELECT id, name FROM shop_products ORDER BY name COLLATE NOCASE').map((p) => ({
+    return all('SELECT * FROM shop_products ORDER BY name COLLATE NOCASE, size').map((p) => ({
       ...p,
-      prices: Object.fromEntries(prices.filter((x) => x.product_id === p.id).map((x) => [x.store, x.price_cents])),
+      prices: Object.fromEntries(prices.filter((x) => x.product_id === p.id).map((x) => [x.store_id, x.price_cents])),
       spots: Object.fromEntries(spots.filter((x) => x.product_id === p.id)
         .map((x) => [x.location_id, { aisle: x.aisle, section_id: x.section_id, missing: Boolean(x.missing) }])),
     }));
+  }
+
+  function view(req) {
+    const list = listOf(req);
+    const [where, args] = onList(ownerOf(req, list));
+    const names = loginNames();
     const mine = req.login.id;
     return {
+      rev,
       list,
-      stores: STORES,
       max_aisle: MAX_AISLE,
-      locations: all('SELECT * FROM shop_locations ORDER BY store, sort_order, name COLLATE NOCASE'),
+      units: UNITS,
+      stores: all('SELECT * FROM shop_stores ORDER BY sort_order, id'),
+      locations: all('SELECT * FROM shop_locations ORDER BY name COLLATE NOCASE'),
       sections: all('SELECT * FROM shop_sections ORDER BY location_id, position, name COLLATE NOCASE'),
-      products,
-      items: owner(req, list) === null
-        ? all('SELECT id, product_id, qty FROM shop_items WHERE owner_id IS NULL ORDER BY id')
-        : all('SELECT id, product_id, qty FROM shop_items WHERE owner_id = ? ORDER BY id', mine),
-      counts: { shared: count('shop_items', 'WHERE owner_id IS NULL'), mine: count('shop_items', 'WHERE owner_id = ?', mine) },
+      products: productsView(),
+      items: all(`SELECT id, product_id, qty, done_at, done_by FROM shop_items WHERE ${where} ORDER BY id`, ...args)
+        .map((it) => ({ ...it, done_by_name: it.done_at ? names.get(it.done_by) || null : null })),
+      counts: {
+        shared: count('shop_items', 'WHERE owner_id IS NULL AND done_at IS NULL'),
+        mine: count('shop_items', 'WHERE owner_id = ? AND done_at IS NULL', mine),
+      },
     };
   }
 
   router.get('/', (req, res) => res.json(view(req)));
+  router.get('/rev', (req, res) => res.json({ rev }));
 
-  // ---------- Locations and their sections ----------
+  // ---------- Stores, their locations and the sections at each ----------
+
+  router.post('/stores', (req, res) => {
+    const name = text(body(req).name, 'The store');
+    if (count('shop_stores') >= LIMITS.stores) throw new BadRequest(`That's more stores than the list can keep (${LIMITS.stores}).`);
+    const { lastInsertRowid } = db.prepare('INSERT INTO shop_stores (name, sort_order) VALUES (?, ?)').run(name, count('shop_stores'));
+    res.status(201).json(one('SELECT * FROM shop_stores WHERE id = ?', Number(lastInsertRowid)));
+  });
+
+  router.patch('/stores/:id', (req, res) => {
+    const id = Number(req.params.id);
+    if (!exists('shop_stores', id)) return res.status(404).json({ error: 'Not found.' });
+    db.prepare('UPDATE shop_stores SET name = ? WHERE id = ?').run(text(body(req).name, 'The store'), id);
+    res.json(one('SELECT * FROM shop_stores WHERE id = ?', id));
+  });
+
+  // Its locations and prices go with it.
+  router.delete('/stores/:id', (req, res) => {
+    const { changes } = db.prepare('DELETE FROM shop_stores WHERE id = ?').run(Number(req.params.id));
+    if (!changes) return res.status(404).json({ error: 'Not found.' });
+    res.json({ ok: true });
+  });
 
   router.post('/locations', (req, res) => {
     const b = body(req);
-    const s = store(b.store);
+    if (!exists('shop_stores', b.store_id)) throw new BadRequest('Pick a store.');
     const name = text(b.name, 'The location');
     if (count('shop_locations') >= LIMITS.locations) throw new BadRequest(`That's more locations than the list can keep (${LIMITS.locations}).`);
     const id = transaction(db, () => {
-      const { lastInsertRowid } = db.prepare('INSERT INTO shop_locations (store, name, sort_order) VALUES (?, ?, ?)')
-        .run(s, name, count('shop_locations', 'WHERE store = ?', s));
+      const { lastInsertRowid } = db.prepare('INSERT INTO shop_locations (store_id, name) VALUES (?, ?)').run(Number(b.store_id), name);
       const add = db.prepare('INSERT INTO shop_sections (location_id, name, position) VALUES (?, ?, ?)');
       for (const [n, pos] of DEFAULT_SECTIONS) add.run(lastInsertRowid, n, pos);
       return Number(lastInsertRowid);
@@ -99,7 +154,7 @@ function createShop(db) {
 
   router.patch('/locations/:id', (req, res) => {
     const id = Number(req.params.id);
-    if (!one('SELECT id FROM shop_locations WHERE id = ?', id)) return res.status(404).json({ error: 'Not found.' });
+    if (!exists('shop_locations', id)) return res.status(404).json({ error: 'Not found.' });
     db.prepare('UPDATE shop_locations SET name = ? WHERE id = ?').run(text(body(req).name, 'The location'), id);
     res.json(one('SELECT * FROM shop_locations WHERE id = ?', id));
   });
@@ -113,14 +168,14 @@ function createShop(db) {
   router.post('/sections', (req, res) => {
     const b = body(req);
     const locationId = Number(b.location_id);
-    if (!one('SELECT id FROM shop_locations WHERE id = ?', locationId)) return res.status(404).json({ error: 'Not found.' });
+    if (!exists('shop_locations', locationId)) return res.status(404).json({ error: 'Not found.' });
     if (count('shop_sections', 'WHERE location_id = ?', locationId) >= LIMITS.sections) {
       throw new BadRequest(`That's more sections than one location can keep (${LIMITS.sections}).`);
     }
     const name = text(b.name, 'The section');
     if (/^(aisle\s*)?\d+$/i.test(name)) throw new BadRequest('Numbered aisles are already there. Give a section a name, like Dairy.');
     const { lastInsertRowid } = db.prepare('INSERT INTO shop_sections (location_id, name, position) VALUES (?, ?, ?)')
-      .run(locationId, name, int(b.position ?? 0, 0, 99, 'The order'));
+      .run(locationId, name, order(b.position ?? 21));
     res.status(201).json(one('SELECT * FROM shop_sections WHERE id = ?', Number(lastInsertRowid)));
   });
 
@@ -130,7 +185,7 @@ function createShop(db) {
     if (!before) return res.status(404).json({ error: 'Not found.' });
     const b = body(req);
     const name = 'name' in b ? text(b.name, 'The section') : before.name;
-    const position = 'position' in b ? int(b.position, 0, 99, 'The order') : before.position;
+    const position = 'position' in b ? order(b.position) : before.position;
     db.prepare('UPDATE shop_sections SET name = ?, position = ? WHERE id = ?').run(name, position, id);
     res.json(one('SELECT * FROM shop_sections WHERE id = ?', id));
   });
@@ -144,44 +199,52 @@ function createShop(db) {
 
   // ---------- Products ----------
 
-  // The product with this name, made if it's new. Names match whatever the capitals.
+  // The product a typed name means: the only one with that name (whatever its size), or the one
+  // with no size, or a new one. Names match whatever the capitals.
   const productNamed = (name) => {
-    const found = one('SELECT id FROM shop_products WHERE name = ?', name);
-    if (found) return found.id;
+    const found = all('SELECT id, size FROM shop_products WHERE name = ?', name);
+    if (found.length === 1) return found[0].id;
+    const plain = found.find((p) => p.size === null);
+    if (plain) return plain.id;
     if (count('shop_products') >= LIMITS.products) throw new BadRequest(`That's more products than the list can keep (${LIMITS.products}).`);
     return Number(db.prepare('INSERT INTO shop_products (name) VALUES (?)').run(name).lastInsertRowid);
   };
+  const productView = (id) => productsView().find((p) => p.id === id);
+  const sameProduct = (name, size, unit, id) => one(`SELECT id FROM shop_products WHERE name = ? AND coalesce(size, 0) = ? AND coalesce(unit, '') = ? AND id <> ?`,
+    name, size ?? 0, unit ?? '', id);
+  const sizeText = (size, unit) => (size ? ` (${size} ${unit})` : unit ? ` (${unit})` : '');
 
-  // { name?, prices?: { woolworths: cents | null, ... } }
+  // { name?, size?, unit?, prices?: { [store id]: cents | null } }
   router.patch('/products/:id', (req, res) => {
     const id = Number(req.params.id);
-    if (!one('SELECT id FROM shop_products WHERE id = ?', id)) return res.status(404).json({ error: 'Not found.' });
+    const before = one('SELECT * FROM shop_products WHERE id = ?', id);
+    if (!before) return res.status(404).json({ error: 'Not found.' });
     const b = body(req);
-    const name = 'name' in b ? text(b.name, 'The name') : null;
-    if (name && one('SELECT id FROM shop_products WHERE name = ? AND id <> ?', name, id)) {
-      throw new BadRequest(`"${name}" is already in your past items.`);
-    }
-    const prices = b.prices && typeof b.prices === 'object' ? b.prices : {};
-    const set = Object.entries(prices).map(([s, cents]) => [store(s), cents === null || cents === '' ? null : int(cents, 0, 100000, 'The price')]);
+    const name = 'name' in b ? text(b.name, 'The name') : before.name;
+    const { size, unit } = 'size' in b || 'unit' in b ? sizeOf({ size: b.size, unit: b.unit }) : before;
+    if (sameProduct(name, size, unit, id)) throw new BadRequest(`"${name}${sizeText(size, unit)}" is already in your product list.`);
+    const prices = b.prices && typeof b.prices === 'object' ? Object.entries(b.prices) : [];
+    const set = prices.map(([s, cents]) => {
+      if (!exists('shop_stores', s)) throw new BadRequest('That store no longer exists.');
+      return [Number(s), cents === null || cents === '' ? null : int(cents, 0, 100000, 'The price')];
+    });
     transaction(db, () => {
-      if (name) db.prepare('UPDATE shop_products SET name = ? WHERE id = ?').run(name, id);
+      db.prepare('UPDATE shop_products SET name = ?, size = ?, unit = ? WHERE id = ?').run(name, size, unit, id);
       for (const [s, cents] of set) {
-        if (cents === null) db.prepare('DELETE FROM shop_prices WHERE product_id = ? AND store = ?').run(id, s);
-        else db.prepare('INSERT INTO shop_prices (product_id, store, price_cents) VALUES (?, ?, ?) ON CONFLICT (product_id, store) DO UPDATE SET price_cents = excluded.price_cents').run(id, s, cents);
+        if (cents === null) db.prepare('DELETE FROM shop_prices WHERE product_id = ? AND store_id = ?').run(id, s);
+        else db.prepare('INSERT INTO shop_prices (product_id, store_id, price_cents) VALUES (?, ?, ?) ON CONFLICT (product_id, store_id) DO UPDATE SET price_cents = excluded.price_cents').run(id, s, cents);
       }
     });
-    res.json(view(req).products.find((p) => p.id === id));
+    res.json(productView(id));
   });
 
   // Where a product is at one location: { location_id, aisle } or { location_id, section_id },
-  // { location_id, missing: true } for not sold there, or neither to forget it.
+  // { location_id, missing: true } for not sold there, or none of them to forget it.
   router.put('/products/:id/spot', (req, res) => {
     const id = Number(req.params.id);
     const b = body(req);
     const locationId = Number(b.location_id);
-    if (!one('SELECT id FROM shop_products WHERE id = ?', id) || !one('SELECT id FROM shop_locations WHERE id = ?', locationId)) {
-      return res.status(404).json({ error: 'Not found.' });
-    }
+    if (!exists('shop_products', id) || !exists('shop_locations', locationId)) return res.status(404).json({ error: 'Not found.' });
     const aisle = b.aisle === null || b.aisle === undefined || b.aisle === '' ? null : int(b.aisle, 0, MAX_AISLE, 'The aisle');
     const sectionId = b.section_id ? Number(b.section_id) : null;
     if (sectionId && !one('SELECT id FROM shop_sections WHERE id = ? AND location_id = ?', sectionId, locationId)) {
@@ -196,60 +259,75 @@ function createShop(db) {
           .run(id, locationId, aisle, sectionId, missing ? 1 : 0);
       }
     });
-    res.json(view(req).products.find((p) => p.id === id));
+    res.json(productView(id));
   });
 
-  // Forgetting a past item takes it off every list too.
+  // Forgetting a product takes it off every list too.
   router.delete('/products/:id', (req, res) => {
     const { changes } = db.prepare('DELETE FROM shop_products WHERE id = ?').run(Number(req.params.id));
     if (!changes) return res.status(404).json({ error: 'Not found.' });
     res.json({ ok: true });
   });
 
-  // ---------- The list ----------
+  // ---------- The lists ----------
 
-  // { list, name } or { list, product_id }, and qty. Adding something already on the list adds to how many.
+  // { list, name } or { list, product_id }, and qty. Adding something already on the list adds
+  // to how many; adding something ticked off puts it back, unticked.
   router.post('/items', (req, res) => {
     const b = body(req);
-    const who = owner(req, listOf(req));
+    const who = ownerOf(req, listOf(req));
+    const [where, args] = onList(who);
     const qty = b.qty === undefined ? 1 : int(b.qty, 1, 99, 'How many');
     const result = transaction(db, () => {
       let productId;
       if (b.product_id !== undefined) {
         productId = Number(b.product_id);
-        if (!one('SELECT id FROM shop_products WHERE id = ?', productId)) throw new BadRequest('That item no longer exists.');
+        if (!exists('shop_products', productId)) throw new BadRequest('That item no longer exists.');
       } else {
         productId = productNamed(text(b.name, 'The item'));
       }
-      const existing = who === null
-        ? one('SELECT * FROM shop_items WHERE product_id = ? AND owner_id IS NULL', productId)
-        : one('SELECT * FROM shop_items WHERE product_id = ? AND owner_id = ?', productId, who);
+      const existing = one(`SELECT * FROM shop_items WHERE product_id = ? AND ${where}`, productId, ...args);
+      if (existing && existing.done_at) {
+        db.prepare('UPDATE shop_items SET qty = ?, done_at = NULL, done_by = NULL WHERE id = ?').run(qty, existing.id);
+        return { id: existing.id, added: false };
+      }
       if (existing) {
         db.prepare('UPDATE shop_items SET qty = min(99, qty + ?) WHERE id = ?').run(qty, existing.id);
         return { id: existing.id, added: false };
       }
-      if (count('shop_items', who === null ? 'WHERE owner_id IS NULL' : 'WHERE owner_id = ?', ...(who === null ? [] : [who])) >= LIMITS.items) {
-        throw new BadRequest(`That's more than one list can hold (${LIMITS.items}).`);
-      }
+      if (count('shop_items', `WHERE ${where}`, ...args) >= LIMITS.items) throw new BadRequest(`That's more than one list can hold (${LIMITS.items}).`);
       const { lastInsertRowid } = db.prepare('INSERT INTO shop_items (product_id, owner_id, qty) VALUES (?, ?, ?)').run(productId, who, qty);
       return { id: Number(lastInsertRowid), added: true };
     });
-    res.status(result.added ? 201 : 200).json(one('SELECT id, product_id, qty FROM shop_items WHERE id = ?', result.id));
+    res.status(result.added ? 201 : 200).json(one('SELECT id, product_id, qty, done_at FROM shop_items WHERE id = ?', result.id));
   });
 
+  // { qty } and/or { done: true | false }. Ticking off notes who did it.
   router.patch('/items/:id', (req, res) => {
     const item = itemFor(req);
     if (!item) return res.status(404).json({ error: 'Not found.' });
-    db.prepare('UPDATE shop_items SET qty = ? WHERE id = ?').run(int(body(req).qty, 1, 99, 'How many'), item.id);
-    res.json(one('SELECT id, product_id, qty FROM shop_items WHERE id = ?', item.id));
+    const b = body(req);
+    transaction(db, () => {
+      if ('qty' in b) db.prepare('UPDATE shop_items SET qty = ? WHERE id = ?').run(int(b.qty, 1, 99, 'How many'), item.id);
+      if (b.done === true && !item.done_at) db.prepare("UPDATE shop_items SET done_at = datetime('now'), done_by = ? WHERE id = ?").run(req.login.id, item.id);
+      if (b.done === false) db.prepare('UPDATE shop_items SET done_at = NULL, done_by = NULL WHERE id = ?').run(item.id);
+    });
+    res.json(one('SELECT id, product_id, qty, done_at, done_by FROM shop_items WHERE id = ?', item.id));
   });
 
-  // Ticked off (or removed): it leaves the list, and stays in past items for next time.
+  // Taken off the list without being bought. It stays in the product list.
   router.delete('/items/:id', (req, res) => {
     const item = itemFor(req);
     if (!item) return res.status(404).json({ error: 'Not found.' });
     db.prepare('DELETE FROM shop_items WHERE id = ?').run(item.id);
-    res.json({ ok: true, product_id: item.product_id, qty: item.qty });
+    res.json({ ok: true });
+  });
+
+  // Clears what's been ticked off, leaving anything not found yet on the list for next time.
+  router.post('/items/clear', (req, res) => {
+    const [where, args] = onList(ownerOf(req, listOf(req)));
+    const { changes } = db.prepare(`DELETE FROM shop_items WHERE done_at IS NOT NULL AND ${where}`).run(...args);
+    res.json({ ok: true, cleared: changes });
   });
 
   router.use((err, req, res, next) => {
@@ -264,12 +342,13 @@ function createShop(db) {
 // ---------- Backup and restore ----------
 
 const SHOP_TABLES = {
-  locations: ['shop_locations', ['id', 'store', 'name', 'sort_order']],
+  stores: ['shop_stores', ['id', 'name', 'sort_order']],
+  locations: ['shop_locations', ['id', 'store_id', 'name']],
   sections: ['shop_sections', ['id', 'location_id', 'name', 'position']],
-  products: ['shop_products', ['id', 'name']],
-  prices: ['shop_prices', ['product_id', 'store', 'price_cents']],
+  products: ['shop_products', ['id', 'name', 'size', 'unit']],
+  prices: ['shop_prices', ['product_id', 'store_id', 'price_cents']],
   spots: ['shop_spots', ['product_id', 'location_id', 'aisle', 'section_id', 'missing']],
-  items: ['shop_items', ['id', 'product_id', 'owner_id', 'qty', 'added_at']],
+  items: ['shop_items', ['id', 'product_id', 'owner_id', 'qty', 'added_at', 'done_at', 'done_by']],
 };
 
 function exportShop(db) {
@@ -278,9 +357,9 @@ function exportShop(db) {
 }
 
 // Replaces the shopping list with the backup's. Rows keep their ids, since nothing outside the
-// shopping list refers to them. Returns how many products were restored, and anything left out.
+// shopping list refers to them. Returns how many products were restored, and how many rows were left out.
 function importShop(db, data) {
-  if (!data || typeof data !== 'object') return null;
+  if (!data || typeof data !== 'object' || !Array.isArray(data.stores)) return null;
   for (const [table] of Object.values(SHOP_TABLES).reverse()) db.exec(`DELETE FROM ${table}`);
   let skipped = 0;
   for (const [key, [table, cols]] of Object.entries(SHOP_TABLES)) {
@@ -298,4 +377,4 @@ function importShop(db, data) {
   return { products: db.prepare('SELECT count(*) AS n FROM shop_products').get().n, skipped };
 }
 
-module.exports = { createShop, exportShop, importShop, STORES };
+module.exports = { createShop, exportShop, importShop, UNITS };

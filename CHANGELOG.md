@@ -6,10 +6,14 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 
 ### New
 - **Shopping**: a new tab with a shared shopping list, and one of your own under **Mine**. Type an item and press **Add**; anything you've added before is suggested as you type.
-- Choose the store you're at (Woolworths, Coles or Aldi, at the locations you add under **Stores**) and the list is sorted by aisle, from 0 to 20, with sections like Produce, Deli, Meat, Dairy and Freezer slotted in where they are in that store. Each section's order can be changed under **Stores → Sections**.
-- New items start in **Unsorted**. Tap **Set aisle** once and the item is sorted at that store from then on. Every store remembers its own aisles, and an item can be marked as not sold at a chain.
-- Tap an item to set how many, and its price at each chain. The list shows the total at the store you're at, and when something is cheaper at another chain, with how much you'd save altogether.
-- Tick things off as they go in the trolley, with an **Undo**. They stay in **Past items**, where you can search and add several back without leaving the popup.
+- The store you're at shows as a heading at the top. Press **Change** to pick another. Woolworths, Coles and Aldi are there to start with, and **Add a store** adds others, like IGA. Each store can have several locations.
+- The list is split into folding sections by aisle, from 0 to 20, with named sections like Produce, Deli, Meat, Dairy and Freezer slotted in where they are in that store. The named sections have an **Edit** button to change their name or order. The order takes decimals, so Produce 0.1, Bakery 0.2 and so on come before Aisle 1 in the order you set.
+- New items start in **Unsorted**. Tap **Set aisle** once and the item is sorted at that store from then on. Every location remembers its own aisles, and an item can be marked as not sold at a store.
+- Each item shows how many (×1, ×2 …) with − and + buttons. Tap an item to set its size and unit (like 2 L or 500 g) and its price at each store.
+- The totals show the cost at the store you're at, the **Total potential savings** if you bought each item wherever it's cheapest, and how that would split across the stores. When prices are the same, the store you're at is used.
+- Ticking something off greys it out and moves it to the bottom of its section, with who ticked it. Untick it if it was a mistake. **Clear ticked items** removes them once you're done, and keeps anything you didn't find on the list for next time.
+- **Product list**, beside Add, shows everything you've bought before as buttons under their aisles at your store. Tap to add, tap again for one more, or press **Edit** to change a product.
+- The list updates by itself every few seconds, so when someone else ticks something off or adds something, you see it.
 
 For whoever runs the server: nothing to do beyond updating as usual. The shopping list is part of backups (Download backup), and restoring an older backup leaves it as it is.
 

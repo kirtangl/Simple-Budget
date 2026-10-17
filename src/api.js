@@ -908,7 +908,7 @@ function createApi(db) {
 //   { app: 'simple-budget', format_version, exported_at, settings: {...},
 //     accounts: [...], payees: [...], categories: [{..., subcategories: [...]}],
 //     expenses: [...], incomes: [...], goals: [...], goal_groups: [...], loans: [...],
-//     shopping: { locations, sections, products, prices, spots, items } }
+//     shopping: { stores, locations, sections, products, prices, spots, items } }
 //
 // To keep old backups restorable as the app grows:
 //   - Bump BACKUP_FORMAT_VERSION when the shape of the file changes, and add a
@@ -1148,8 +1148,10 @@ function importBackup(db, input) {
 
     if (data.shopping && typeof data.shopping === 'object') {
       const shop = importShop(db, data.shopping);
-      counts.shop_products = shop.products;
-      if (shop.skipped) warnings.push(`Left out ${shop.skipped} shopping list ${shop.skipped === 1 ? 'entry' : 'entries'} that didn't fit.`);
+      if (shop) {
+        counts.shop_products = shop.products;
+        if (shop.skipped) warnings.push(`Left out ${shop.skipped} shopping list ${shop.skipped === 1 ? 'entry' : 'entries'} that didn't fit.`);
+      }
     }
   });
 

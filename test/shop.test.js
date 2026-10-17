@@ -30,23 +30,44 @@ async function withServer(options, fn) {
   } finally { server.close(); }
 }
 
-test('shopping: add by name, tick off, and add again from past items', () => withServer({}, async (call) => {
-  let r = await call('POST', '/shop/items', { list: 'shared', name: '  Milk  2L ' });
+// The built-in stores, by name.
+const storesOf = async (call) => Object.fromEntries((await call('GET', '/shop')).body.stores.map((s) => [s.name, s.id]));
+
+test('shopping: add by name, tick off, untick, and clear', () => withServer({}, async (call) => {
+  let r = await call('POST', '/shop/items', { list: 'shared', name: '  Milk ' });
   assert.equal(r.status, 201);
   const milk = r.body.product_id;
   // The same name in other capitals is the same product, and adds to how many.
-  r = await call('POST', '/shop/items', { list: 'shared', name: 'milk 2l' });
+  r = await call('POST', '/shop/items', { list: 'shared', name: 'milk' });
   assert.deepEqual([r.status, r.body.product_id, r.body.qty], [200, milk, 2]);
+  const bread = (await call('POST', '/shop/items', { list: 'shared', name: 'Bread' })).body;
   let shop = (await call('GET', '/shop?list=shared')).body;
-  assert.deepEqual(shop.products.map((p) => p.name), ['Milk 2L']);
-  assert.equal(shop.items.length, 1);
-  // Ticked off: it leaves the list and stays a past item.
-  r = await call('DELETE', `/shop/items/${shop.items[0].id}`);
-  assert.deepEqual([r.body.product_id, r.body.qty], [milk, 2]);
+  assert.deepEqual(shop.products.map((p) => p.name), ['Bread', 'Milk']);
+  const milkItem = shop.items.find((i) => i.product_id === milk);
+
+  // Ticked off: it stays on the list, marked done by whoever did it, and leaves the count.
+  r = await call('PATCH', `/shop/items/${milkItem.id}`, { done: true });
+  assert.ok(r.body.done_at);
   shop = (await call('GET', '/shop?list=shared')).body;
-  assert.deepEqual([shop.items.length, shop.products.length], [0, 1]);
-  r = await call('POST', '/shop/items', { list: 'shared', product_id: milk });
-  assert.equal(r.status, 201);
+  assert.equal(shop.items.length, 2);
+  assert.equal(shop.items.find((i) => i.id === milkItem.id).done_by_name, 'Main');
+  assert.equal(shop.counts.shared, 1);
+  // Unticked by mistake, then ticked again.
+  r = await call('PATCH', `/shop/items/${milkItem.id}`, { done: false });
+  assert.deepEqual([r.body.done_at, r.body.done_by], [null, null]);
+  await call('PATCH', `/shop/items/${milkItem.id}`, { done: true });
+  // Adding something ticked off puts it back, unticked.
+  r = await call('POST', '/shop/items', { list: 'shared', product_id: milk, qty: 3 });
+  assert.deepEqual([r.body.qty, r.body.done_at], [3, null]);
+  await call('PATCH', `/shop/items/${milkItem.id}`, { done: true });
+
+  // Clearing takes only what's ticked; the rest stays for later.
+  r = await call('POST', '/shop/items/clear', { list: 'shared' });
+  assert.equal(r.body.cleared, 1);
+  shop = (await call('GET', '/shop?list=shared')).body;
+  assert.deepEqual(shop.items.map((i) => i.id), [bread.id]);
+  assert.equal(shop.products.length, 2);
+
   assert.equal((await call('POST', '/shop/items', { list: 'shared', name: ' ' })).body.error, "The item can't be empty.");
   assert.equal((await call('POST', '/shop/items', { list: 'shared', product_id: 999 })).status, 400);
   assert.equal((await call('POST', '/shop/items', { list: 'someone', name: 'Bread' })).status, 400);
@@ -56,17 +77,19 @@ test('shopping: the shared list and each login\'s own list', () => withServer({}
   await call('POST', '/logins', { name: 'Sam', password: 'sams-password' });
   const sam = caller();
   await sam('POST', '/login', { password: 'sams-password' });
-  await call('POST', '/shop/items', { list: 'shared', name: 'Bread' });
+  const bread = (await call('POST', '/shop/items', { list: 'shared', name: 'Bread' })).body;
   await call('POST', '/shop/items', { list: 'mine', name: 'Coffee' });
   const samsOwn = (await sam('POST', '/shop/items', { list: 'mine', name: 'Tea' })).body;
   const main = (await call('GET', '/shop?list=mine')).body;
   assert.deepEqual(main.counts, { shared: 1, mine: 1 });
   assert.equal(main.products.find((p) => p.id === main.items[0].product_id).name, 'Coffee');
-  // Past items are shared by every list.
+  // Products are shared by every list.
   assert.deepEqual(main.products.map((p) => p.name), ['Bread', 'Coffee', 'Tea']);
   const sams = (await sam('GET', '/shop?list=mine')).body;
   assert.deepEqual(sams.items.map((i) => i.id), [samsOwn.id]);
-  assert.equal((await sam('GET', '/shop?list=shared')).body.items.length, 1);
+  // Sam ticks off something on the shared list, and everyone sees who.
+  await sam('PATCH', `/shop/items/${bread.id}`, { done: true });
+  assert.equal((await call('GET', '/shop?list=shared')).body.items[0].done_by_name, 'Sam');
   // Someone else's own list can't be changed.
   assert.equal((await call('PATCH', `/shop/items/${samsOwn.id}`, { qty: 3 })).status, 404);
   assert.equal((await call('DELETE', `/shop/items/${samsOwn.id}`)).status, 404);
@@ -74,14 +97,35 @@ test('shopping: the shared list and each login\'s own list', () => withServer({}
   assert.equal((await sam('PATCH', `/shop/items/${samsOwn.id}`, { qty: 0 })).status, 400);
 }));
 
-test('shopping: locations, sections, aisles and prices', () => withServer({}, async (call) => {
-  const vincent = (await call('POST', '/shop/locations', { store: 'woolworths', name: 'Vincent' })).body;
-  const castletown = (await call('POST', '/shop/locations', { store: 'woolworths', name: 'Castletown' })).body;
-  assert.equal((await call('POST', '/shop/locations', { store: 'iga', name: 'Town' })).body.error, 'Pick Woolworths, Coles or Aldi.');
-  assert.equal((await call('POST', '/shop/locations', { store: 'woolworths', name: 'vincent' })).status, 400);
+test('shopping: changes move the revision on, so open lists refresh', () => withServer({}, async (call) => {
+  const before = (await call('GET', '/shop/rev')).body.rev;
+  assert.equal((await call('GET', '/shop')).body.rev, before);
+  await call('POST', '/shop/items', { name: 'Eggs' });
+  const after = (await call('GET', '/shop/rev')).body.rev;
+  assert.ok(after > before);
+  // A refused change doesn't.
+  await call('POST', '/shop/items', { name: '' });
+  assert.equal((await call('GET', '/shop/rev')).body.rev, after);
+}));
+
+test('shopping: stores, locations, sections, aisles, sizes and prices', () => withServer({}, async (call) => {
+  const stores = await storesOf(call);
+  assert.deepEqual(Object.keys(stores), ['Woolworths', 'Coles', 'Aldi']);
+  // A store of the household's own.
+  const iga = (await call('POST', '/shop/stores', { name: 'IGA' })).body;
+  assert.equal((await call('POST', '/shop/stores', { name: 'iga' })).status, 400);
+  assert.equal((await call('PATCH', `/shop/stores/${iga.id}`, { name: 'IGA Xpress' })).body.name, 'IGA Xpress');
+
+  const vincent = (await call('POST', '/shop/locations', { store_id: stores.Woolworths, name: 'Vincent' })).body;
+  const castletown = (await call('POST', '/shop/locations', { store_id: stores.Woolworths, name: 'Castletown' })).body;
+  const town = (await call('POST', '/shop/locations', { store_id: iga.id, name: 'Town' })).body;
+  assert.equal((await call('POST', '/shop/locations', { store_id: 999, name: 'Town' })).body.error, 'Pick a store.');
+  assert.equal((await call('POST', '/shop/locations', { store_id: stores.Woolworths, name: 'vincent' })).status, 400);
   let shop = (await call('GET', '/shop')).body;
   const sections = shop.sections.filter((s) => s.location_id === vincent.id);
-  assert.deepEqual(sections.map((s) => s.name), ['Bakery', 'Deli', 'Meat', 'Produce', 'Dairy', 'Freezer']);
+  // The sections before Aisle 1 are 0.1, 0.2 ... so they can be put in order.
+  assert.deepEqual(sections.map((s) => [s.name, s.position]),
+    [['Produce', 0.1], ['Bakery', 0.2], ['Deli', 0.3], ['Meat', 0.4], ['Dairy', 21.1], ['Freezer', 21.2]]);
   const produce = sections.find((s) => s.name === 'Produce');
 
   const item = (await call('POST', '/shop/items', { name: 'Apples' })).body;
@@ -96,54 +140,78 @@ test('shopping: locations, sections, aisles and prices', () => withServer({}, as
   assert.deepEqual(p.spots[vincent.id], { aisle: null, section_id: produce.id, missing: false });
   assert.equal((await call('PUT', `/shop/products/${id}/spot`, { location_id: castletown.id, section_id: produce.id })).status, 400);
   assert.equal((await call('PUT', `/shop/products/${id}/spot`, { location_id: vincent.id, aisle: 21 })).status, 400);
-  p = (await call('PUT', `/shop/products/${id}/spot`, { location_id: castletown.id, missing: true })).body;
-  assert.equal(p.spots[castletown.id].missing, true);
-  p = (await call('PUT', `/shop/products/${id}/spot`, { location_id: castletown.id })).body;
-  assert.equal(p.spots[castletown.id], undefined);
+  p = (await call('PUT', `/shop/products/${id}/spot`, { location_id: town.id, missing: true })).body;
+  assert.equal(p.spots[town.id].missing, true);
+  p = (await call('PUT', `/shop/products/${id}/spot`, { location_id: town.id })).body;
+  assert.equal(p.spots[town.id], undefined);
 
-  // A section's order, and removing it sends its products back to unsorted.
-  assert.equal((await call('PATCH', `/shop/sections/${produce.id}`, { position: 3 })).body.position, 3);
+  // A section's order takes decimals, and removing it sends its products back to unsorted.
+  assert.equal((await call('PATCH', `/shop/sections/${produce.id}`, { position: 0.25 })).body.position, 0.25);
+  assert.equal((await call('PATCH', `/shop/sections/${produce.id}`, { position: 0.125 })).status, 400);
+  assert.equal((await call('PATCH', `/shop/sections/${produce.id}`, { position: 100 })).status, 400);
   assert.equal((await call('POST', '/shop/sections', { location_id: vincent.id, name: 'Aisle 4' })).status, 400);
-  assert.equal((await call('POST', '/shop/sections', { location_id: vincent.id, name: 'Pet food', position: 15 })).status, 201);
+  assert.equal((await call('POST', '/shop/sections', { location_id: vincent.id, name: 'Pet food', position: 15.5 })).status, 201);
   await call('DELETE', `/shop/sections/${produce.id}`);
   shop = (await call('GET', '/shop')).body;
   assert.equal(shop.products[0].spots[vincent.id], undefined);
 
-  // A price at each chain, and clearing one.
-  p = (await call('PATCH', `/shop/products/${id}`, { prices: { woolworths: 450, coles: 399 } })).body;
-  assert.deepEqual(p.prices, { woolworths: 450, coles: 399 });
-  p = (await call('PATCH', `/shop/products/${id}`, { name: 'Pink Lady apples', prices: { coles: null } })).body;
-  assert.deepEqual([p.name, p.prices], ['Pink Lady apples', { woolworths: 450 }]);
-  assert.equal((await call('PATCH', `/shop/products/${id}`, { prices: { coles: -1 } })).status, 400);
+  // A size and unit, and a price at each store.
+  p = (await call('PATCH', `/shop/products/${id}`, { size: 1, unit: 'kg', prices: { [stores.Woolworths]: 450, [stores.Coles]: 399, [iga.id]: 520 } })).body;
+  assert.deepEqual([p.size, p.unit], [1, 'kg']);
+  assert.deepEqual(p.prices, { [stores.Woolworths]: 450, [stores.Coles]: 399, [iga.id]: 520 });
+  p = (await call('PATCH', `/shop/products/${id}`, { name: 'Pink Lady apples', prices: { [stores.Coles]: null } })).body;
+  assert.deepEqual([p.name, p.size, p.prices], ['Pink Lady apples', 1, { [stores.Woolworths]: 450, [iga.id]: 520 }]);
+  assert.equal((await call('PATCH', `/shop/products/${id}`, { prices: { [stores.Coles]: -1 } })).status, 400);
+  assert.equal((await call('PATCH', `/shop/products/${id}`, { prices: { 999: 100 } })).status, 400);
+  assert.equal((await call('PATCH', `/shop/products/${id}`, { size: 2 })).body.error, 'Pick a unit for the size, like g or L.');
+  assert.equal((await call('PATCH', `/shop/products/${id}`, { size: 2, unit: 'stone' })).status, 400);
+  // Two sizes of the same thing are two products; the same size twice isn't allowed.
+  const other = (await call('POST', '/shop/items', { name: 'Apples 2' })).body.product_id;
+  assert.equal((await call('PATCH', `/shop/products/${other}`, { name: 'Pink Lady apples', size: 2, unit: 'kg' })).status, 200);
+  assert.equal((await call('PATCH', `/shop/products/${other}`, { size: 1, unit: 'kg' })).status, 400);
+  // Typing a name that has two sizes and no plain one makes a new product.
+  const typed = (await call('POST', '/shop/items', { name: 'pink lady apples' })).body.product_id;
+  assert.ok(typed !== id && typed !== other);
 
+  // Removing a store forgets its locations and prices.
+  await call('DELETE', `/shop/stores/${iga.id}`);
+  shop = (await call('GET', '/shop')).body;
+  assert.equal(shop.locations.some((l) => l.id === town.id), false);
+  assert.equal(shop.products.find((x) => x.id === id).prices[iga.id], undefined);
   // Removing a location forgets where things are there.
   await call('DELETE', `/shop/locations/${vincent.id}`);
   shop = (await call('GET', '/shop')).body;
   assert.deepEqual(shop.locations.map((l) => l.name), ['Castletown']);
   assert.equal(shop.sections.some((s) => s.location_id === vincent.id), false);
-  // Forgetting a past item takes it off the list.
+  // Forgetting a product takes it off the list.
   await call('DELETE', `/shop/products/${id}`);
   shop = (await call('GET', '/shop')).body;
-  assert.deepEqual([shop.products.length, shop.items.length], [0, 0]);
+  assert.equal(shop.products.some((x) => x.id === id), false);
+  assert.equal(shop.items.some((i) => i.product_id === id), false);
 }));
 
 test('shopping: kept in a backup and restored', () => withServer({}, async (call) => {
-  const loc = (await call('POST', '/shop/locations', { store: 'coles', name: 'Townsville' })).body;
+  const iga = (await call('POST', '/shop/stores', { name: 'IGA' })).body;
+  const loc = (await call('POST', '/shop/locations', { store_id: iga.id, name: 'Townsville' })).body;
   const item = (await call('POST', '/shop/items', { name: 'Cheese', qty: 2 })).body;
   await call('PUT', `/shop/products/${item.product_id}/spot`, { location_id: loc.id, aisle: 7 });
-  await call('PATCH', `/shop/products/${item.product_id}`, { prices: { coles: 650 } });
+  await call('PATCH', `/shop/products/${item.product_id}`, { size: 500, unit: 'g', prices: { [iga.id]: 650 } });
+  await call('PATCH', `/shop/items/${item.id}`, { done: true });
   const backup = (await call('GET', '/export')).body;
   assert.equal(backup.shopping.products.length, 1);
-  await call('DELETE', `/shop/locations/${loc.id}`);
+  await call('DELETE', `/shop/stores/${iga.id}`);
   await call('DELETE', `/shop/products/${item.product_id}`);
   const r = await call('POST', '/import', backup);
   assert.equal(r.status, 200);
   assert.equal(r.body.counts.shop_products, 1);
   const shop = (await call('GET', '/shop')).body;
-  assert.deepEqual(shop.items.map((i) => i.qty), [2]);
-  assert.deepEqual([shop.products[0].prices, shop.products[0].spots[loc.id].aisle], [{ coles: 650 }, 7]);
-  // A backup from before the shopping list leaves it as it is.
+  assert.deepEqual(shop.stores.map((s) => s.name), ['Woolworths', 'Coles', 'Aldi', 'IGA']);
+  assert.deepEqual(shop.items.map((i) => [i.qty, Boolean(i.done_at)]), [[2, true]]);
+  const p = shop.products[0];
+  assert.deepEqual([p.size, p.unit, p.prices, p.spots[loc.id].aisle], [500, 'g', { [iga.id]: 650 }, 7]);
+  // A backup from before the shopping list, or from the first 0.9.7 test, leaves it as it is.
   delete backup.shopping;
   await call('POST', '/import', backup);
+  assert.equal((await call('POST', '/import', { ...backup, shopping: { locations: [], products: [] } })).status, 200);
   assert.equal((await call('GET', '/shop')).body.products.length, 1);
 }));
