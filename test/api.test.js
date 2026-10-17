@@ -530,6 +530,7 @@ test('updates: version order and picking the newest release from GitHub', async 
     await call('GET', '/updates');
     assert.equal(calls, 1); // remembered between checks
     r = await call('POST', '/updates/check');
+    assert.equal(r.status, 200);
     assert.equal(calls, 2);
   });
   const token = process.env.GITHUB_TOKEN;

@@ -839,7 +839,7 @@
     const debt = g.kind === 'debt';
     const firm = debt && g.target_firm;
     const started = g.current_cents > 0;
-    let when = '';
+    let when;
     if (debt && g.target_date) {
       when = late
         ? html`<span class="pill bad">Overdue ${-days} day${days === -1 ? '' : 's'}${firm ? ' · firm' : ` · was due ${fmtDate(g.target_date)}`}</span>`
