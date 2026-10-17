@@ -4510,9 +4510,13 @@ sudo docker compose up -d --build</pre>`;
       title: 'Shopping at',
       body: html`${state.shop.stores.map((s) => {
         const locs = state.shop.locations.filter((l) => l.store_id === s.id);
-        return locs.length ? html`<div class="store-head"><h3 class="form-section">${storeDot(s.id)}${s.name}</h3>
-            <button type="button" class="linkish small" data-action="shop-store-edit" data-id="${s.id}" data-back="change" aria-label="Edit ${s.name}">Edit</button></div>
-          <div class="spot-grid named">${locs.map((l) => html`<button type="button" class="spot-btn ${loc && loc.id === l.id ? 'on' : ''}" data-pick-loc="${l.id}">${l.name}</button>`)}</div>` : '';
+        return html`<div class="store-head"><h3 class="form-section">${storeDot(s.id)}${s.name}</h3>
+            <button type="button" class="linkish small" data-action="shop-store-edit" data-id="${s.id}" data-back="change" aria-label="Edit ${s.name}">Edit</button>
+            <button type="button" class="icon ghost" data-action="shop-store-delete" data-id="${s.id}" data-back="change" aria-label="Remove ${s.name}" title="Remove ${s.name}">${BIN_ICON}</button></div>
+          <div class="spot-grid named">${locs.map((l) => html`<span class="loc-pick">
+              <button type="button" class="spot-btn ${loc && loc.id === l.id ? 'on' : ''}" data-pick-loc="${l.id}">${l.name}</button>
+              <button type="button" class="loc-del" data-action="shop-loc-delete" data-id="${l.id}" data-back="change" aria-label="Remove ${locLabel(l)}" title="Remove ${locLabel(l)}">${BIN_ICON}</button></span>`)}
+            <button type="button" class="spot-btn add" data-action="shop-loc-new" data-id="${s.id}" data-back="change">+ ${locs.length ? 'Another' : 'Add a'} ${s.name}</button></div>`;
       })}
         <div class="spot-grid named other"><button type="button" class="spot-btn add" data-action="shop-stores">Add or change stores</button></div>`,
       noActions: true,
@@ -4843,7 +4847,7 @@ sudo docker compose up -d --build</pre>`;
       if (ok !== 'yes') return;
       await api('DELETE', `/shop/stores/${s.id}`);
       await shopReload();
-      shopStores();
+      (el.dataset.back === 'change' ? shopChange : shopStores)();
     },
     'shop-loc-new': async (el) => {
       const store = Number(el.dataset.id);
@@ -4852,7 +4856,7 @@ sudo docker compose up -d --build</pre>`;
       const l = await api('POST', '/shop/locations', { store_id: store, name });
       if (!shopLocation()) remember('shop:location', l.id);
       await shopReload();
-      shopStores();
+      (el.dataset.back === 'change' ? shopChange : shopStores)();
     },
     'shop-loc-rename': async (el) => {
       const l = state.shop.locations.find((x) => x.id === Number(el.dataset.id));
@@ -4870,7 +4874,7 @@ sudo docker compose up -d --build</pre>`;
       if (ok !== 'yes') return;
       await api('DELETE', `/shop/locations/${l.id}`);
       await shopReload();
-      shopStores();
+      (el.dataset.back === 'change' ? shopChange : shopStores)();
     },
     'shop-section-new': async (el) => {
       const locId = Number(el.dataset.id);
