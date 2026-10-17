@@ -190,7 +190,7 @@ To turn a test copy into a normal one, remove the `APP_CHANNEL` and `IMAGE_TAG` 
 The **price-checker** is a second container that looks up supermarket prices for the Shopping tab in a real browser (Chromium, on a virtual screen), the way a person would: it opens the store's website and uses its own search. It's the only part of Simple Budget that needs the internet for this, and only the app can reach it. Twice a week, at random times (once Monday to Wednesday and once Thursday to Sunday, 8am to 9pm), it visits the stores' home pages, so it looks like a regular visitor.
 
 - **Woolworths** and **Aldi** work automatically. Woolworths gives the prices of its default store to a visitor who isn't logged in. Aldi's prices are the same everywhere.
-- **Coles** turns automated browsers away, so it usually shows **Try again later**. Its prices come from the Coles button in your own browser instead (see the Shopping tab).
+- **Coles** turns automated browsers away, so it usually shows **Try again later**. Its prices come from the Coles button, a small extension in your own browser, instead (Shopping → Check prices → Coles button).
 - If a store shows a "check you're a person" puzzle, the app shows you its page to solve yourself. The price-checker never solves one, and a store that keeps asking is left alone for a while (an hour, then 6 hours, then a day).
 
 To turn it on, add to `.env` in the app's folder, then start it:

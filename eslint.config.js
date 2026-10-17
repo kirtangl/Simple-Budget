@@ -19,6 +19,11 @@ module.exports = [
     files: ['price-checker/**/*.js'],
     languageOptions: { ecmaVersion: 2024, sourceType: 'commonjs', globals: { ...globals.node, ...globals.browser } },
   },
+  // The Coles button, a browser extension.
+  {
+    files: ['browser-extension/**/*.js'],
+    languageOptions: { ecmaVersion: 2024, sourceType: 'script', globals: { ...globals.browser, chrome: 'readonly' } },
+  },
   {
     files: ['public/**/*.js'],
     languageOptions: { ecmaVersion: 2024, sourceType: 'script', globals: globals.browser },

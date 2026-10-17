@@ -460,3 +460,25 @@ test('shopping: the browser helper (Coles button) uses its own key', () => withS
   r = await ext('GET', '/shop-helper/coles', null, as(key));
   assert.equal(r.body.items.find((i) => i.product_id === oats).match.missing, true);
 }));
+
+test('shopping: the Coles button downloads as a zip of the extension', () => withServer({}, async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const zlib = require('node:zlib');
+  const { zipFolder } = require('../src/zip');
+  const dir = path.join(__dirname, '..', 'browser-extension');
+  const z = zipFolder(dir, 'top');
+  assert.equal(z.readUInt32LE(z.length - 22), 0x06054b50);
+  const count = z.readUInt16LE(z.length - 12);
+  assert.equal(count, fs.readdirSync(dir).length);
+  // The first file is there whole, under the top folder, with its checksum.
+  const nameLen = z.readUInt16LE(26);
+  const name = z.subarray(30, 30 + nameLen).toString();
+  const size = z.readUInt32LE(18);
+  const data = z.subarray(30 + nameLen, 30 + nameLen + size);
+  assert.ok(name.startsWith('top/'));
+  assert.deepEqual(data, fs.readFileSync(path.join(dir, name.slice(4))));
+  assert.equal(z.readUInt32LE(14), zlib.crc32(data));
+  const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.version, require('../package.json').version);
+}));
