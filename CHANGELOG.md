@@ -2,6 +2,17 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v0.9.9 (17 October 2026)
+
+### New
+- **Automatic price search** in a product looks it up on the Woolworths, Coles and Aldi websites at once. Tap **Use this** on the one you buy at each store (or **None of these**) and its price is saved, along with whether it's on special and its normal price. From then on its price can be kept up to date for you. This needs the new price-checker, which whoever runs the server turns on.
+- When products on your list have prices from before the stores' Wednesday price changes, a banner says how many are out of date and when they were last checked. **Update** gets this week's prices for just what's on the list, shows each store's progress, then what changed (old → new), what couldn't be found (with **Find new match**), and what isn't matched yet.
+- **Cheaper similar**: when another brand of the same kind and size costs less (often at Aldi), it shows under the product and on the list as a hint. It never changes Best buys or the totals.
+- If a store asks you to prove you're a person, its page opens in the app so you can solve it yourself, then the check carries on. If it still won't, that store says **Try again later**.
+- **Coles button**: Coles turns automatic price checkers away, so its prices come from a small extension for Brave or Chrome on your computer instead. Press it and it searches Coles for what's on your lists, a few seconds apart, in your own browser, and sends the prices back. Download it and see the steps under **Check prices → Coles button**.
+
+For whoever runs the server: automatic prices need the new price-checker container (about 2 GB, since it has its own browser). See "Automatic prices" in the README to turn it on; without it, the app works as before. The price-checker visits the stores' home pages twice a week at random times, never solves a store's puzzle itself, and leaves a store alone for a while if it keeps asking.
+
 ## v0.9.8 (17 October 2026)
 
 ### New
