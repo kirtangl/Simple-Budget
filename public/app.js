@@ -199,6 +199,7 @@
   // button for the left of the bottom row, like Back.
   function openForm({ title, body, onSave, onDelete, saveLabel = 'Save', afterRender, noActions = false, cls = '', lead = null }) {
     $modal.className = cls;
+    $modalForm.onclick = null; // a popup's own click handler (afterRender) goes with it
     $modalForm.innerHTML = html`
       ${title == null ? '' : popHead(title, {})}
       ${body}
@@ -4156,6 +4157,400 @@ sudo docker compose up -d --build</pre>`;
     }
   });
 
+  // ---------- Shopping ----------
+  //
+  // Its own data (GET /shop), kept apart from the budget. The location being shopped at is
+  // remembered on each device, since people shop at different stores.
+
+  const STORE_NAMES = { woolworths: 'Woolworths', coles: 'Coles', aldi: 'Aldi' };
+  const remember = (key, value) => { try { if (value == null) localStorage.removeItem(key); else localStorage.setItem(key, String(value)); } catch { /* not remembered */ } };
+  const recall = (key) => { try { return localStorage.getItem(key); } catch { return null; } };
+
+  async function loadShop(list) {
+    state.shop = await api('GET', `/shop?list=${list}`);
+  }
+  const shopReload = async () => { await loadShop(state.shop.list); render(); };
+  const shopProduct = (id) => state.shop.products.find((p) => p.id === id);
+  const shopLocation = () => {
+    const id = Number(recall('shop:location'));
+    return state.shop.locations.find((l) => l.id === id) || null;
+  };
+  const locLabel = (l) => `${STORE_NAMES[l.store]} ${l.name}`;
+  const sectionsAt = (locId) => state.shop.sections.filter((s) => s.location_id === locId)
+    .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name));
+
+  // Where a product is at a location, as a group to list it under: { key, label, order }.
+  function shopSpot(p, loc) {
+    const spot = loc && p.spots[loc.id];
+    if (!spot) return { key: 'unsorted', label: 'Unsorted', order: -1 };
+    if (spot.missing) return { key: 'missing', label: `Not at ${STORE_NAMES[loc.store]}`, order: 1000 };
+    if (spot.aisle != null) return { key: `a${spot.aisle}`, label: `Aisle ${spot.aisle}`, order: spot.aisle, aisle: true };
+    const s = state.shop.sections.find((x) => x.id === spot.section_id);
+    return s ? { key: `s${s.id}`, label: s.name, order: s.position } : { key: 'unsorted', label: 'Unsorted', order: -1 };
+  }
+
+  // The cheapest other chain with a price, when it beats the price here.
+  function cheaperElsewhere(p, store) {
+    const here = p.prices[store];
+    if (here == null) return null;
+    let best = null;
+    for (const s of state.shop.stores) {
+      const c = p.prices[s];
+      if (s !== store && c != null && c < here && (!best || c < best.cents)) best = { store: s, cents: c };
+    }
+    return best;
+  }
+
+  function renderShopping() {
+    const shop = state.shop;
+    const loc = shopLocation();
+    const store = loc ? loc.store : null;
+    const rows = shop.items.map((it) => ({ it, p: shopProduct(it.product_id) })).filter((r) => r.p);
+    const groups = new Map();
+    for (const r of rows) {
+      const g = shopSpot(r.p, loc);
+      if (!groups.has(g.key)) groups.set(g.key, { ...g, rows: [] });
+      groups.get(g.key).rows.push(r);
+    }
+    // Aisles in order, a named section before an aisle with the same number, then by name.
+    const ordered = [...groups.values()].sort((a, b) => a.order - b.order || (a.aisle ? 1 : 0) - (b.aisle ? 1 : 0) || a.label.localeCompare(b.label));
+    ordered.forEach((g) => g.rows.sort((a, b) => a.p.name.localeCompare(b.p.name)));
+
+    let total = 0; let priced = 0; let saving = 0; const savers = new Set();
+    for (const { it, p } of rows) {
+      if (!store || p.prices[store] == null) continue;
+      total += p.prices[store] * it.qty; priced += 1;
+      const best = cheaperElsewhere(p, store);
+      if (best) { saving += (p.prices[store] - best.cents) * it.qty; savers.add(STORE_NAMES[best.store]); }
+    }
+
+    const picker = shop.locations.length
+      ? html`<div class="shop-where"><label for="shop-loc">Shopping at</label>
+          <div class="row"><select id="shop-loc" data-input="shop-location">
+            <option value="">Choose a store…</option>
+            ${shop.stores.map((s) => {
+              const locs = shop.locations.filter((l) => l.store === s);
+              return locs.length ? html`<optgroup label="${STORE_NAMES[s]}">${locs.map((l) => html`<option value="${l.id}" ${loc && loc.id === l.id ? raw('selected') : ''}>${locLabel(l)}</option>`)}</optgroup>` : '';
+            })}</select>
+          <button type="button" data-action="shop-stores">Stores</button></div></div>`
+      : html`<div class="shop-where"><p class="muted small">Add the stores you shop at to sort the list by aisle and see prices.</p>
+          <button type="button" class="primary" data-action="shop-stores">+ Add a store location</button></div>`;
+
+    const row = ({ it, p }) => {
+      const g = shopSpot(p, loc);
+      const price = store ? p.prices[store] : null;
+      const best = store && cheaperElsewhere(p, store);
+      return html`<li class="shop-item">
+        <input type="checkbox" data-action="shop-tick" data-id="${it.id}" aria-label="Got ${p.name}">
+        <div class="grow" data-action="shop-item" data-id="${it.id}">
+          <div class="title">${p.name}${it.qty > 1 ? html` <span class="shop-qty">×${it.qty}</span>` : ''}</div>
+          ${best ? html`<div class="meta shop-deal">${money(best.cents)} at ${STORE_NAMES[best.store]} · save ${money((price - best.cents) * it.qty)}</div>` : ''}
+        </div>
+        ${loc && g.key === 'unsorted' ? html`<button type="button" class="mini" data-action="shop-spot" data-id="${p.id}">Set aisle</button>` : ''}
+        ${price != null ? html`<span class="num">${money(price * it.qty)}</span>` : ''}
+      </li>`;
+    };
+
+    const undo = state.shopUndo;
+    return html`
+      <div class="card shop-top">
+        ${picker}
+        <form class="shop-add" id="shop-add" autocomplete="off">
+          <label for="shop-name" class="sr-only">Add an item</label>
+          ${combo({ id: 'shop-name', name: 'name', value: '', options: shop.products.map((p) => p.name), placeholder: 'Add an item, like Milk' })}
+          <button type="submit" class="primary">Add</button>
+        </form>
+      </div>
+      ${undo ? html`<div class="card small shop-undo"><span>Got <b>${undo.name}</b>.</span><button type="button" class="mini" data-action="shop-undo">Undo</button></div>` : ''}
+      ${rows.length ? html`<div class="card shop-list">
+        ${ordered.map((g) => html`<div class="shop-group ${g.key === 'unsorted' ? 'unsorted' : ''}">
+          <h3>${g.label}<span class="muted small"> · ${g.rows.length}</span></h3>
+          ${g.key === 'unsorted' && loc ? html`<p class="muted small">Set where these are at ${locLabel(loc)} and they'll be sorted from now on.</p>` : ''}
+          <ul class="list">${g.rows.map(row)}</ul></div>`)}
+        ${store ? html`<div class="shop-total">
+          <div><span class="muted">Total at ${STORE_NAMES[store]}</span>${priced < rows.length ? html`<span class="muted small"> · ${rows.length - priced} without a price</span>` : ''}</div>
+          <b class="num">${money(total)}</b></div>
+          ${saving ? html`<div class="shop-total save"><span>Cheaper at ${[...savers].join(' or ')}</span><b class="num">save ${money(saving)}</b></div>` : ''}` : ''}
+      </div>`
+        : html`<div class="card"><p class="empty">Nothing on this list. Add an item above, or pick from past items.</p></div>`}
+      <p class="tab-hint">Tick things off as they go in the trolley. They stay in past items, ready to add next time.</p>`;
+  }
+
+  async function shopAdd(name) {
+    if (!name) return;
+    const before = state.shop.items.length;
+    await api('POST', '/shop/items', { list: state.shop.list, name });
+    await loadShop(state.shop.list);
+    state.shopUndo = null;
+    render();
+    if (state.shop.items.length === before) toast(`Added another ${name}`);
+  }
+
+  document.addEventListener('submit', async (ev) => {
+    if (ev.target.id !== 'shop-add') return;
+    ev.preventDefault();
+    const input = ev.target.elements.name;
+    try {
+      await shopAdd(input.value.trim());
+      document.getElementById('shop-name')?.focus();
+    } catch (err) { toast(err.message); }
+  });
+  // Picking a past item from the suggestions adds it straight away.
+  document.addEventListener('change', async (ev) => {
+    if (ev.target.id === 'shop-name' && ev.target.dataset.picked) {
+      delete ev.target.dataset.picked;
+      try { await shopAdd(ev.target.value.trim()); document.getElementById('shop-name')?.focus(); } catch (err) { toast(err.message); }
+    }
+    if (ev.target.dataset.input === 'shop-location') {
+      remember('shop:location', ev.target.value || null);
+      render();
+    }
+  });
+
+  // The aisle picker: every aisle and this location's sections as buttons, one tap to choose.
+  function spotPicker(p, loc, onPick) {
+    state.spotFor = p.id;
+    const spot = p.spots[loc.id];
+    const on = (k) => (spot && ((k.aisle != null && spot.aisle === k.aisle) || (k.section && spot.section_id === k.section) || (k.missing && spot.missing)) ? 'on' : '');
+    const btn = (k, label) => html`<button type="button" class="spot-btn ${on(k)}" data-spot="${JSON.stringify(k)}">${label}</button>`;
+    const aisles = Array.from({ length: state.shop.max_aisle + 1 }, (_, n) => btn({ aisle: n }, String(n)));
+    openForm({
+      title: `Where's ${p.name}?`,
+      body: html`<p class="muted small">At ${locLabel(loc)}. It's remembered for this store only.</p>
+        <h3 class="form-section">Aisle</h3><div class="spot-grid">${aisles}</div>
+        <h3 class="form-section">Section</h3><div class="spot-grid named">${sectionsAt(loc.id).map((s) => btn({ section: s.id }, s.name))}
+          <button type="button" class="spot-btn add" data-action="shop-section-new" data-id="${loc.id}">+ Section</button></div>
+        <div class="spot-grid named other">${btn({ missing: true }, `Not sold at ${STORE_NAMES[loc.store]}`)}${spot ? btn({}, 'Unsorted') : ''}</div>`,
+      noActions: true,
+      afterRender: (form) => {
+        form.onclick = async (ev) => {
+          const b = ev.target.closest('[data-spot]');
+          if (!b) return;
+          const k = JSON.parse(b.dataset.spot);
+          try {
+            await api('PUT', `/shop/products/${p.id}/spot`, { location_id: loc.id, aisle: k.aisle ?? null, section_id: k.section ?? null, missing: Boolean(k.missing) });
+            form.onclick = null;
+            closeForm();
+            await shopReload();
+            if (onPick) onPick();
+          } catch (err) { form.querySelector('#form-error').textContent = err.message; }
+        };
+      },
+    });
+  }
+
+  // Tapping an item: its name, how many, a price at each chain, and where it is here.
+  function shopItemForm(it) {
+    const p = shopProduct(it.product_id);
+    const loc = shopLocation();
+    const spot = loc ? shopSpot(p, loc) : null;
+    openForm({
+      title: p.name,
+      body: html`<div class="fields">
+          <div class="field"><label for="si-name">Name</label><input id="si-name" name="name" value="${p.name}" required></div>
+          <div class="field"><label for="si-qty">How many</label><input id="si-qty" name="qty" type="number" min="1" max="99" inputmode="numeric" value="${it.qty}"></div>
+        </div>
+        <h3 class="form-section">Price<span class="muted small">Leave blank if you don't know it</span></h3>
+        <div class="fields three">${state.shop.stores.map((s) => html`<div class="field"><label for="si-${s}">${STORE_NAMES[s]}</label>
+          <input id="si-${s}" name="price-${s}" inputmode="decimal" placeholder="$" value="${moneyInput(p.prices[s])}"></div>`)}</div>
+        ${loc ? html`<h3 class="form-section">At ${locLabel(loc)}</h3>
+          <div class="row"><span>${spot.label}</span><button type="button" class="mini" data-action="shop-spot" data-id="${p.id}">Change</button></div>` : ''}`,
+      lead: html`<button type="button" class="danger" data-action="shop-remove" data-id="${it.id}">Take off list</button>`,
+      onSave: async (form) => {
+        const qty = Number(val(form, 'qty'));
+        if (!Number.isInteger(qty) || qty < 1 || qty > 99) throw new Error('How many should be a whole number from 1 to 99.');
+        const prices = {};
+        for (const s of state.shop.stores) prices[s] = moneyVal(form, `price-${s}`, `The ${STORE_NAMES[s]} price`);
+        await api('PATCH', `/shop/products/${p.id}`, { name: val(form, 'name'), prices });
+        if (qty !== it.qty) await api('PATCH', `/shop/items/${it.id}`, { qty });
+        await loadShop(state.shop.list);
+      },
+    });
+  }
+
+  // Everything bought before, to add again without leaving the popup.
+  function pastItems() {
+    const loc = shopLocation();
+    const body = () => {
+      const q = (state.pastQuery || '').trim().toLowerCase();
+      const onList = new Map(state.shop.items.map((it) => [it.product_id, it]));
+      const list = state.shop.products.filter((p) => !q || p.name.toLowerCase().includes(q));
+      return html`<ul class="list past-list">${list.length ? list.map((p) => {
+        const it = onList.get(p.id);
+        const where = loc ? shopSpot(p, loc) : null;
+        const price = loc ? p.prices[loc.store] : null;
+        const bits = [where && where.key !== 'unsorted' ? where.label : '', price != null ? money(price) : ''].filter(Boolean);
+        return html`<li><div class="grow"><div class="title">${p.name}</div>${bits.length ? html`<div class="meta">${bits.join(' · ')}</div>` : ''}</div>
+          <button type="button" class="mini ${it ? '' : 'primary'}" data-past-add="${p.id}">${it ? `On list${it.qty > 1 ? ` ×${it.qty}` : ''} · +1` : '+ Add'}</button>
+          <button type="button" class="icon ghost past-bin" data-past-forget="${p.id}" aria-label="Forget ${p.name}" title="Forget">${BIN_ICON}</button></li>`;
+      }) : html`<li class="empty">${state.shop.products.length ? 'Nothing matches.' : 'Things you add to a list show here.'}</li>`}</ul>`;
+    };
+    openForm({
+      title: 'Past items',
+      body: html`<div class="field"><label for="past-q" class="sr-only">Search past items</label>
+        <input id="past-q" type="search" placeholder="Search" value="${state.pastQuery || ''}" autocomplete="off"></div>
+        <div id="past-body">${body()}</div>`,
+      afterRender: (form) => {
+        const redraw = () => { form.querySelector('#past-body').innerHTML = body().s; };
+        form.querySelector('#past-q').oninput = (ev) => { state.pastQuery = ev.target.value; redraw(); };
+        form.onclick = async (ev) => {
+          const add = ev.target.closest('[data-past-add]');
+          const forget = ev.target.closest('[data-past-forget]');
+          try {
+            if (add) {
+              await api('POST', '/shop/items', { list: state.shop.list, product_id: Number(add.dataset.pastAdd) });
+              await loadShop(state.shop.list);
+              redraw();
+              render();
+            } else if (forget) {
+              const p = shopProduct(Number(forget.dataset.pastForget));
+              const ok = await askChoice({ title: 'Forget this item?', text: html`<p><b>${p.name}</b></p><p>It comes off every list, and its prices and aisles are forgotten.</p>`,
+                choices: [{ label: 'Keep it', value: 'no' }, { label: 'Forget', value: 'yes', danger: true }] });
+              if (ok !== 'yes') return;
+              await api('DELETE', `/shop/products/${p.id}`);
+              await loadShop(state.shop.list);
+              redraw();
+              render();
+            }
+          } catch (err) { form.querySelector('#form-error').textContent = err.message; }
+        };
+      },
+    });
+  }
+
+  // The household's stores, with a section list for each.
+  function shopStores() {
+    const locs = state.shop.locations;
+    openForm({
+      title: 'Stores',
+      body: html`<p class="muted small">Add each store you shop at. Aisles are remembered separately for each one.</p>
+        ${state.shop.stores.map((s) => {
+          const list = locs.filter((l) => l.store === s);
+          return html`<h3 class="form-section">${STORE_NAMES[s]}</h3>
+            ${list.length ? html`<ul class="list">${list.map((l) => html`<li><div class="grow"><div class="title">${l.name}</div></div>
+              <button type="button" class="mini" data-action="shop-sections" data-id="${l.id}">Sections</button>
+              <button type="button" class="mini" data-action="shop-loc-rename" data-id="${l.id}">Rename</button>
+              <button type="button" class="icon ghost" data-action="shop-loc-delete" data-id="${l.id}" aria-label="Remove ${locLabel(l)}" title="Remove">${BIN_ICON}</button></li>`)}</ul>`
+              : ''}
+            <button type="button" class="mini" data-action="shop-loc-new" data-store="${s}">+ Add a ${STORE_NAMES[s]}</button>`;
+        })}`,
+    });
+  }
+
+  // A location's named sections, and where each sits among the aisles.
+  function shopSections(locId) {
+    const loc = state.shop.locations.find((l) => l.id === locId);
+    if (!loc) return shopStores();
+    const list = sectionsAt(locId);
+    openForm({
+      title: `Sections at ${locLabel(loc)}`,
+      body: html`<p class="muted small">The number puts a section among the aisles: 0 comes before Aisle 1, and 21 comes after Aisle 20.
+        It only changes the order, and isn't shown on the list.</p>
+        <ul class="list sec-list">${list.map((s) => html`<li>
+          <input name="name-${s.id}" value="${s.name}" aria-label="Section name">
+          <input name="pos-${s.id}" type="number" min="0" max="99" inputmode="numeric" value="${s.position}" aria-label="Order of ${s.name}" class="sec-pos">
+          <button type="button" class="icon ghost" data-action="shop-section-delete" data-id="${s.id}" aria-label="Remove ${s.name}" title="Remove">${BIN_ICON}</button></li>`)}</ul>
+        <button type="button" class="mini" data-action="shop-section-new" data-id="${loc.id}">+ Add a section</button>`,
+      lead: html`<button type="button" data-action="shop-stores">Back</button>`,
+      onSave: async (form) => {
+        for (const s of list) {
+          const name = val(form, `name-${s.id}`);
+          const position = Number(val(form, `pos-${s.id}`));
+          if (!name) throw new Error('Every section needs a name.');
+          if (!Number.isInteger(position) || position < 0 || position > 99) throw new Error(`The order for ${name} should be a whole number from 0 to 99.`);
+          if (name !== s.name || position !== s.position) await api('PATCH', `/shop/sections/${s.id}`, { name, position });
+        }
+        await loadShop(state.shop.list);
+      },
+    });
+  }
+
+  Object.assign(actions, {
+    'shop-tick': async (el) => {
+      const it = state.shop.items.find((x) => x.id === Number(el.dataset.id));
+      if (!it) return;
+      el.closest('li')?.classList.add('ticked');
+      const r = await api('DELETE', `/shop/items/${it.id}`);
+      state.shopUndo = { product_id: r.product_id, qty: r.qty, name: shopProduct(r.product_id)?.name || 'it' };
+      await shopReload();
+    },
+    'shop-undo': async () => {
+      const u = state.shopUndo;
+      state.shopUndo = null;
+      if (u) await api('POST', '/shop/items', { list: state.shop.list, product_id: u.product_id, qty: u.qty });
+      await shopReload();
+    },
+    'shop-item': (el) => { const it = state.shop.items.find((x) => x.id === Number(el.dataset.id)); if (it) shopItemForm(it); },
+    'shop-remove': async (el) => {
+      await api('DELETE', `/shop/items/${el.dataset.id}`);
+      closeForm();
+      await shopReload();
+      toast('Taken off the list');
+    },
+    'shop-spot': (el) => {
+      const loc = shopLocation();
+      const p = shopProduct(Number(el.dataset.id));
+      if (loc && p) spotPicker(p, loc);
+    },
+    'shop-past': () => { state.pastQuery = ''; pastItems(); },
+    'shop-stores': () => shopStores(),
+    'shop-sections': (el) => shopSections(Number(el.dataset.id)),
+    'shop-loc-new': async (el) => {
+      const store = el.dataset.store;
+      const name = await askText(`Add a ${STORE_NAMES[store]}`, 'Suburb or name, like Castletown');
+      if (!name) return;
+      const l = await api('POST', '/shop/locations', { store, name });
+      if (!shopLocation()) remember('shop:location', l.id);
+      await loadShop(state.shop.list);
+      render();
+      shopStores();
+    },
+    'shop-loc-rename': async (el) => {
+      const l = state.shop.locations.find((x) => x.id === Number(el.dataset.id));
+      const name = l && await askText(`Rename ${locLabel(l)}`, 'Suburb or name', l.name);
+      if (!name) return;
+      await api('PATCH', `/shop/locations/${l.id}`, { name });
+      await loadShop(state.shop.list);
+      render();
+      shopStores();
+    },
+    'shop-loc-delete': async (el) => {
+      const l = state.shop.locations.find((x) => x.id === Number(el.dataset.id));
+      if (!l) return;
+      const ok = await askChoice({ title: 'Remove this store?', text: html`<p><b>${locLabel(l)}</b></p><p>Where things are at this store is forgotten. Your lists and prices stay.</p>`,
+        choices: [{ label: 'Keep it', value: 'no' }, { label: 'Remove', value: 'yes', danger: true }] });
+      if (ok !== 'yes') return;
+      await api('DELETE', `/shop/locations/${l.id}`);
+      await loadShop(state.shop.list);
+      render();
+      shopStores();
+    },
+    'shop-section-new': async (el) => {
+      const locId = Number(el.dataset.id);
+      const name = await askText('Add a section', 'Name, like Pet food');
+      if (!name) return;
+      const pos = await askText(`Where does ${name} go?`, 'Order among the aisles (0 is before Aisle 1, 21 after Aisle 20)', '21', { inputmode: 'numeric' });
+      if (pos === null) return;
+      await api('POST', '/shop/sections', { location_id: locId, name, position: Number(pos) });
+      await loadShop(state.shop.list);
+      render();
+      // Added while choosing where something is: back to that choice.
+      const p = el.closest('.spot-grid') && shopProduct(state.spotFor);
+      if (p && shopLocation()) spotPicker(p, shopLocation()); else shopSections(locId);
+    },
+    'shop-section-delete': async (el) => {
+      const s = state.shop.sections.find((x) => x.id === Number(el.dataset.id));
+      if (!s) return;
+      const ok = await askChoice({ title: 'Remove this section?', text: html`<p><b>${s.name}</b></p><p>Anything in it goes back to Unsorted at this store.</p>`,
+        choices: [{ label: 'Keep it', value: 'no' }, { label: 'Remove', value: 'yes', danger: true }] });
+      if (ok !== 'yes') return;
+      await api('DELETE', `/shop/sections/${s.id}`);
+      await loadShop(state.shop.list);
+      render();
+      shopSections(s.location_id);
+    },
+  });
+
   // ---------- Combo box (see combo()) ----------
 
   function openCombo(input, showAll) {
@@ -4177,6 +4572,7 @@ sudo docker compose up -d --build</pre>`;
   }
   function pickCombo(input, value) {
     input.value = value;
+    input.dataset.picked = '1'; // chosen from the list, not just typed
     closeCombo(input);
     input.dispatchEvent(new Event('change', { bubbles: true }));
   }
@@ -4224,6 +4620,13 @@ sudo docker compose up -d --build</pre>`;
         savings: { label: 'Savings', add: 'Add saving', action: 'new-expense', kind: 'saving', count: () => state.data.expenses.filter((e) => kindOf(e) === 'saving').length, render: () => renderExpenses('saving') },
         loans: { label: 'Loans', add: 'Add loan', action: 'new-loan', count: () => state.data.loans.length,
           render: () => html`${renderLoans()}<p class="tab-hint">Loan repayments feed into deposits like any other bill.</p>` },
+      },
+    },
+    shopping: {
+      title: 'Shopping', sub: 'What to buy, in aisle order',
+      tabs: {
+        shared: { label: 'Shared', add: 'Past items', action: 'shop-past', count: () => state.shop.counts.shared, render: renderShopping },
+        mine: { label: 'Mine', add: 'Past items', action: 'shop-past', count: () => state.shop.counts.mine, render: renderShopping },
       },
     },
     goals: {
@@ -4291,6 +4694,7 @@ sudo docker compose up -d --build</pre>`;
     const seq = ++renderSeq;
     try {
       let out;
+      if (page === 'shopping' && (!state.shop || state.shop.list !== sub)) { state.shopUndo = null; await loadShop(sub); }
       if (SECTIONS[page]) out = renderSection(page, sub);
       else if (page === 'overview' && sub === 'analytics') out = await renderAnalytics();
       else if (page === 'settings') {

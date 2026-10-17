@@ -6,6 +6,7 @@ const express = require('express');
 const { openDatabase, getSetting, setSetting } = require('./db');
 const { createAuth } = require('./auth');
 const { createApi } = require('./api');
+const { createShop } = require('./shop');
 const { createUpdates, UpdateError, compareVersions, parseVersion } = require('./updates');
 const { createBackups, BackupError } = require('./backups');
 const { createConfig, ConfigError, splitHosts } = require('./config');
@@ -293,6 +294,7 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null }) {
     }
     res.json(advanced(req));
   });
+  app.use('/api/shop', auth.require, createShop(db));
   app.use('/api', auth.require, createApi(db));
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
 

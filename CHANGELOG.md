@@ -2,6 +2,17 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v0.9.7 (17 October 2026)
+
+### New
+- **Shopping**: a new tab with a shared shopping list, and one of your own under **Mine**. Type an item and press **Add**; anything you've added before is suggested as you type.
+- Choose the store you're at (Woolworths, Coles or Aldi, at the locations you add under **Stores**) and the list is sorted by aisle, from 0 to 20, with sections like Produce, Deli, Meat, Dairy and Freezer slotted in where they are in that store. Each section's order can be changed under **Stores → Sections**.
+- New items start in **Unsorted**. Tap **Set aisle** once and the item is sorted at that store from then on. Every store remembers its own aisles, and an item can be marked as not sold at a chain.
+- Tap an item to set how many, and its price at each chain. The list shows the total at the store you're at, and when something is cheaper at another chain, with how much you'd save altogether.
+- Tick things off as they go in the trolley, with an **Undo**. They stay in **Past items**, where you can search and add several back without leaving the popup.
+
+For whoever runs the server: nothing to do beyond updating as usual. The shopping list is part of backups (Download backup), and restoring an older backup leaves it as it is.
+
 ## v0.9.6 (17 October 2026)
 
 ### Improved

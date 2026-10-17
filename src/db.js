@@ -256,6 +256,51 @@ const MIGRATIONS = [
   `,
   // 18: accounts keep the colour they're shown in now, whatever order they're put in later.
   FILL_ACCOUNT_COLOURS,
+  // 19: the shopping list. Locations are the household's stores (a chain and a suburb). A product's
+  // spot at a location is a numbered aisle or one of that location's named sections, or "not sold here".
+  // Prices are per chain. A list item with no owner is on the shared list, otherwise on that login's own.
+  `
+  CREATE TABLE shop_locations (
+    id INTEGER PRIMARY KEY,
+    store TEXT NOT NULL CHECK (store IN ('woolworths', 'coles', 'aldi')),
+    name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (store, name COLLATE NOCASE)
+  );
+  CREATE TABLE shop_sections (
+    id INTEGER PRIMARY KEY,
+    location_id INTEGER NOT NULL REFERENCES shop_locations(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (location_id, name COLLATE NOCASE)
+  );
+  CREATE TABLE shop_products (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE
+  );
+  CREATE TABLE shop_prices (
+    product_id INTEGER NOT NULL REFERENCES shop_products(id) ON DELETE CASCADE,
+    store TEXT NOT NULL CHECK (store IN ('woolworths', 'coles', 'aldi')),
+    price_cents INTEGER NOT NULL,
+    PRIMARY KEY (product_id, store)
+  );
+  CREATE TABLE shop_spots (
+    product_id INTEGER NOT NULL REFERENCES shop_products(id) ON DELETE CASCADE,
+    location_id INTEGER NOT NULL REFERENCES shop_locations(id) ON DELETE CASCADE,
+    aisle INTEGER,
+    section_id INTEGER REFERENCES shop_sections(id) ON DELETE CASCADE,
+    missing INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (product_id, location_id)
+  );
+  CREATE TABLE shop_items (
+    id INTEGER PRIMARY KEY,
+    product_id INTEGER NOT NULL REFERENCES shop_products(id) ON DELETE CASCADE,
+    owner_id INTEGER,
+    qty INTEGER NOT NULL DEFAULT 1,
+    added_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX shop_items_owner ON shop_items (owner_id);
+  `,
 ];
 
 function openDatabase(file) {
