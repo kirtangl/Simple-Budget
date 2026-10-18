@@ -5293,8 +5293,8 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       let here = 0;
       let best = 0;
       for (const it of state.shop.items) {
-        const p = !it.done_at && shopProduct(it.product_id);
-        const c = p && itemCost(p, store);
+        const p = it.done_at ? null : shopProduct(it.product_id);
+        const c = p ? itemCost(p, store) : null;
         if (c == null) continue;
         here += c * it.qty;
         best += bestPrice(p, store).cents * it.qty;

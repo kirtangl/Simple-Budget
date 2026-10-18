@@ -12,10 +12,13 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 - **Where are you shopping?** shows each store's locations as tiles, with which one was used last and when each was last used (shared by the household). Tapping one picks it and closes; **Shop at …** keeps the one you're at. Adding, renaming and deleting moved to **Manage stores**.
 - **Saved products** shows the list total beside **Close** and has smaller ×1 buttons, and the store picker, Manage stores and the item popup no longer leave an empty strip under their buttons.
 - The **Sold by** buttons sit evenly in their box.
+- On a phone, **Manage stores** and **Shop at …** in the store picker are full width, one under the other.
 - Deleting a whole store now says plainly that it removes every one of its locations and the aisles set at them, not just one location.
 - On a phone, the totals under the shopping list no longer leave gaps. Each total is on its own line with its amount on the right, and on a wider screen, like a tablet, Total shop, Spent so far and Still to buy share one line with Total after savings under them.
-
 - When no store is picked on the Shopping tab, a banner above the list says so, with **+ Add a store location** (or **Choose store**). Prices on the list, totals and aisles all need one.
+
+### Fixed
+- **Saved products** no longer shows an error ("undefined is not an object") when the list has ticked-off items.
 
 For whoever runs the server: nothing to do beyond **Update now**.
 

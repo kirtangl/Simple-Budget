@@ -2145,7 +2145,7 @@ dialog.item-pop { width: min(520px, calc(100vw - 24px)); }
 .upd-folder-in input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }
 
 /* Edit product: the aisle at every location, as one box when it's the same everywhere. */
-.pe-aisles-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.pe-aisles-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 20px; }
 .pe-aisles-head .muted, .pe-aisles-head .linkish { margin-left: 0; font-weight: 600; }
 .pe-aisles-head .muted { font-weight: 400; }
 .pe-one { display: flex; align-items: center; gap: 12px; margin-top: 8px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--inset); }
@@ -2180,7 +2180,12 @@ dialog.item-pop { width: min(520px, calc(100vw - 24px)); }
 .pk-tick { position: absolute; top: 8px; right: 10px; font-weight: 700; }
 .pk-empty { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border: 1px dashed var(--line); border-radius: 10px; }
 .pk-actions { align-items: center; }
-.pk-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.pk-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+/* Phones: the two buttons one under the other, full width, since Shop at … can be long. */
+@media (max-width: 720px) {
+  .pk-actions { flex-direction: column; align-items: stretch; }
+  .pk-actions .spacer { display: none; }
+}
 
 /* Manage stores: a card per chain that opens to its locations, each with a ⋯ menu. */
 .sm-chain { margin: 0 0 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
