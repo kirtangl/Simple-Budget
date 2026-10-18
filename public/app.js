@@ -4658,13 +4658,13 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       body: html`${popHead('Where are you shopping?', {}, html`<p class="pop-sub">Your list is sorted by this store's aisles.</p>`)}
         ${state.shop.stores.map((s) => {
           const locs = state.shop.locations.filter((l) => l.store_id === s.id);
-          return html`<section class="sp-chain"><h3 class="sp-head">${storeDot(s.id)}${s.name}</h3>
-            ${locs.length ? html`<div class="sp-grid">${locs.map((l) => html`<button type="button" class="sp-tile ${loc && loc.id === l.id ? 'on' : ''}" data-pick-loc="${l.id}">
-                <span class="sp-name">${l.name}</span><span class="sp-sub">${sub(l)}</span>${loc && loc.id === l.id ? html`<span class="sp-tick" aria-hidden="true">✓</span>` : ''}</button>`)}</div>`
-              : html`<div class="sp-empty"><span class="muted small">No locations yet</span>
+          return html`<section class="pk-chain"><h3 class="pk-head">${storeDot(s.id)}${s.name}</h3>
+            ${locs.length ? html`<div class="pk-grid">${locs.map((l) => html`<button type="button" class="pk-tile ${loc && loc.id === l.id ? 'on' : ''}" data-pick-loc="${l.id}">
+                <span class="pk-name">${l.name}</span><span class="pk-sub">${sub(l)}</span>${loc && loc.id === l.id ? html`<span class="pk-tick" aria-hidden="true">✓</span>` : ''}</button>`)}</div>`
+              : html`<div class="pk-empty"><span class="muted small">No locations yet</span>
                 <button type="button" class="linkish small" data-action="shop-loc-new" data-id="${s.id}" data-back="change">+ Add ${aOrAn(s.name)} ${s.name} location</button></div>`}</section>`;
         })}
-        <div class="dialog-actions sp-actions"><button type="button" data-action="shop-stores" data-back="change">${SLIDERS_ICON} Manage stores</button><span class="spacer"></span>
+        <div class="dialog-actions pk-actions"><button type="button" data-action="shop-stores" data-back="change">${SLIDERS_ICON} Manage stores</button><span class="spacer"></span>
           ${loc ? html`<button type="button" class="primary" data-modal="cancel">Shop at ${locLabel(loc)}</button>` : ''}</div>`,
       afterRender: (form) => {
         form.onclick = (ev) => {
@@ -5293,6 +5293,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     const anyAuto = autoStores().length && state.shop.products.some((p) => Object.values(p.matches || {}).some((m) => m.url));
     openForm({
       title: editing() ? 'Edit saved products' : 'Saved products',
+      cls: 'saved-pop',
       body: html`<div class="prod-tools sp-tools">
           <label for="prod-q" class="sr-only">Search saved products</label>
           <input id="prod-q" type="search" placeholder="Search" value="${state.productQuery || ''}" autocomplete="off">
@@ -5303,8 +5304,9 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         </div>
         ${editing() ? html`<p class="muted small">Tap a product to change its name, size, prices or aisle. Deleting it also takes it off your lists.</p>` : ''}
         <div id="prod-body">${body()}</div>
-        <div id="prod-foot">${foot()}</div>
         <div class="undo-bar" hidden><span></span><button type="button" class="mini" data-undo>Undo</button></div>`,
+      // The list total sits beside Close, so the bottom bar has no empty space.
+      lead: html`<div id="prod-foot">${foot()}</div>`,
       afterRender: (form) => {
         const redraw = () => {
           form.querySelector('#prod-body').innerHTML = body().s;

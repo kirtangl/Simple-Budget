@@ -458,6 +458,8 @@ dialog form.scrolls > .dialog-actions, dialog form.scrolls > .pop-foot, dialog f
 /* Nothing under the buttons of a details popup. */
 dialog form > .pop-foot { margin-top: 16px; }
 dialog form > .pop-foot ~ .error:empty, dialog form > .sheet-foot ~ .error:empty { display: none; }
+/* Popups with their own buttons in the body (noActions) end at those buttons, without the empty error line under them. */
+dialog form > .dialog-actions:not([hidden]) ~ .error:empty { display: none; }
 @media (max-width: 720px) {
   dialog form > .dialog-actions, dialog form > .pop-foot, dialog form > .sheet-foot {
     bottom: calc(-44px - env(safe-area-inset-bottom)); margin-bottom: calc(-44px - env(safe-area-inset-bottom)); padding-bottom: calc(44px + env(safe-area-inset-bottom)); }
@@ -1963,7 +1965,9 @@ button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
 .sp-qty { justify-self: center; min-width: 32px; min-height: 32px; padding: 0 8px; border-radius: 999px; font-weight: 700; }
 .sp-qty.on { border-color: var(--brand); background: var(--brand); color: var(--on-brand); }
 .sp-del { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--card)); }
-.sp-foot { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.sp-foot { display: flex; flex-direction: column; gap: 2px; }
+#prod-foot { min-width: 0; }
+dialog.saved-pop .error:empty { display: none; }
 .sp-save { font-size: .8rem; font-weight: 600; color: var(--due); }
 .undo-bar { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; padding: 10px 12px;
   border-radius: 10px; background: var(--text); color: var(--card); }
@@ -2149,19 +2153,19 @@ button.warn-btn:hover { border-color: var(--due); }
 .danger-text { color: var(--danger); }
 
 /* Where are you shopping: each chain's locations as tiles. */
-.sp-chain { margin: 0 0 16px; }
-.sp-head { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: .95rem; }
-.sp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
-.sp-tile { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; min-height: 60px;
+.pk-chain { margin: 0 0 16px; }
+.pk-head { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: .95rem; }
+.pk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.pk-tile { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; min-height: 60px;
   padding: 10px 28px 10px 12px; text-align: left; border-radius: 10px; }
-.sp-tile.on { background: var(--brand); border-color: var(--brand); color: var(--on-brand); }
-.sp-name { font-weight: 600; overflow-wrap: anywhere; }
-.sp-sub { font-size: .8rem; color: var(--muted); }
-.sp-tile.on .sp-sub { color: inherit; opacity: .85; }
-.sp-tick { position: absolute; top: 8px; right: 10px; font-weight: 700; }
-.sp-empty { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border: 1px dashed var(--line); border-radius: 10px; }
-.sp-actions { align-items: center; }
-.sp-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.pk-tile.on { background: var(--brand); border-color: var(--brand); color: var(--on-brand); }
+.pk-name { font-weight: 600; overflow-wrap: anywhere; }
+.pk-sub { font-size: .8rem; color: var(--muted); }
+.pk-tile.on .pk-sub { color: inherit; opacity: .85; }
+.pk-tick { position: absolute; top: 8px; right: 10px; font-weight: 700; }
+.pk-empty { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border: 1px dashed var(--line); border-radius: 10px; }
+.pk-actions { align-items: center; }
+.pk-actions button { display: inline-flex; align-items: center; gap: 6px; }
 
 /* Manage stores: a card per chain that opens to its locations, each with a ⋯ menu. */
 .sm-chain { margin: 0 0 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
