@@ -2,6 +2,13 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v0.9.11 (18 October 2026)
+
+### Improved
+- On a phone, the totals under the shopping list no longer leave gaps. Each total is on its own line with its amount on the right, and on a wider screen, like a tablet, Total shop, Spent so far and Still to buy share one line with Total after savings under them.
+
+For whoever runs the server: nothing to do beyond **Update now**.
+
 ## v0.9.10 (18 October 2026)
 
 ### New
