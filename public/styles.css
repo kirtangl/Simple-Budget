@@ -1817,11 +1817,10 @@ button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
 .shop-gtoggle .g-name { overflow-wrap: anywhere; }
 .shop-gtoggle .g-right { display: flex; align-items: center; gap: 12px; margin-left: auto; }
 .g-total { font-size: .95rem; color: var(--text); }
-.g-best-pill { padding: 2px 10px; border: 1px solid color-mix(in srgb, var(--paid) 45%, var(--card)); border-radius: 999px;
-  background: color-mix(in srgb, var(--paid) 10%, var(--card)); color: var(--paid); font-size: .75rem; white-space: nowrap; }
+.g-save { color: var(--paid); font-size: .8rem; font-weight: 600; white-space: nowrap; }
 .shop-sec.unsorted .g-name { color: var(--due); }
 .shop-sec.all-got .g-name { color: var(--muted); }
-.shop-hint { margin: -4px 16px 6px; }
+.shop-hint { margin: 0; padding: 8px 16px; border-top: 1px solid var(--line); }
 .shop-rows { list-style: none; margin: 0; padding: 0; }
 .shop-item { padding: 9px 16px; border-top: 1px solid var(--line); }
 .shop-item > input[type="checkbox"] { width: 22px; height: 22px; margin: 0; cursor: pointer; }
@@ -1831,9 +1830,14 @@ button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
 .si-qty { display: flex; justify-content: center; }
 .si-total { text-align: right; font-weight: 600; }
 .shop-size { font-weight: 400; font-size: .85em; color: var(--muted); white-space: nowrap; }
-.shop-deal-pill { display: inline-flex; align-items: center; margin-top: 4px; padding: 1px 9px; border: 1px solid color-mix(in srgb, var(--paid) 45%, var(--card)); border-radius: 999px;
-  color: var(--paid); font-size: .75rem; }
-.shop-deal-pill .store-dot { width: 7px; height: 7px; margin-right: 5px; }
+.cheaper-at { display: flex; align-items: center; justify-content: flex-end; margin-top: 2px; color: var(--paid); font-size: .72rem; font-weight: 400; white-space: nowrap; }
+.cheaper-at .store-dot { width: 6px; height: 6px; margin-right: 5px; flex: none; }
+.si-name .similar-line { display: block; min-height: 0; margin: 3px 0 0; padding: 0; border: 0; background: none; box-shadow: none;
+  color: var(--info); font: inherit; font-size: .78rem; font-weight: 400; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.si-name .similar-line:hover { text-decoration: underline; }
+.si-name .similar-line b { font-weight: 600; white-space: nowrap; }
+.swap-mark { margin-right: 5px; }
+.note-mark { display: inline-flex; vertical-align: -1px; margin-left: 4px; color: var(--muted); }
 .who-init { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 50%; background: color-mix(in srgb, var(--tag) 55%, var(--card));
   color: #fff; font-size: .68rem; font-weight: 700; }
 .who-at { display: inline-flex; align-items: center; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -2017,11 +2021,6 @@ h3.form-section.find-head { margin-top: 14px; }
 .price-special { color: var(--paid); font-weight: 600; }
 .match-line { margin-top: 2px; font-size: .75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .match-line.warn { white-space: normal; }
-.similar-line { margin: 8px 0 0; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--info) 8%, var(--card)); overflow-wrap: anywhere; }
-.similar-line .muted { display: block; margin-top: 2px; }
-.similar-pill { display: inline-flex; align-items: center; min-height: 0; margin-top: 4px; padding: 1px 9px; border: 1px solid color-mix(in srgb, var(--info) 45%, var(--card));
-  border-radius: 999px; background: color-mix(in srgb, var(--info) 10%, var(--card)); box-shadow: none; color: var(--info); font-size: .75rem; font-weight: 600; text-align: left; overflow-wrap: anywhere; }
-.similar-pill .store-dot { width: 7px; height: 7px; margin-right: 5px; flex: none; }
 .similar-chip { min-height: 0; padding: 4px 12px; border: 1px solid color-mix(in srgb, var(--info) 45%, var(--card)); border-radius: 999px;
   background: color-mix(in srgb, var(--info) 10%, var(--card)); color: var(--info); font-size: .82rem; font-weight: 600; }
 .combo-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; }
@@ -2052,7 +2051,7 @@ dialog.item-pop { width: min(520px, calc(100vw - 24px)); }
 .kg-offer { margin-top: 4px; }
 .setup-tag { min-height: 0; margin-left: 6px; padding: 0 8px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--due) 50%, var(--card));
   background: color-mix(in srgb, var(--due) 12%, var(--card)); color: var(--due); font-size: .72rem; font-weight: 700; box-shadow: none; vertical-align: 1px; }
-.shop-size.swapped { color: var(--info); font-weight: 600; }
+.shop-size.swapped { color: var(--info); font-weight: 600; white-space: normal; }
 .stepper.weighed .shop-qty { min-width: 3.6em; text-align: center; }
 .seg { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--inset); }
 .seg > button, .seg > label { min-height: 0; padding: 4px 12px; border: 0; border-radius: 6px; background: transparent; box-shadow: none;
@@ -2082,6 +2081,11 @@ dialog.item-pop { width: min(520px, calc(100vw - 24px)); }
 .ip-size { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); font-size: .82rem; }
 .ip-size.on { border-color: color-mix(in srgb, var(--info) 50%, var(--card)); background: color-mix(in srgb, var(--info) 8%, var(--card)); }
 .ip-size .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ip-similar { margin-top: 14px; }
+.ip-sim-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 10px; margin: 10px 0 0; }
+.ip-similar .ip-sizes { margin-top: 6px; }
+.ip-sizes.best .ip-size:not(.on) { border-color: color-mix(in srgb, var(--paid) 50%, var(--card)); background: color-mix(in srgb, var(--paid) 8%, var(--card)); }
+.refresh-progress { display: flex; flex-direction: column; gap: 4px; margin: -2px 0 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
 .ip-prices-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 10px; margin: 16px 0 8px; }
 .ip-checked { display: inline-flex; align-items: center; gap: 8px; }
 .checked-tag { font-size: .78rem; font-weight: 600; }

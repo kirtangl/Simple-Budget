@@ -27,7 +27,7 @@ const LIMITS = { stores: 20, locations: 50, sections: 60, products: 5000, items:
 
 class BadRequest extends Error {}
 
-const ITEM_COLS = 'id, product_id, qty, grams, note, swap_store_id, done_at, done_by, done_store_id';
+const ITEM_COLS = 'id, product_id, qty, grams, note, swap_store_id, swap_kind, done_at, done_by, done_store_id';
 
 const text = (v, label) => {
   const s = typeof v === 'string' ? v.trim().replace(/\s+/g, ' ') : '';
@@ -518,7 +518,7 @@ function createShop(db, { checker = null } = {}) {
       const existing = one(`SELECT * FROM shop_items WHERE product_id = ? AND ${where}`, productId, ...args);
       const g = usual(one('SELECT * FROM shop_products WHERE id = ?', productId));
       if (existing && existing.done_at) {
-        db.prepare('UPDATE shop_items SET qty = ?, grams = ?, note = NULL, swap_store_id = NULL, done_at = NULL, done_by = NULL, done_store_id = NULL WHERE id = ?')
+        db.prepare('UPDATE shop_items SET qty = ?, grams = ?, note = NULL, swap_store_id = NULL, swap_kind = NULL, done_at = NULL, done_by = NULL, done_store_id = NULL WHERE id = ?')
           .run(qty, g === null ? null : g * qty, existing.id);
         return { id: existing.id, added: false };
       }
@@ -536,8 +536,8 @@ function createShop(db, { checker = null } = {}) {
     res.status(result.added ? 201 : 200).json(one(`SELECT ${ITEM_COLS} FROM shop_items WHERE id = ?`, result.id));
   });
 
-  // { qty }, { grams } (null to count them instead), { note }, { swap_store_id } (the store whose other
-  // size it's swapped to for this shop, or null) and/or { done: true | false, store_id }. Ticking off
+  // { qty }, { grams } (null to count them instead), { note }, { swap_store_id, swap_kind } (the store
+  // whose other size, or close match, it's swapped to for this shop, or null) and/or { done: true | false, store_id }. Ticking off
   // notes who did it, and at which store.
   router.patch('/items/:id', (req, res) => {
     const item = itemFor(req);
@@ -547,11 +547,16 @@ function createShop(db, { checker = null } = {}) {
     const note = 'note' in b ? (typeof b.note === 'string' ? b.note.trim().replace(/\s+/g, ' ') : '') : null;
     if (note && note.length > 200) throw new BadRequest('The note is too long (200 characters at most).');
     if ('swap_store_id' in b && b.swap_store_id !== null && !exists('shop_stores', b.swap_store_id)) throw new BadRequest('That store no longer exists.');
+    const swapKind = b.swap_kind === undefined ? 'size' : b.swap_kind;
+    if ('swap_store_id' in b && b.swap_store_id !== null && !['size', 'similar'].includes(swapKind)) throw new BadRequest('Swap to the other size or the close match.');
     transaction(db, () => {
       if ('qty' in b) db.prepare('UPDATE shop_items SET qty = ? WHERE id = ?').run(int(b.qty, 1, 99, 'How many'), item.id);
       if ('grams' in b) db.prepare('UPDATE shop_items SET grams = ? WHERE id = ?').run(b.grams === null ? null : int(b.grams, 1, 100000, 'The weight'), item.id);
       if ('note' in b) db.prepare('UPDATE shop_items SET note = ? WHERE id = ?').run(note || null, item.id);
-      if ('swap_store_id' in b) db.prepare('UPDATE shop_items SET swap_store_id = ? WHERE id = ?').run(b.swap_store_id === null ? null : Number(b.swap_store_id), item.id);
+      if ('swap_store_id' in b) {
+        db.prepare('UPDATE shop_items SET swap_store_id = ?, swap_kind = ? WHERE id = ?')
+          .run(b.swap_store_id === null ? null : Number(b.swap_store_id), b.swap_store_id === null ? null : swapKind, item.id);
+      }
       if (b.done === true && !item.done_at) {
         db.prepare("UPDATE shop_items SET done_at = datetime('now'), done_by = ?, done_store_id = ? WHERE id = ?").run(req.login.id, store, item.id);
       }
@@ -973,7 +978,7 @@ const SHOP_TABLES = {
   matches: ['shop_matches', ['product_id', 'store_id', 'url', 'name', 'size', 'missing_at']],
   options: ['shop_options', ['product_id', 'store_id', 'kind', 'name', 'size', 'url', 'price_cents', 'was_cents', 'seen_at']],
   spots: ['shop_spots', ['product_id', 'location_id', 'aisle', 'section_id', 'missing']],
-  items: ['shop_items', ['id', 'product_id', 'owner_id', 'qty', 'grams', 'note', 'swap_store_id', 'added_at', 'done_at', 'done_by', 'done_store_id']],
+  items: ['shop_items', ['id', 'product_id', 'owner_id', 'qty', 'grams', 'note', 'swap_store_id', 'swap_kind', 'added_at', 'done_at', 'done_by', 'done_store_id']],
 };
 
 function exportShop(db) {

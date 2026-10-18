@@ -440,6 +440,11 @@ const MIGRATIONS = [
     SELECT product_id, store_id, 'similar', name, size, url, price_cents, seen_at FROM shop_similar;
   DROP TABLE shop_similar;
   `,
+  // 25: a list item can be swapped to a store's close match as well as its other size, for this shop.
+  `
+  ALTER TABLE shop_items ADD COLUMN swap_kind TEXT;
+  UPDATE shop_items SET swap_kind = 'size' WHERE swap_store_id IS NOT NULL;
+  `,
 ];
 
 function openDatabase(file) {

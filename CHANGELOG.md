@@ -8,12 +8,14 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 - Tapping something on the shopping list opens a simpler popup for **what's on this list**: how much, its price at every store for that much (cheapest first, marked **Best**), and a **Note for this shop** that's cleared with the item. Everything else about the product is behind **Edit product**.
 - **Bought by weight**: fruit, veg and meat can be bought by the kg. On the list they're a weight, with − and + by your step (like 250 g) and quick picks (500 g, 1 kg, 1.5 kg, 2 kg or Other), or switch to **Count** for "6 bananas" using about what one weighs (filled in from Woolworths when it says).
 - **Other sizes**: when a store sells the same product in another size, the popup says so with its price per kg or L, like "Woolworths also sells a 1 kg pack for $3.40 ($3.40/kg)". **Swap** uses that size for this shop only.
-- **Refresh prices** in the popup checks just that product's prices, and when they were checked shows green if it's since the stores' Wednesday price change, orange if before.
+- **Cheaper similar** in the popup lists each store's close match, cheapest for the amount first (set apart when it's the one the list mentions), and each has **Swap** to buy it instead for this shop only. Tapping a cheaper similar on the list opens that item.
+- **Refresh prices** in the popup checks just that product's prices, with a spinner then a tick for each store while it runs. When they were checked shows green if it's since the stores' Wednesday price change, orange if before.
 - When Automatic price search matches something a store sells by the kg (like loose bananas), it offers to switch the product to **By weight**.
 - Settings → Updates shows an update's **Extra steps** when it needs something done on the server too, with **Copy commands**. Save your app's folder under **Preferences → Server folder** and the commands include it.
 
 ### Improved
 - **Edit product** has **Sold by** (Pack / each, Weight (kg) or Volume (L)), the usual amount and − / + step, each store's price (per kg for weighed things) with which store product it's for, a **Prices are up to date / Refresh now** bubble (or **Search and match** when prices aren't automatic yet), and the product's aisle at every store location, grouped by store, with **More stores** for any you've added.
+- The shopping list is tidier: a cheaper price at another store shows under the item's price ("$2.75 at Coles"), a cheaper similar shows under its name in blue with a ⇆, and each category's saving reads "Save $… at other stores", all without the bubbles. Items with a note show a small note icon.
 - Something new typed onto the list goes on as a pack, with a **Set up** tag until you've said how it's sold.
 - Close matches and other sizes are compared by price per kg or L, so a 1.94 L bottle and a 2 L one can be.
 - Refreshing prices searches each store again for the product, which also keeps its other size and close match up to date, in the same number of searches as before.

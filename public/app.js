@@ -4412,6 +4412,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
   }
   const bestOnly = () => recall('shop:best') === '1';
   const SEARCH_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m20 20-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+  const NOTE_ICON = '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2.5h7l3 3v8H3z"/><path d="M5.5 7.5h5M5.5 10h3.5"/></svg>';
   const LIST_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 
   function renderShopping() {
@@ -4449,18 +4450,22 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       const cost = rowCost({ it, p }, store);
       const best = store && price != null ? lineBest(it, p, store) : null;
       const weighed = isWeighed(p) && it.grams != null;
-      const swap = swappedAt(it, p, store);
+      // Swapped for this shop, at whichever store it's swapped at.
+      const swap = it.swap_store_id ? swappedAt(it, p, it.swap_store_id) : null;
+      const swapLabel = swap && (it.swap_kind === 'similar' ? `${storeProduct(it.swap_store_id, swap.name)}${swap.size && !swap.name.includes(swap.size) ? ` ${swap.size}` : ''}`
+        : `${swap.size || 'other size'}${it.swap_store_id !== store ? ` at ${storeName(it.swap_store_id)}` : ''}`);
       const cheaper = best && best.store !== store ? best : null;
       const got = Boolean(it.done_at);
       const at = got && it.done_store_id;
       return html`<li class="shop-item ${got ? 'got' : ''}" data-name="${productLabel(p).toLowerCase()}" data-pname="${p.name.toLowerCase()}">
         <input type="checkbox" data-action="shop-tick" data-id="${it.id}" ${raw(got ? 'checked' : '')} aria-label="${got ? 'Not got' : 'Got'} ${p.name}">
         <div class="si-name" data-action="shop-item" data-id="${it.id}">
-          <div class="title">${p.name}${swap ? html` <span class="shop-size swapped" title="Swapped to the other size for this shop">⇄ ${swap.size || 'other size'}</span>`
+          <div class="title">${p.name}${swap ? html` <span class="shop-size swapped" title="Swapped for this shop">⇄ ${swapLabel}</span>`
             : isWeighed(p) ? html` <span class="shop-size">by the kg</span>` : sizeLabel(p) ? html` <span class="shop-size">${sizeLabel(p)}</span>` : ''}
+            ${it.note ? html`<span class="note-mark" title="Note: ${it.note}" aria-label="Has a note">${raw(NOTE_ICON)}</span>` : ''}
             ${p.setup ? html`<button type="button" class="setup-tag" data-action="shop-setup" data-id="${p.id}">Set up</button>` : ''}</div>
-          ${!got && cheaper ? html`<span class="shop-deal-pill">${storeDot(cheaper.store)}${storeName(cheaper.store)} ${money2(cheaper.cents)} · save ${money(price - cheaper.cents)}</span>` : ''}
-          ${!got && p.similar ? html`<button type="button" class="similar-pill" data-action="shop-similar" title="A similar product costs less for the amount">${storeDot(p.similar.store_id)}Cheaper similar: ${storeName(p.similar.store_id)} ${p.similar.name} ${money2(p.similar.price_cents)}</button>` : ''}
+          ${!got && p.similar && !swap ? html`<button type="button" class="similar-line" data-action="shop-item" data-id="${it.id}" title="A similar product costs less for the amount: tap to swap to it for this shop">
+            <span class="swap-mark" aria-hidden="true">⇆</span>${storeProduct(p.similar.store_id, p.similar.name)}${p.similar.size && !p.similar.name.includes(p.similar.size) ? ` ${p.similar.size}` : ''} <b>${money2(p.similar.price_cents)}</b></button>` : ''}
         </div>
         <div class="si-who">${got ? html`${it.done_by_name ? html`<span class="who-init" style="--tag:${it.done_by_colour || 'var(--brand)'}" title="Checked off by ${it.done_by_name}">${it.done_by_name.slice(0, 1).toUpperCase()}</span>` : ''}
           ${at ? html`<span class="who-at">${storeDot(at)}${storeName(at)}</span>` : ''}`
@@ -4470,7 +4475,8 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           <span class="shop-qty" aria-label="${weighed ? gramsText(it.grams) : it.qty} of ${p.name}">${weighed ? gramsText(it.grams) : it.qty}</span>
           <button type="button" data-action="shop-qty" data-id="${it.id}" data-step="1" aria-label="${weighed ? `${gramsText(stepOf(p))} more` : 'One more'} ${p.name}">+</button></span>`}</div>
         <div class="si-total num">${cost != null ? money2(cost) : got ? '—'
-          : html`<button type="button" class="linkish small" data-action="shop-item" data-id="${it.id}">+ price</button>`}</div>
+          : html`<button type="button" class="linkish small" data-action="shop-item" data-id="${it.id}">+ price</button>`}
+          ${!got && cheaper ? html`<span class="cheaper-at" title="Save ${money(price - cheaper.cents)}">${storeDot(cheaper.store)}${money2(cheaper.cents)} at ${storeName(cheaper.store)}</span>` : ''}</div>
       </li>`;
     };
 
@@ -4488,7 +4494,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         <button type="button" class="shop-gtoggle" data-action="shop-fold" data-key="${key}" aria-expanded="${shut ? 'false' : 'true'}">
           <span class="chev">${shut ? '▸' : '▾'}</span><span class="g-name">${g.label}</span>
           <span class="g-count">${todo.length ? `${todo.length} left` : 'All got'}</span>
-          <span class="g-right">${optimal < sub ? html`<span class="g-best-pill">Cheapest <b>${money2(optimal)}</b> · save ${money(sub - optimal)}</span>` : ''}
+          <span class="g-right">${optimal < sub ? html`<span class="g-save" title="Cheapest everywhere: ${money2(optimal)}">Save ${money2(sub - optimal)} at other stores</span>` : ''}
             <b class="num g-total">${sub ? money2(sub) : '—'}</b></span></button>
         ${shut ? '' : html`
           ${g.key === 'unsorted' && loc && todo.length ? html`<p class="muted small shop-hint">Set where these are at ${locLabel(loc)} and they'll be sorted from now on.</p>` : ''}
@@ -4507,7 +4513,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         <button type="button" class="mini" data-action="shop-check">Check prices</button>
         ${loc ? html`<button type="button" class="mini" data-action="shop-sections" data-id="${loc.id}">${raw(LIST_ICON)} Edit categories</button>` : ''}
       </div>
-      <div class="shop-cols" aria-hidden="true"><span></span><span></span><span>Got by · at</span><span>Qty</span><span>Total</span></div>` : '';
+      <div class="shop-cols" aria-hidden="true"><span></span><span>Item</span><span>${done ? 'Aisle · got by' : 'Aisle'}</span><span>Qty</span><span>Total</span></div>` : '';
 
     const totals = rows.length ? shopSummary(shopTotals(rows, store), store) : '';
 
@@ -4705,8 +4711,10 @@ sudo docker compose up -d --build</pre>${s.extra}`;
   const MEASURE_OF = { g: 'weight', kg: 'weight', mL: 'volume', L: 'volume' };
   // How much of a weighed item is on the list, in g: its weight, or how many × what one weighs.
   const itemGrams = (it, p) => (it.grams != null ? it.grams : p.each_g ? it.qty * p.each_g : null);
-  // The other size a store sells, when the list has swapped to it for this shop.
-  const swappedAt = (it, p, store) => (it.swap_store_id === store ? p.options?.[store]?.size || null : null);
+  // The other size or close match a store sells, when the list has swapped to it for this shop.
+  const swappedAt = (it, p, store) => (it.swap_store_id === store ? p.options?.[store]?.[it.swap_kind || 'size'] || null : null);
+  // A store's product, naming the store once: "Woolworths Rolled Oats", or "Aldi · Rolled Oats".
+  const storeProduct = (storeId, name) => (String(name).toLowerCase().startsWith(storeName(storeId).toLowerCase()) ? name : `${storeName(storeId)} · ${name}`);
   // What a list item costs at a store: its weight at the price per kg, or how many packs (of the
   // other size, if it's swapped to that at this store). Null with no price there.
   function lineCost(it, p, store) {
@@ -4765,7 +4773,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     } else {
       // Swapped to the other size at this store: that size.
       const swapHere = swappedAt(it, p, store);
-      const packSize = swapHere ? swapHere.size || 'other size' : sizeLabel(p);
+      const packSize = swapHere ? swapHere.size || (it.swap_kind === 'similar' ? swapHere.name : 'other size') : sizeLabel(p);
       const each = weighed ? (p.each_g ? `about ${gramsText(it.qty * p.each_g)} · ${gramsText(p.each_g)} each` : '') : packSize ? `${it.qty} × ${packSize} ${p.sold_by === 'volume' ? 'bottle' : 'pack'}` : '';
       amount = html`<div class="ip-amount"><button type="button" class="ip-step" data-qty="${it.qty - 1}" aria-label="One less">−</button>
           <div class="ip-big"><b>× ${it.qty}</b><span>${each}</span></div>
@@ -4791,13 +4799,30 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       const m = measureText(o.size || o.name);
       const per = m ? perUnitText(o.price_cents, m[1], m[0]) : '';
       const kind = p.sold_by === 'volume' ? 'bottle' : 'pack';
-      if (it.swap_store_id === s.id) {
+      if (it.swap_store_id === s.id && (it.swap_kind || 'size') === 'size') {
         return html`<div class="ip-size on">${storeDot(s.id)}<span class="grow">Swapped to the ${o.size || 'other'} ${kind} at ${s.name} for this shop · ${money2(o.price_cents)}${per ? ` (${per})` : ''}</span>
           <button type="button" class="mini" data-swap="">Undo</button></div>`;
       }
       return html`<div class="ip-size">${storeDot(s.id)}<span class="grow">${s.name} also sells ${o.size ? `a ${o.size} ${kind}` : o.name} for ${money2(o.price_cents)}${per ? ` (${per})` : ''}</span>
-        <button type="button" class="mini primary" data-swap="${s.id}">Swap</button></div>`;
+        <button type="button" class="mini primary" data-swap="${s.id}" data-kind="size">Swap</button></div>`;
     };
+
+    // Each store's close match (from its last search), cheapest for the amount first, to swap to for
+    // this shop. The cheapest is set apart when it's the one the list calls cheaper similar.
+    const similars = weighed ? [] : state.shop.stores.filter((s) => p.options?.[s.id]?.similar).map((s) => {
+      const o = p.options[s.id].similar;
+      const m = measureText(o.size || o.name);
+      return { s, o, m, per: m ? o.price_cents / m[1] : Infinity };
+    }).sort((a, b) => a.per - b.per);
+    const simLine = ({ s, o, m }) => {
+      const per = m ? perUnitText(o.price_cents, m[1], m[0]) : '';
+      const on = it.swap_store_id === s.id && it.swap_kind === 'similar';
+      return html`<div class="ip-size ${on ? 'on' : ''}">${storeDot(s.id)}<span class="grow">${on ? 'Swapped to ' : ''}<b>${storeProduct(s.id, o.name)}</b>${o.size && !o.name.includes(o.size) ? ` ${o.size}` : ''}
+          · ${money2(o.price_cents)}${per ? ` (${per})` : ''}${on ? ' for this shop' : ''} <a class="lookup" href="${o.url}" target="_blank" rel="noopener noreferrer">View ↗</a></span>
+        ${on ? html`<button type="button" class="mini" data-swap="">Undo</button>` : html`<button type="button" class="mini primary" data-swap="${s.id}" data-kind="similar">Swap</button>`}</div>`;
+    };
+    const topSimilar = similars.length && p.similar && p.similar.store_id === similars[0].s.id ? similars[0] : null;
+    const restSimilar = topSimilar ? similars.slice(1) : similars;
 
     // Every store's price for that much, cheapest first.
     const priced = state.shop.stores.map((s) => ({ s, c: lineCost(it, p, s.id) })).filter((x) => x.c != null).sort((a, b) => a.c - b.c);
@@ -4836,8 +4861,10 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         ${priced.length ? html`<ul class="ip-prices">${priced.map(priceRow)}</ul>`
           : html`<p class="muted small">${counting && !p.each_g ? 'Say what one weighs to price them.' : 'No prices yet. Add them in Edit product.'}</p>`}
         ${priced.length && unpriced.length ? html`<p class="muted small ip-none">No price at ${unpriced.map((s) => s.name).join(', ')}.</p>` : ''}
-        ${p.similar ? html`<p class="similar-line small">Cheaper similar: ${storeDot(p.similar.store_id)}${storeName(p.similar.store_id)} ${p.similar.name}${p.similar.size ? ` ${p.similar.size}` : ''}
-          <b>${money2(p.similar.price_cents)}</b> <a class="lookup" href="${p.similar.url}" target="_blank" rel="noopener noreferrer">View ↗</a></p>` : ''}
+        ${similars.length ? html`<section class="ip-similar">
+          ${topSimilar ? html`<div class="ip-sim-head"><b>Cheaper similar</b><span class="muted small">for this shop only</span></div><div class="ip-sizes best">${simLine(topSimilar)}</div>` : ''}
+          ${restSimilar.length ? html`<div class="ip-sim-head"><b>${topSimilar ? 'Other close matches' : 'Close matches'}</b>${topSimilar ? '' : html`<span class="muted small">for this shop only</span>`}</div>
+            <div class="ip-sizes">${restSimilar.map(simLine)}</div>` : ''}</section>` : ''}
         <div class="field ip-note"><label for="ip-note">Note for this shop</label>
           <input id="ip-note" name="note" maxlength="200" value="${it.note || ''}" placeholder="${weighed ? 'Like a bit green, not too ripe' : 'Like only if it\'s on special'}"></div>
         <div class="dialog-actions ip-actions"><button type="button" class="danger" data-off>Take off list</button><span class="spacer"></span>
@@ -4905,7 +4932,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
             return;
           }
           const sw = t.closest('[data-swap]');
-          if (sw) { change({ swap_store_id: sw.dataset.swap ? Number(sw.dataset.swap) : null }); return; }
+          if (sw) { change(sw.dataset.swap ? { swap_store_id: Number(sw.dataset.swap), swap_kind: sw.dataset.kind || 'size' } : { swap_store_id: null }); return; }
           if (t.closest('[data-refresh]')) refreshProduct(p, form, () => shopItemPopup(it.id));
         };
       },
@@ -4921,15 +4948,27 @@ sudo docker compose up -d --build</pre>${s.extra}`;
   }
 
   // Gets one product's prices from the stores again (with its other sizes and close matches), then
-  // calls done. The button shows it's going; a store that wants a person opens for them to solve.
+  // calls done. The button and a line per store (spinner, then a tick) show it's going; a store
+  // that wants a person opens for them to solve.
   async function refreshProduct(p, form, done) {
     const btn = form.querySelector('[data-refresh]');
     if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+    const anchor = btn && btn.closest('.ip-prices-head, .auto-bubble');
+    let box = form.querySelector('.refresh-progress');
+    if (!box && anchor) { box = document.createElement('div'); box.className = 'refresh-progress'; anchor.after(box); }
+    const progress = (j) => {
+      if (!box) return;
+      box.innerHTML = state.shop.stores.filter((s) => j.stores[s.id]).map((s) => autoProgress(j, s).s).join('');
+    };
     try {
       const job = await api('POST', '/shop/checker/update', { product_ids: [p.id] });
       if (!job.id) { done(); return; }
       followJob(job, async (j) => {
+        progress(j);
         if (jobRunning(j) || !j.changes) return;
+        // Long enough to see the ticks.
+        await new Promise((r) => setTimeout(r, 900));
+        if (!form.isConnected) return;
         const stuck = Object.entries(j.stores).filter(([, st]) => st.state === 'try_later' || st.state === 'error').map(([id]) => storeName(Number(id)));
         await loadShop(state.shop.list);
         render();
@@ -4938,7 +4977,8 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       }, form);
     } catch (err) {
       form.querySelector('#form-error').textContent = err.message;
-      if (btn) { btn.disabled = false; btn.textContent = 'Refresh prices'; }
+      if (box) box.remove();
+      if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label || 'Refresh prices'; }
     }
   }
 
@@ -5014,17 +5054,37 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           form.querySelectorAll('.pe-weight').forEach((el) => { el.hidden = m !== 'weight'; });
           form.querySelector('#pe-size-label').textContent = m === 'weight' ? 'Usual amount' : m === 'volume' ? 'Bottle size' : 'Pack size';
           form.querySelector('#pe-price-label').textContent = m === 'weight' ? 'Price per kg' : 'Price per pack';
-          form.querySelector('#pe-sold-hint').textContent = m === 'weight' ? 'Goes on the list as a weight (or a count), with − / + by the step. Prices are per kg.'
+          form.querySelector('#pe-sold-hint').textContent = m === 'weight' ? `Goes on the list as a weight (or a count), with − / + by the step. Prices are per kg.${before ? ' Its size wasn\'t a weight, so type the price per kg.' : ''}`
             : m === 'volume' ? 'Goes on the list as bottles, with − / +. Prices are per bottle, compared per L.' : 'Goes on the list as packs, with − / +. Prices are per pack.';
         };
         // Switching how it's sold: the unit list changes, and typed prices become per kg or per pack.
+        // Without a weight to work from (like a 2 L bottle), per kg starts blank, and switching back
+        // before changing anything puts the size and prices back as they were.
         let was = mode();
+        let before = null;
+        const setUnits = (m, picked) => {
+          form.elements.unit.innerHTML = html`${m === 'pack' ? html`<option value="">None</option>` : ''}${unitOptions(m, picked)}`.s;
+          form.elements.unit.value = picked;
+        };
+        form.addEventListener('input', (ev) => { if (before && ev.target.name !== 'sold_by') before = null; });
         form.addEventListener('change', (ev) => {
-          if (ev.target.name !== 'sold_by') return;
+          if (ev.target.name !== 'sold_by') { if (before && ev.target.name === 'unit') before = null; return; }
           const m = mode();
           const unit = form.elements.unit;
+          if (was === 'weight' && m !== 'weight' && before) {
+            form.elements.size.value = before.size;
+            setUnits(m, SOLD_UNITS[m].includes(before.unit) || (m === 'pack' && before.unit === '') ? before.unit : m === 'volume' ? 'L' : '');
+            for (const s of stores) form.elements[`price-${s.id}`].value = before.prices[s.id];
+            before = null;
+            was = m;
+            show();
+            return;
+          }
           const size = Number(form.elements.size.value) || null;
           const grams = size && BASE[unit.value] && MEASURE_OF[unit.value] === 'weight' ? size * BASE[unit.value] : null;
+          if (m === 'weight' && was !== 'weight' && !grams) {
+            before = { size: form.elements.size.value, unit: unit.value, prices: Object.fromEntries(stores.map((s) => [s.id, form.elements[`price-${s.id}`].value])) };
+          }
           for (const s of stores) {
             const input = form.elements[`price-${s.id}`];
             const c = parseMoney(input.value);
@@ -5033,7 +5093,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
             if (m !== 'weight' && was === 'weight') input.value = grams ? moneyInput(Math.round((c * grams) / 1000)) : '';
           }
           const keepUnit = SOLD_UNITS[m].includes(unit.value) ? unit.value : m === 'weight' ? 'kg' : m === 'volume' ? 'L' : unit.value;
-          unit.innerHTML = html`${m === 'pack' ? html`<option value="">None</option>` : ''}${unitOptions(m, keepUnit)}`.s;
+          setUnits(m, keepUnit);
           if (m === 'weight' && !grams) { form.elements.size.value = '1'; unit.value = 'kg'; }
           was = m;
           show();
@@ -5226,21 +5286,21 @@ sudo docker compose up -d --build</pre>${s.extra}`;
   function similarList() {
     const loc = shopLocation();
     const store = loc ? loc.store_id : null;
-    const list = state.shop.items.filter((it) => !it.done_at).map((it) => shopProduct(it.product_id)).filter((p) => p && p.similar);
+    const list = state.shop.items.filter((it) => !it.done_at).map((it) => ({ it, p: shopProduct(it.product_id) })).filter(({ p }) => p && p.similar);
     openForm({
       title: 'Cheaper similar',
-      body: html`<p class="muted small">Similar products that cost less for the amount, found by Automatic price search. They're only a hint: best buys and totals don't count them.</p>
-        <ul class="list upd-list">${list.map((p) => {
+      body: html`<p class="muted small">Similar products that cost less for the amount, found by Automatic price search. Open one to swap to it for this shop. Until then, best buys and totals don't count them.</p>
+        <ul class="list upd-list">${list.map(({ it, p }) => {
           const here = itemCost(p, store) ?? bestPrice(p, store)?.cents;
           return html`<li><div class="grow"><div class="title">${productLabel(p)}${here != null ? html` <span class="muted small">${money(here)}</span>` : ''}</div>
-            <div class="small">${storeDot(p.similar.store_id)}${storeName(p.similar.store_id)}: ${p.similar.name}${p.similar.size ? ` ${p.similar.size}` : ''} <b>${money(p.similar.price_cents)}</b>
+            <div class="small">${storeDot(p.similar.store_id)}${storeProduct(p.similar.store_id, p.similar.name)}${p.similar.size && !p.similar.name.includes(p.similar.size) ? ` ${p.similar.size}` : ''} <b>${money(p.similar.price_cents)}</b>
               <a class="lookup" href="${p.similar.url}" target="_blank" rel="noopener noreferrer">View ↗</a></div></div>
-            <button type="button" class="mini" data-open="${p.id}">Open</button></li>`;
+            <button type="button" class="mini" data-open="${it.id}">Open</button></li>`;
         })}</ul>${list.length ? '' : html`<p class="empty">Nothing on the list has a cheaper similar product.</p>`}`,
       afterRender: (form) => {
         form.onclick = (ev) => {
           const o = ev.target.closest('[data-open]');
-          if (o) productEditor(shopProduct(Number(o.dataset.open)), { back: similarList });
+          if (o) shopItemPopup(Number(o.dataset.open));
         };
       },
     });

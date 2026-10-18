@@ -558,10 +558,14 @@ test('shopping: bought by weight, counted, swapped and noted', () => withServer(
   // Swapped to another size at a store, for this shop only: ticked off and added again, it's not.
   assert.equal((await call('PATCH', `/shop/items/${item.id}`, { swap_store_id: 9999 })).status, 400);
   r = await call('PATCH', `/shop/items/${item.id}`, { swap_store_id: stores.Woolworths, note: 'only if ripe' });
-  assert.equal(r.body.swap_store_id, stores.Woolworths);
+  assert.deepEqual([r.body.swap_store_id, r.body.swap_kind], [stores.Woolworths, 'size']);
+  // Or to a store's close match.
+  assert.equal((await call('PATCH', `/shop/items/${item.id}`, { swap_store_id: stores.Coles, swap_kind: 'other' })).status, 400);
+  r = await call('PATCH', `/shop/items/${item.id}`, { swap_store_id: stores.Coles, swap_kind: 'similar' });
+  assert.deepEqual([r.body.swap_store_id, r.body.swap_kind], [stores.Coles, 'similar']);
   await call('PATCH', `/shop/items/${item.id}`, { done: true });
   r = await call('POST', '/shop/items', { list: 'shared', product_id: id });
-  assert.deepEqual([r.body.swap_store_id, r.body.note, r.body.grams], [null, null, 2000]);
+  assert.deepEqual([r.body.swap_store_id, r.body.swap_kind, r.body.note, r.body.grams], [null, null, null, 2000]);
 
   // Back to packs: the list counts it again.
   await call('PATCH', `/shop/products/${id}`, { sold_by: 'pack', price_per: 'each' });
