@@ -18,6 +18,8 @@ const toResult = (p) => p && p.price && result({
   was: p.price.wasPriceDisplay,
   unit: p.price.comparisonDisplay,
   url: urlOf(p),
+  // Loose fruit and veg are priced by the kilo.
+  sold: String(p.quantityUnit || '').toLowerCase() === 'kg' ? 'kg' : 'pack',
 });
 
 function create(fetchImpl = globalThis.fetch) {

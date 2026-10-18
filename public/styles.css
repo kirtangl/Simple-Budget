@@ -2011,6 +2011,7 @@ h3.form-section.find-head { margin-top: 14px; }
 .find-list .sum-pill { display: inline-block; margin-top: 3px; }
 .find-list .title { overflow-wrap: anywhere; }
 .find-price { white-space: nowrap; }
+.loose-line { margin: 2px 0; color: var(--info); overflow-wrap: anywhere; }
 .find-on { color: var(--paid); font-weight: 600; white-space: nowrap; }
 .find-none { margin: 6px 0 2px; }
 .price-special { color: var(--paid); font-weight: 600; }

@@ -45,17 +45,39 @@ const cents = (v) => {
 };
 const tidy = (s) => (typeof s === 'string' && s.trim() ? s.trim().replace(/\s+/g, ' ').slice(0, 200) : null);
 
-// A result the app can use, or null if it has no price.
-function result({ name, size, price, was, special, unit, url, available = true }) {
+// A unit price like "$4.00 / 1KG", "$0.36 / 100G" or "$3.69 per 1 kg", as cents per kg (or per L
+// for mL and L). Null for one that's per each, or can't be read.
+function perKg(text) {
+  const m = /\$\s*([\d,]+(?:\.\d+)?)\s*(?:\/|per)\s*([\d.]+)?\s*(kg|g|l|ml)\b/i.exec(String(text || ''));
+  if (!m) return null;
+  const amount = Number(m[2] || 1) * ({ kg: 1000, g: 1, l: 1000, ml: 1 })[m[3].toLowerCase()];
+  const c = Math.round((Number(m[1].replace(/,/g, '')) * 100 * 1000) / amount);
+  return Number.isFinite(c) && c > 0 ? c : null;
+}
+// The weight a store says one of a loose item weighs: "approx. 180g" in its name or size.
+const approxGrams = (...texts) => {
+  const m = /approx\.?\s*(\d+(?:\.\d+)?)\s*(kg|g)\b/i.exec(texts.filter(Boolean).join(' '));
+  return m ? Number(m[1]) * (m[2].toLowerCase() === 'kg' ? 1000 : 1) : null;
+};
+
+// A result the app can use, or null if it has no price. sold says how: 'pack' (a fixed size, the
+// usual), 'each' (loose, one at a time, like a banana at Woolworths) or 'kg' (loose, priced by the
+// kilo, like a banana at Aldi). per_kg_cents is its price per kg (or L) when known, so a loose item
+// can be priced by weight; for one sold each, it comes from the weight the store says one weighs.
+function result({ name, size, price, was, special, unit, url, available = true, sold = 'pack', grams = null }) {
   const price_cents = cents(price);
   if (!tidy(name) || !price_cents || !url) return null;
   const was_cents = cents(was);
+  let per_kg_cents = sold === 'kg' ? price_cents : perKg(unit);
+  const g = grams > 0 ? grams : sold === 'each' ? approxGrams(name, size) : null;
+  if (sold === 'each' && !per_kg_cents && g) per_kg_cents = Math.round((price_cents * 1000) / g);
   return {
     name: tidy(name), size: tidy(size), price_cents,
     was_cents: was_cents && was_cents > price_cents ? was_cents : null,
     special: Boolean(special) || Boolean(was_cents && was_cents > price_cents),
     unit_price: tidy(unit), url, available: available !== false,
+    sold, per_kg_cents: per_kg_cents || null, ...(sold === 'each' && g ? { each_grams: g } : {}),
   };
 }
 
-module.exports = { challenged, pageFetch, result, cents, Challenge };
+module.exports = { challenged, pageFetch, result, cents, perKg, approxGrams, Challenge };

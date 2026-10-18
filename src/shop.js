@@ -113,6 +113,23 @@ function pricePer(per, size, unit) {
 }
 const body = (req) => (req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {});
 
+// What a store's result costs, priced the way the product is. Loose fruit and veg (sold each, like
+// a banana at Woolworths, or by the kilo, like one at Aldi) with a price per kg is priced by
+// weight: per kg or 100 g (L or 100 mL) as the product is, or for its size when it's priced each
+// with a weight, like 1 kg of bananas at $4.50/kg = $4.50. Anything else costs its own price.
+const PER_KG_SHARE = { kg: 1, '100g': 0.1, L: 1, '100mL': 0.1 };
+const GRAMS = { g: 1, kg: 1000, mL: 1, L: 1000 };
+function priceFor(p, r) {
+  const own = { cents: r.price_cents, was: r.was_cents || null };
+  const loose = (r.sold === 'each' || r.sold === 'kg') && Number.isInteger(r.per_kg_cents) && r.per_kg_cents > 0;
+  if (!loose || !p) return own;
+  const share = PER_KG_SHARE[p.price_per] ?? (p.size > 0 && GRAMS[p.unit] ? (p.size * GRAMS[p.unit]) / 1000 : null);
+  if (!share) return own;
+  const cents = Math.round(r.per_kg_cents * share);
+  if (!(cents > 0 && cents <= 100000)) return own;
+  return { cents, was: r.was_cents ? Math.round((r.was_cents * cents) / r.price_cents) : null };
+}
+
 function createShop(db, { checker = null } = {}) {
   const router = express.Router();
   const count = (table, where = '', ...args) => db.prepare(`SELECT count(*) AS n FROM ${table} ${where}`).get(...args).n;
@@ -447,12 +464,29 @@ function createShop(db, { checker = null } = {}) {
     for (const [id, m] of started) if (Date.now() - m.at > 60 * 60e3) started.delete(id);
     started.set(job.id, { ...meta, at: Date.now() });
   };
-  const queryOf = (p) => (p.size && MEASURE[p.unit] ? `${p.name} ${p.size}${p.unit}` : p.name);
+  // Stores are searched for the name alone: "Bananas 1000g" finds packs instead of loose ones.
+  // Results the same size as the product come first (see jobView).
+  const queryOf = (p) => p.name;
   const startedJob = (id) => {
     const meta = started.get(String(id));
     if (!meta) throw new CheckerError('That check has finished.', 404);
     return meta;
   };
+  // A search's results with what each would cost as the product is priced (cost_cents) and its
+  // place in the checker's list (i, which a pick refers to): the same size as the product, or
+  // loose when the product is priced by weight, first.
+  function ranked(p, list) {
+    if (!Array.isArray(list)) return [];
+    const own = p && p.size && MEASURE[p.unit] ? measureOf(`${p.size}${p.unit}`) : null;
+    const near = (r) => {
+      if (p && PER_KG_SHARE[p.price_per] && (r.sold === 'each' || r.sold === 'kg')) return true;
+      const m = own && measureOf(r.size);
+      return Boolean(m && m[0] === own[0] && Math.abs(m[1] - own[1]) <= own[1] * 0.02);
+    };
+    return list.map((r, i) => ({ ...r, i, cost_cents: priceFor(p, r).cents, near: near(r) }))
+      .sort((a, b) => Number(b.near) - Number(a.near) || a.i - b.i);
+  }
+
   // The checker's job as the app sees it: stores by their ids here.
   const jobView = (job, meta) => {
     const byKey = Object.fromEntries(Object.entries(meta.stores).map(([sid, key]) => [key, Number(sid)]));
@@ -463,7 +497,8 @@ function createShop(db, { checker = null } = {}) {
       out.product_id = meta.product_id;
       out.q = job.q;
       out.results = {};
-      for (const [key, list] of Object.entries(job.results || {})) if (key in byKey) out.results[byKey[key]] = list;
+      const p = one('SELECT * FROM shop_products WHERE id = ?', meta.product_id);
+      for (const [key, list] of Object.entries(job.results || {})) if (key in byKey) out.results[byKey[key]] = ranked(p, list);
     } else {
       out.total = Object.keys(meta.items).length;
       out.changes = meta.changes || null;
@@ -474,7 +509,7 @@ function createShop(db, { checker = null } = {}) {
   };
 
   // A product's prices from a search at every store (or just the stores given, for a new match):
-  // { product_id, store_ids?, q? }. It searches for the name and size unless q says otherwise.
+  // { product_id, store_ids?, q? }. It searches for the name unless q says otherwise.
   router.post('/checker/find', async (req, res) => {
     needChecker();
     const b = body(req);
@@ -557,10 +592,10 @@ function createShop(db, { checker = null } = {}) {
           }
           continue;
         }
-        const cents = Number.isInteger(r.price_cents) && r.price_cents > 0 && r.price_cents <= 100000 ? r.price_cents : null;
-        if (!cents) continue;
+        if (!(Number.isInteger(r.price_cents) && r.price_cents > 0 && r.price_cents <= 100000)) continue;
+        const { cents, was } = priceFor(one('SELECT * FROM shop_products WHERE id = ?', pid), r);
         const before = one('SELECT price_cents FROM shop_prices WHERE product_id = ? AND store_id = ?', pid, sid);
-        savePrice(pid, sid, cents, r.was_cents);
+        savePrice(pid, sid, cents, was);
         db.prepare('UPDATE shop_matches SET missing_at = NULL WHERE product_id = ? AND store_id = ?').run(pid, sid);
         if (!before || before.price_cents !== cents) changes.push({ product_id: pid, store_id: sid, old_cents: before ? before.price_cents : null, new_cents: cents, special: Boolean(r.special) });
       }
@@ -645,7 +680,8 @@ function createShop(db, { checker = null } = {}) {
         db.prepare(`INSERT INTO shop_matches (product_id, store_id, url, name, size, missing_at) VALUES (?, ?, ?, ?, ?, NULL)
           ON CONFLICT (product_id, store_id) DO UPDATE SET url = excluded.url, name = excluded.name, size = excluded.size, missing_at = NULL`)
           .run(id, Number(sid), String(r.url).slice(0, 500), String(r.name).slice(0, 200), r.size ? String(r.size).slice(0, 40) : null);
-        savePrice(id, Number(sid), r.price_cents, r.was_cents);
+        const price = priceFor(p, r);
+        savePrice(id, Number(sid), price.cents, price.was);
       }
       const similar = cheaperSimilar(p, results, meta.stores);
       if (similar) {
@@ -750,7 +786,7 @@ function createHelper(db) {
       const price = db.prepare('SELECT * FROM shop_prices WHERE product_id = ? AND store_id = ?').get(p.id, s.id);
       const size = p.size ? `${p.size}${p.unit && MEASURE[p.unit] ? p.unit : ` ${p.unit || ''}`}`.trim() : '';
       return {
-        product_id: p.id, name: p.name, size: size || null, q: `${p.name} ${size}`.trim(),
+        product_id: p.id, name: p.name, size: size || null, q: p.name, // the name alone, as for the price-checker
         match: m && m.url ? { url: m.url, name: m.name, size: m.size, missing: Boolean(m.missing_at) } : null,
         none: Boolean(m && !m.url),
         price_cents: price ? price.price_cents : null,
@@ -766,15 +802,16 @@ function createHelper(db) {
     if (!s) return res.status(404).json({ error: 'Not found.' });
     const b = body(req);
     const ids = (v) => (Array.isArray(v) ? v.map(Number).filter((n) => Number.isInteger(n)) : []);
-    const product = (id) => db.prepare('SELECT id FROM shop_products WHERE id = ?').get(id);
+    const product = (id) => db.prepare('SELECT * FROM shop_products WHERE id = ?').get(id);
     const changes = [];
     transaction(db, () => {
       for (const r of (Array.isArray(b.found) ? b.found : []).slice(0, 500)) {
         const id = Number(r && r.product_id);
         if (!product(id) || typeof r.url !== 'string' || !/^https:\/\//.test(r.url) || typeof r.name !== 'string') continue;
-        const cents = Number.isInteger(r.price_cents) && r.price_cents > 0 && r.price_cents <= 100000 ? r.price_cents : null;
-        if (!cents) continue;
-        const was = Number.isInteger(r.was_cents) && r.was_cents > cents && r.was_cents <= 100000 ? r.was_cents : null;
+        if (!(Number.isInteger(r.price_cents) && r.price_cents > 0 && r.price_cents <= 100000)) continue;
+        const given = { price_cents: r.price_cents, was_cents: Number.isInteger(r.was_cents) && r.was_cents > r.price_cents && r.was_cents <= 100000 ? r.was_cents : null,
+          sold: r.sold === 'each' || r.sold === 'kg' ? r.sold : 'pack', per_kg_cents: Number.isInteger(r.per_kg_cents) && r.per_kg_cents > 0 && r.per_kg_cents <= 1000000 ? r.per_kg_cents : null };
+        const { cents, was } = priceFor(product(id), given);
         const before = db.prepare('SELECT price_cents FROM shop_prices WHERE product_id = ? AND store_id = ?').get(id, s.id);
         db.prepare(`INSERT INTO shop_matches (product_id, store_id, url, name, size, missing_at) VALUES (?, ?, ?, ?, ?, NULL)
           ON CONFLICT (product_id, store_id) DO UPDATE SET url = excluded.url, name = excluded.name, size = excluded.size, missing_at = NULL`)

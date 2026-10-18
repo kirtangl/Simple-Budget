@@ -17,6 +17,8 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 - **Check prices** shows every product with a box for its price at each store, and **Auto** beside it to search the stores' websites for it. **Needs checking** shows just what has no price or an old one.
 - The search's suggestions show each product's price at the store you're at and the best price elsewhere.
 - Cheaper similar products stand out on the list in blue, and a button above the list says how many there are and lists them.
+- Loose fruit and veg get the right price from Automatic price search. Woolworths and Coles sell bananas "each", so the price is worked out from their price per kg (at Woolworths, from the weight they say one weighs): 1 kg of bananas at $4.50/kg is saved as $4.50, not 81c. Aldi's per-kg prices work the same way.
+- Automatic price search looks for the name alone (just "Bananas", not "Bananas 1000g"), and lists what's the same size as yours first.
 
 For whoever runs the server: automatic prices need the new price-checker container (about 2 GB, since it has its own browser). See "Automatic prices" in the README to turn it on; without it, the app works as before. The price-checker visits the stores' home pages twice a week at random times, never solves a store's puzzle itself, and leaves a store alone for a while if it keeps asking.
 

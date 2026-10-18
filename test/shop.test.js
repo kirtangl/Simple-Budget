@@ -445,7 +445,7 @@ test('shopping: the browser helper (Coles button) uses its own key', () => withS
   let r = await ext('GET', '/shop-helper/coles', null, as(key));
   assert.equal(r.body.store.id, stores.Coles);
   assert.deepEqual(r.body.items.map((i) => [i.name, i.q, i.match, i.out_of_date]),
-    [['Bread', 'Bread', null, false], ['Milk', 'Milk', null, false], ['Rolled oats', 'Rolled oats 750g', null, false]]);
+    [['Bread', 'Bread', null, false], ['Milk', 'Milk', null, false], ['Rolled oats', 'Rolled oats', null, false]]);
 
   r = await ext('POST', '/shop-helper/coles/results', {
     found: [{ product_id: oats, url: 'https://shop.example/c/oats', name: 'Test Rolled Oats', size: '750g', price_cents: 300, was_cents: 350 },
@@ -462,6 +462,20 @@ test('shopping: the browser helper (Coles button) uses its own key', () => withS
   assert.equal(by.Milk.match, null);
   assert.equal(by['Rolled oats'].match.name, 'Test Rolled Oats');
   assert.equal(by['Rolled oats'].out_of_date, false);
+  // Loose bananas, sold each with a price per kg, cost 1 kg's worth for a 1 kg product, or a kilo's
+  // price for one priced per kg.
+  const bananas = (await call('POST', '/shop/items', { name: 'Bananas' })).body.product_id;
+  await call('PATCH', `/shop/products/${bananas}`, { size: 1000, unit: 'g' });
+  const loose = { url: 'https://shop.example/c/bananas', name: 'Test Bananas Loose', size: 'approx. 180g', price_cents: 72, sold: 'each', per_kg_cents: 400 };
+  await ext('POST', '/shop-helper/coles/results', { found: [{ product_id: bananas, ...loose }] }, as(key));
+  assert.equal((await call('GET', '/shop')).body.products.find((x) => x.id === bananas).prices[stores.Coles], 400);
+  await call('PATCH', `/shop/products/${bananas}`, { size: 1, unit: 'kg', price_per: '100g' });
+  await ext('POST', '/shop-helper/coles/results', { found: [{ product_id: bananas, ...loose }] }, as(key));
+  assert.equal((await call('GET', '/shop')).body.products.find((x) => x.id === bananas).prices[stores.Coles], 40);
+  await call('PATCH', `/shop/products/${bananas}`, { size: null, unit: null, price_per: 'each' });
+  await ext('POST', '/shop-helper/coles/results', { found: [{ product_id: bananas, ...loose }] }, as(key));
+  assert.equal((await call('GET', '/shop')).body.products.find((x) => x.id === bananas).prices[stores.Coles], 72); // one banana
+
   await ext('POST', '/shop-helper/coles/results', { missing: [oats] }, as(key));
   r = await ext('GET', '/shop-helper/coles', null, as(key));
   assert.equal(r.body.items.find((i) => i.product_id === oats).match.missing, true);

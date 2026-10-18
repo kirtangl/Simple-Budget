@@ -5100,13 +5100,19 @@ sudo docker compose up -d --build</pre>`;
       if (!list.length) return html`<p class="muted small">Nothing found at ${s.name}. Try different words above.</p>`;
       return html`<ul class="list find-list">${list.slice(0, 12).map((r, i) => {
         const on = mine && mine.url === r.url;
+        // Loose fruit and veg: priced by weight for this product, from the store's price per kg.
+        const cost = r.cost_cents ?? r.price_cents;
+        const loose = cost !== r.price_cents ? html`<div class="loose-line small">${money2(r.price_cents)} ${r.sold === 'kg' ? 'per kg' : 'each'}
+          ≈ ${money2(r.per_kg_cents)}/kg${r.each_grams ? ` (${r.each_grams} g each)` : ''} · <b>${money2(cost)}</b> ${p.price_per !== 'each' ? (PER_LABELS[p.price_per] || '').toLowerCase() : `for ${sizeLabel(p)}`}</div>`
+          : r.sold === 'each' && !r.per_kg_cents && BASE[p.unit] ? html`<div class="loose-line small">Sold each, and the store doesn't say what one weighs, so this is the price of one.</div>` : '';
         return html`<li class="${on ? 'on' : ''}"><div class="grow"><div class="title">${r.name}</div>
+            ${loose}
             <div class="muted small">${[r.size, r.unit_price].filter(Boolean).join(' · ')}
               <a class="lookup" href="${r.url}" target="_blank" rel="noopener noreferrer">View ↗</a></div>
             ${r.special ? html`<span class="sum-pill">Special${r.was_cents ? ` · was ${money2(r.was_cents)}` : ''}</span>` : ''}
             ${r.available === false ? html`<span class="muted small"> In store only</span>` : ''}</div>
-          <b class="num find-price">${money2(r.price_cents)}</b>
-          ${on ? html`<span class="mini find-on">Matched ✓</span>` : html`<button type="button" class="mini primary" data-match="${s.id}" data-i="${i}">Use this</button>`}</li>`;
+          <b class="num find-price">${money2(cost)}</b>
+          ${on ? html`<span class="mini find-on">Matched ✓</span>` : html`<button type="button" class="mini primary" data-match="${s.id}" data-i="${r.i ?? i}">Use this</button>`}</li>`;
       })}</ul><div class="find-none">${none}</div>`;
     };
     const draw = (j) => {
@@ -5128,7 +5134,7 @@ sudo docker compose up -d --build</pre>`;
       title: only ? `Find a new match · ${storeName(only)}` : 'Automatic price search',
       body: html`<p class="find-what"><b>${productLabel(p)}</b></p>
         <div class="prod-tools"><label for="find-q" class="sr-only">Search the stores for</label>
-          <input id="find-q" type="search" value="${q || current?.q || `${p.name} ${sizeLabel(p).replace(' ', '')}`.trim()}" autocomplete="off">
+          <input id="find-q" type="search" value="${q || current?.q || p.name}" autocomplete="off">
           <button type="button" class="mini" data-find-go>Search again</button></div>
         <p class="muted small" id="find-help">Searching the stores. This usually takes a few seconds.</p>
         <div id="find-body"></div>`,

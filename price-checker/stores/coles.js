@@ -20,6 +20,8 @@ const toResult = (p) => p && p.pricing && result({
   unit: p.pricing.comparable,
   url: urlOf(p),
   available: p.availability,
+  // Loose fruit and veg are sold each ("approx. 180g"), with a price per kg beside it.
+  sold: /\beach\b|approx/i.test(p.size || '') || (p.pricing.unit && p.pricing.unit.isWeighted) ? 'each' : 'pack',
 });
 
 async function build(page) {

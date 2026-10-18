@@ -200,3 +200,13 @@ test('checker: warm-ups are once Monday to Wednesday and once Thursday to Sunday
   assert.ok(state.warmups[0] - first > 4 * 24 * 60 * 60e3);
   assert.ok(new Date(state.warmups[0]) >= new Date('2026-10-19T08:00:00'));
 });
+
+test('stores: unit prices read as per kg, and loose items priced by weight', () => {
+  const { perKg, result } = require('../stores/common');
+  assert.deepEqual([perKg('$4.00 / 1KG'), perKg('$0.36 / 100G'), perKg('$3.69 per 1 kg'), perKg('$1.80 / 1L'), perKg('$0.81 / 1EA')], [400, 360, 369, 180, null]);
+  const each = result({ name: 'Test Bananas', size: 'each', price: 0.81, unit: '$0.81 / 1EA', url: 'u', sold: 'each', grams: 180 });
+  assert.deepEqual([each.sold, each.per_kg_cents, each.each_grams], ['each', 450, 180]);
+  assert.equal(result({ name: 'Test Bananas', size: 'approx. 200g', price: 0.8, url: 'u', sold: 'each' }).per_kg_cents, 400);
+  assert.equal(result({ name: 'Test Bananas', size: 'each', price: 0.8, url: 'u', sold: 'each' }).per_kg_cents, null);
+  assert.equal(result({ name: 'Test Bananas', size: 'per kg', price: 4.49, url: 'u', sold: 'kg' }).per_kg_cents, 449);
+});

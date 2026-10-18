@@ -161,7 +161,13 @@ function readPage() {
     const slug = [r.brand, r.name, r.size].filter(Boolean).join(' ').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const now = cents(p.now);
     const was = cents(p.was);
+    // Loose fruit and veg are sold each ("approx. 180g") with a price per kg beside it.
+    const loose = /\beach\b|approx/i.test(r.size || '') || Boolean(p.unit && p.unit.isWeighted);
+    const per = /\$\s*([\d,]+(?:\.\d+)?)\s*(?:\/|per)\s*([\d.]+)?\s*(kg|g|l|ml)\b/i.exec(String(p.comparable || ''));
+    const perKg = per ? Math.round((Number(per[1].replace(/,/g, '')) * 100 * 1000) / (Number(per[2] || 1) * ({ kg: 1000, g: 1, l: 1000, ml: 1 })[per[3].toLowerCase()])) : null;
     return {
+      sold: loose ? 'each' : 'pack',
+      per_kg_cents: perKg && perKg > 0 ? perKg : null,
       id: String(r.id),
       name: [r.brand, r.name].filter(Boolean).join(' ').trim(),
       size: r.size || null,
@@ -238,7 +244,7 @@ $('save').onclick = async () => {
   for (const [id, f] of found) {
     if (typeof f.pick === 'number') {
       const p = f.products[f.pick];
-      body.found.push({ product_id: id, url: p.url, name: p.name, size: p.size, price_cents: p.price_cents, was_cents: p.was_cents });
+      body.found.push({ product_id: id, url: p.url, name: p.name, size: p.size, price_cents: p.price_cents, was_cents: p.was_cents, sold: p.sold, per_kg_cents: p.per_kg_cents });
     } else if (f.pick === 'none') body.none.push(id);
     else if (f.lost) body.missing.push(id);
   }
