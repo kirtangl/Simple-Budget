@@ -1962,7 +1962,7 @@ button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
 .sp-best { font-weight: 700; }
 .sp-best.here { color: var(--brand); }
 .sp-best.away { color: var(--due); }
-.sp-qty { justify-self: center; min-width: 32px; min-height: 32px; padding: 0 8px; border-radius: 999px; font-weight: 700; }
+.sp-qty { justify-self: center; min-width: 30px; min-height: 0; height: 24px; padding: 0 7px; border-radius: 7px; font-size: .8rem; font-weight: 700; line-height: 1; }
 .sp-qty.on { border-color: var(--brand); background: var(--brand); color: var(--on-brand); }
 .sp-del { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--card)); }
 .sp-foot { display: flex; flex-direction: column; gap: 2px; }
@@ -2071,13 +2071,13 @@ dialog.item-pop { width: min(520px, calc(100vw - 24px)); }
 .shop-size.swapped { color: var(--info); font-weight: 600; white-space: normal; }
 .stepper.weighed .shop-qty { min-width: 3.6em; text-align: center; }
 .seg { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--inset); }
-.seg > button, .seg > label { min-height: 0; padding: 4px 12px; border: 0; border-radius: 6px; background: transparent; box-shadow: none;
+.seg > button, .seg > label { min-height: 0; margin: 0; padding: 4px 12px; border: 0; border-radius: 6px; background: transparent; box-shadow: none;
   color: var(--muted); font-size: .82rem; font-weight: 600; cursor: pointer; text-align: center; }
 .seg > .on { background: var(--brand); color: var(--on-brand); }
 .seg > label input { position: absolute; opacity: 0; pointer-events: none; }
 .seg > label:has(input:focus-visible) { outline: 2px solid var(--brand); outline-offset: 1px; }
 .pe-sold { display: flex; width: 100%; }
-.pe-sold > label { flex: 1; position: relative; padding: 8px 6px; }
+.pe-sold > label { flex: 1; position: relative; margin: 0; padding: 8px 6px; }
 .ip-card { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--inset); }
 .ip-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
 .ip-kicker { font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
@@ -2144,11 +2144,26 @@ dialog.item-pop { width: min(520px, calc(100vw - 24px)); }
 .upd-folder-in { display: flex; gap: 8px; }
 .upd-folder-in input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }
 
-/* Edit product: Change all sets one aisle or category at every location (orange: it replaces them). */
-.pe-aisles-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.pe-aisles-head .form-section { margin-bottom: 0; }
-button.warn-btn { color: var(--due); border-color: color-mix(in srgb, var(--due) 55%, var(--line)); background: var(--due-soft); font-weight: 600; }
-button.warn-btn:hover { border-color: var(--due); }
+/* Edit product: the aisle at every location, as one box when it's the same everywhere. */
+.pe-aisles-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.pe-aisles-head .muted, .pe-aisles-head .linkish { margin-left: 0; font-weight: 600; }
+.pe-aisles-head .muted { font-weight: 400; }
+.pe-one { display: flex; align-items: center; gap: 12px; margin-top: 8px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--inset); }
+.pe-one .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pe-one .grow b { font-size: 1.05rem; overflow-wrap: anywhere; }
+.pe-one .linkish { font-weight: 600; }
+.pe-one-icon { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--brand); }
+.pe-one-stores { margin: 8px 0 10px; }
+.pe-locs { margin-top: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--inset); overflow: hidden; }
+.pe-locs h4 { display: flex; align-items: center; gap: 6px; margin: 0; padding: 10px 14px 4px; font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.pe-loc { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 0; padding: 11px 14px; border: 0; border-top: 1px solid var(--line); border-radius: 0;
+  background: none; box-shadow: none; text-align: left; font: inherit; font-size: .9rem; color: var(--text); cursor: pointer; }
+.pe-locs h4 + .pe-loc { border-top: 0; }
+.pe-locs .pe-loc + h4 { border-top: 1px solid var(--line); }
+.pe-loc:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.pe-loc .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.pe-loc b { text-align: right; }
+.pe-chev { color: var(--muted); font-size: 1.1rem; line-height: 1; }
 .warn-text { color: var(--due); }
 .danger-text { color: var(--danger); }
 

@@ -4642,6 +4642,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
   }
   const aislesText = (l) => { const n = aislesAt(l); return n ? `${n} ${n === 1 ? 'item' : 'items'} with aisles` : 'Aisles not set'; };
   const aOrAn = (name) => (/^[aeiou]/i.test(name) ? 'an' : 'a');
+  const AISLE_ICON = raw('<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 2v12M13 2v12M3 6h10M3 10h10"/></svg>');
   const SLIDERS_ICON = raw('<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 2.5v11M8 2.5v11M13 2.5v11"/><path d="M1.5 10h3M6.5 5h3M11.5 9h3"/></svg>');
 
   // Where are you shopping: each chain's locations as tiles, with when each was last used. A tap
@@ -5065,12 +5066,22 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     const matched = checker.filter((s) => p.matches?.[s.id]?.url);
     const stale = matched.filter((s) => freshness(p.checked?.[s.id]) === 'stale');
     const stores = state.shop.stores;
-    const main = stores.slice(0, 3);
-    const more = stores.slice(3);
     const spotsOf = (s) => state.shop.locations.filter((l) => l.store_id === s.id);
-    const aisleRows = (list) => list.filter((s) => spotsOf(s).length).map((s) => html`<div class="pe-store"><h4>${storeDot(s.id)}${s.name}</h4>
-      ${spotsOf(s).map((l) => html`<div class="pe-aisle"><span class="grow">${l.name} · <b>${shopSpot(p, l).label}</b></span>
-        <button type="button" class="mini" data-aisle="${l.id}">Change</button></div>`)}</div>`);
+    // Aisles: one box when it's in the same place at every location, otherwise a row per location.
+    const locs = state.shop.locations;
+    const spotKey = (l) => { const sp = shopSpot(p, l); return sp.aisle || sp.section ? sp.label.toLowerCase() : null; };
+    const same = locs.length > 1 && spotKey(locs[0]) && locs.every((l) => spotKey(l) === spotKey(locs[0]));
+    const oneBox = same && !state.aisleSplit?.has(p.id);
+    const spotText = (l) => { const sp = shopSpot(p, l); return sp.key === 'unsorted' ? html`<b class="warn-text">Not set</b>` : sp.key === 'missing' ? html`<b class="muted">Not sold here</b>` : html`<b>${sp.label}</b>`; };
+    const aislesHtml = !locs.length ? html`<p class="muted small">Add the store locations you shop at (Manage stores) to set aisles.</p>`
+      : oneBox ? html`<h3 class="form-section pe-aisles-head"><span>Aisle</span><span class="muted small">Used to sort your list</span></h3>
+          <div class="pe-one"><span class="pe-one-icon" aria-hidden="true">${AISLE_ICON}</span><div class="grow"><b>${shopSpot(p, locs[0]).label}</b>
+            <span class="muted small">Same at all ${locs.length} locations</span></div><button type="button" class="linkish" data-aisle-all>Change</button></div>
+          <p class="pe-one-stores muted small">${stores.filter((s) => spotsOf(s).length).map((s, i) => html`${i ? ' · ' : ''}${storeDot(s.id)}${s.name} ×${spotsOf(s).length}`)}</p>
+          <button type="button" class="linkish small" data-aisle-split>Different at some stores? Set per location ›</button>`
+      : html`<h3 class="form-section pe-aisles-head"><span>Aisle by location</span>${locs.length > 1 ? html`<button type="button" class="linkish small" data-aisle-all>Set all the same</button>` : ''}</h3>
+          <div class="pe-locs">${stores.filter((s) => spotsOf(s).length).map((s) => html`<h4>${storeDot(s.id)}${s.name}</h4>
+            ${spotsOf(s).map((l) => html`<button type="button" class="pe-loc" data-aisle="${l.id}"><span class="grow">${l.name}</span>${spotText(l)}<span class="pe-chev" aria-hidden="true">›</span></button>`)}`)}</div>`;
 
     openForm({
       title: null,
@@ -5105,11 +5116,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           : html`<div class="auto-bubble"><div class="grow"><b>Prices aren't automatic yet</b>
               <span class="muted small">Search ${checker.map((s) => s.name).join(', ')} for this product and pick the one you buy at each, and its prices are kept up to date.</span></div>
               <button type="button" class="mini primary" data-auto-find>Search and match</button></div>`) : ''}
-        ${state.shop.locations.length ? html`<div class="pe-aisles-head"><h3 class="form-section">Aisles</h3>
-            ${state.shop.locations.length > 1 ? html`<button type="button" class="mini warn-btn" data-aisle-all title="Set the same aisle or category at every location">Change all</button>` : ''}</div>
-          <div class="pe-aisles">${aisleRows(main)}</div>
-          ${more.some((s) => spotsOf(s).length) ? html`<details class="pe-more"><summary>More stores</summary>${aisleRows(more)}</details>` : ''}`
-          : html`<p class="muted small">Add the store locations you shop at (Manage stores) to set aisles.</p>`}`,
+        ${aislesHtml}`,
       lead: html`<button type="button" class="danger" data-forget>${BIN_ICON} Delete product</button>`,
       afterRender: (form) => {
         const mode = () => form.querySelector('input[name=sold_by]:checked').value;
@@ -5178,7 +5185,12 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           if (t.closest('[data-back]')) { back(); return; }
           const a = t.closest('[data-aisle]');
           if (a) { const loc = state.shop.locations.find((l) => l.id === Number(a.dataset.aisle)); const draftNow = keep(); spotPicker(p, loc, () => productEditor(shopProduct(p.id), { back, draft: draftNow })); return; }
-          if (t.closest('[data-aisle-all]')) { const draftNow = keep(); spotAllPicker(p, () => productEditor(shopProduct(p.id), { back, draft: draftNow })); return; }
+          if (t.closest('[data-aisle-all]')) {
+            const draftNow = keep();
+            spotAllPicker(p, () => { state.aisleSplit?.delete(p.id); productEditor(shopProduct(p.id), { back, draft: draftNow }); });
+            return;
+          }
+          if (t.closest('[data-aisle-split]')) { (state.aisleSplit ||= new Set()).add(p.id); again(); return; }
           if (t.closest('[data-auto-find]')) { const draftNow = keep(); findPrices(p, () => productEditor(shopProduct(p.id) || p, { back, draft: draftNow })); return; }
           const f = t.closest('[data-find-store]');
           if (f) { const draftNow = keep(); findPrices(p, () => productEditor(shopProduct(p.id) || p, { back, draft: draftNow }), { only: Number(f.dataset.findStore) }); return; }

@@ -5,12 +5,13 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 ## v0.9.11 (18 October 2026)
 
 ### New
-- **Change all** in Edit product sets one aisle or category at every store location at once, handy for things like Produce that sit in the same place everywhere. It's orange because it replaces wherever the product is set now. A category a location hasn't got yet is added there.
+- **Aisles in Edit product** are tidier. When a product is in the same place at every store location (like Dairy), it's one box saying so, with **Change**, and **Different at some stores? Set per location** to set them one by one. Otherwise each location is a row you tap to change, with **Not set** in orange, and **Set all the same** sets one aisle or category everywhere at once (adding the category to any location that hasn't got it).
 - **Manage stores** is redone: each store is a card you can fold away, showing its locations and how many items have aisles at each ("Aisles not set" in orange). A ⋯ menu on the store has Rename, Search link, Colour and Delete, and one on each location has Set aisles…, Rename and Delete location. **+ Add a … location** sits under each store, and **+ Add a store chain** at the bottom.
 
 ### Improved
 - **Where are you shopping?** shows each store's locations as tiles, with which one was used last and when each was last used (shared by the household). Tapping one picks it and closes; **Shop at …** keeps the one you're at. Adding, renaming and deleting moved to **Manage stores**.
-- **Saved products** shows the list total beside **Close**, and the store picker, Manage stores and the item popup no longer leave an empty strip under their buttons.
+- **Saved products** shows the list total beside **Close** and has smaller ×1 buttons, and the store picker, Manage stores and the item popup no longer leave an empty strip under their buttons.
+- The **Sold by** buttons sit evenly in their box.
 - Deleting a whole store now says plainly that it removes every one of its locations and the aisles set at them, not just one location.
 - On a phone, the totals under the shopping list no longer leave gaps. Each total is on its own line with its amount on the right, and on a wider screen, like a tablet, Total shop, Spent so far and Still to buy share one line with Total after savings under them.
 
