@@ -8,7 +8,7 @@ LABEL org.opencontainers.image.source="https://github.com/kirtangl/Simple-Budget
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --omit=dev && npm cache clean --force
-COPY server.js ./
+COPY server.js start.sh ./
 COPY lib ./lib
 COPY stores ./stores
 
@@ -24,5 +24,5 @@ VOLUME ["/data"]
 EXPOSE 8090
 
 HEALTHCHECK --interval=60s --timeout=5s CMD node -e "fetch('http://localhost:8090/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
-# A virtual screen for the browser's window, at an ordinary laptop size.
-CMD ["xvfb-run", "--auto-servernum", "--server-args=-screen 0 1366x900x24", "node", "server.js"]
+# The virtual screen for the browser's window, then the price-checker (see start.sh).
+CMD ["/app/start.sh"]

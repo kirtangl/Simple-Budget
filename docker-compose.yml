@@ -77,8 +77,10 @@ services:
       TZ: ${TZ:-Australia/Brisbane}
       # Must match the app's PRICE_CHECKER_TOKEN above (both come from .env).
       PRICE_CHECKER_TOKEN: ${PRICE_CHECKER_TOKEN:-simple-budget-prices}
-    # Chromium needs more shared memory than Docker's 64 MB.
+    # Chromium needs more shared memory than Docker's 64 MB, and a small init to tidy up its
+    # finished processes.
     shm_size: 1gb
+    init: true
     labels:
       com.centurylinklabs.watchtower.enable: "true"
       com.centurylinklabs.watchtower.scope: ${CONTAINER_NAME:-simple-budget}
