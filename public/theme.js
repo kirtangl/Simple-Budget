@@ -40,7 +40,10 @@
       return /^#[0-9a-f]{6}$/i.test(c) ? c.slice(1) : null;
     };
     if (!six(bg) || !six(fg)) return;
-    var q = 'bg=' + six(bg) + '&fg=' + six(fg);
+    var dark = false;
+    try { dark = localStorage.getItem('dark-icon') === '1'; } catch (e) { /* the usual icon */ }
+    // The dark icon: near black, with the ring in the colour the usual icon's background has.
+    var q = dark ? 'bg=111418&fg=' + six(bg) : 'bg=' + six(bg) + '&fg=' + six(fg);
     var touch = document.getElementById('touch-icon');
     if (touch) touch.href = 'app-icon.png?size=180&' + q;
     var manifest = document.getElementById('manifest');

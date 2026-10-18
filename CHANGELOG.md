@@ -13,6 +13,7 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 - **Saved products** shows the list total beside **Close** and has smaller ×1 buttons, and the store picker, Manage stores and the item popup no longer leave an empty strip under their buttons.
 - The **Sold by** buttons sit evenly in their box.
 - **Add to Home Screen** gives a sharp icon in your theme's colours (it was blurry and always teal). The icon is picked when you add it, so to change its colour later, pick the theme, remove the home-screen app and add it again.
+- **Dark home-screen icon** under Settings → Appearance gives a near-black icon with the ring in your theme's colour, to sit with an iPhone's dark icons (web apps can't give iOS a separate dark icon, so this is the one icon in every mode). It's saved on that device.
 - On a phone, **Saved products** fits the screen and only the product list scrolls, so nothing is cut off at the bottom.
 - On a phone, **Manage stores** and **Shop at …** in the store picker are full width, one under the other.
 - Deleting a whole store now says plainly that it removes every one of its locations and the aisles set at them, not just one location.

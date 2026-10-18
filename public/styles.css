@@ -2217,3 +2217,7 @@ button.sm-add-chain:hover { color: var(--brand); border-color: var(--brand); }
 .kb-menu button { min-height: 0; padding: 9px 10px; border: 0; background: none; box-shadow: none; text-align: left; border-radius: 6px; font: inherit; color: var(--text); }
 .kb-menu button:hover { background: var(--inset); }
 .kb-menu button.danger-text { color: var(--danger); }
+
+/* Appearance: the dark home-screen icon tick box under the themes. */
+.dark-icon { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.dark-icon p { margin: 4px 0 0 26px; }

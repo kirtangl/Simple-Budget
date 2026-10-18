@@ -3807,8 +3807,17 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           <span class="swatch" data-preview="${k}" ${raw(k === 'custom' && custom ? `style="--pbg:${custom.bg};--pcard:${custom.card};--pbrand:${custom.brand}"` : '')}><i></i><b></b></span>
           <span class="theme-name">${name}</span><span class="meta">${note}</span></button>`)}</div>
       ${state.themeDraft ? themeEditor() : ''}
+      <div class="dark-icon"><label class="check"><input type="checkbox" data-dark-icon ${raw(darkIcon() ? 'checked' : '')}> Dark home-screen icon</label>
+        <p class="muted small">For a phone's home screen: a near-black icon with the ring in your theme's colour, to sit with dark icons. The phone keeps the icon it had when you tapped <b>Add to Home Screen</b>, so after changing this, remove the app from the home screen and add it again. Saved on this device.</p></div>
     </div>`;
   }
+  const darkIcon = () => { try { return localStorage.getItem('dark-icon') === '1'; } catch { return false; } };
+  document.addEventListener('change', (ev) => {
+    if (!ev.target.matches || !ev.target.matches('[data-dark-icon]')) return;
+    try { localStorage.setItem('dark-icon', ev.target.checked ? '1' : ''); } catch { /* not remembered here */ }
+    window.updateFavicon();
+    toast(ev.target.checked ? 'Dark home-screen icon on' : 'Dark home-screen icon off');
+  });
   // Colour pickers update the preview as you go; nothing changes in the app until Save.
   document.addEventListener('input', (ev) => {
     const key = ev.target.dataset && ev.target.dataset.tvar;
