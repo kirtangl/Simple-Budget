@@ -445,6 +445,10 @@ const MIGRATIONS = [
   ALTER TABLE shop_items ADD COLUMN swap_kind TEXT;
   UPDATE shop_items SET swap_kind = 'size' WHERE swap_store_id IS NOT NULL;
   `,
+  // 26: when each store location was last picked to shop at, shown in the store picker.
+  `
+  ALTER TABLE shop_locations ADD COLUMN used_at TEXT;
+  `,
 ];
 
 function openDatabase(file) {

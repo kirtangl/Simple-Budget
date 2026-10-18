@@ -239,6 +239,40 @@ test('shopping: kept in a backup and restored', () => withServer({}, async (call
   assert.equal((await call('GET', '/shop')).body.products.length, 1);
 }));
 
+test('shopping: one aisle or category at every location, and when each was last used', () => withServer({}, async (call) => {
+  const stores = await storesOf(call);
+  const vincent = (await call('POST', '/shop/locations', { store_id: stores.Woolworths, name: 'Vincent' })).body;
+  const town = (await call('POST', '/shop/locations', { store_id: stores.Coles, name: 'Town' })).body;
+  let shop;
+  // Town has no Fruit category; Change all adds it there, in the same place.
+  const fruit = (await call('POST', '/shop/sections', { location_id: vincent.id, name: 'Fruit', position: 0.5 })).body;
+  const id = (await call('POST', '/shop/items', { name: 'Bananas' })).body.product_id;
+  await call('PUT', `/shop/products/${id}/spot`, { location_id: town.id, missing: true });
+  let p = (await call('PUT', `/shop/products/${id}/spots`, { section: 'fruit' })).body;
+  shop = (await call('GET', '/shop')).body;
+  const townFruit = shop.sections.find((s) => s.location_id === town.id && s.name === 'Fruit');
+  assert.equal(townFruit.position, 0.5);
+  assert.deepEqual(p.spots[vincent.id], { aisle: null, section_id: fruit.id, missing: false });
+  assert.deepEqual(p.spots[town.id], { aisle: null, section_id: townFruit.id, missing: false });
+  // An aisle everywhere, then unsorted everywhere.
+  p = (await call('PUT', `/shop/products/${id}/spots`, { aisle: 3 })).body;
+  assert.deepEqual([p.spots[vincent.id].aisle, p.spots[town.id].aisle], [3, 3]);
+  p = (await call('PUT', `/shop/products/${id}/spots`, {})).body;
+  assert.deepEqual(p.spots, {});
+  assert.equal((await call('PUT', `/shop/products/${id}/spots`, { section: 'Nowhere' })).status, 400);
+  assert.equal((await call('PUT', `/shop/products/${id}/spots`, { aisle: 21 })).status, 400);
+  assert.equal((await call('PUT', '/shop/products/999/spots', { aisle: 1 })).status, 404);
+
+  // Picking a location to shop at is remembered for the household.
+  assert.equal(shop.locations.find((l) => l.id === vincent.id).used_at, null);
+  assert.equal((await call('POST', `/shop/locations/${vincent.id}/use`)).status, 200);
+  assert.equal((await call('POST', '/shop/locations/999/use')).status, 404);
+  shop = (await call('GET', '/shop')).body;
+  assert.match(shop.locations.find((l) => l.id === vincent.id).used_at, /^\d{4}-\d\d-\d\d /);
+  const backup = (await call('GET', '/export')).body;
+  assert.ok(backup.shopping.locations.find((l) => l.id === vincent.id).used_at);
+}));
+
 test('shopping: store search links and when prices were checked', () => withServer({}, async (call) => {
   // The chains come with their search links; a store added later has none unless it's a chain.
   let shop = (await call('GET', '/shop')).body;

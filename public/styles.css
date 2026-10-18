@@ -2139,3 +2139,51 @@ dialog.item-pop { width: min(520px, calc(100vw - 24px)); }
 .upd-folder-pref label { display: flex; flex-direction: column; }
 .upd-folder-in { display: flex; gap: 8px; }
 .upd-folder-in input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }
+
+/* Edit product: Change all sets one aisle or category at every location (orange: it replaces them). */
+.pe-aisles-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pe-aisles-head .form-section { margin-bottom: 0; }
+button.warn-btn { color: var(--due); border-color: color-mix(in srgb, var(--due) 55%, var(--line)); background: var(--due-soft); font-weight: 600; }
+button.warn-btn:hover { border-color: var(--due); }
+.warn-text { color: var(--due); }
+.danger-text { color: var(--danger); }
+
+/* Where are you shopping: each chain's locations as tiles. */
+.sp-chain { margin: 0 0 16px; }
+.sp-head { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: .95rem; }
+.sp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.sp-tile { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; min-height: 60px;
+  padding: 10px 28px 10px 12px; text-align: left; border-radius: 10px; }
+.sp-tile.on { background: var(--brand); border-color: var(--brand); color: var(--on-brand); }
+.sp-name { font-weight: 600; overflow-wrap: anywhere; }
+.sp-sub { font-size: .8rem; color: var(--muted); }
+.sp-tile.on .sp-sub { color: inherit; opacity: .85; }
+.sp-tick { position: absolute; top: 8px; right: 10px; font-weight: 700; }
+.sp-empty { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border: 1px dashed var(--line); border-radius: 10px; }
+.sp-actions { align-items: center; }
+.sp-actions button { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Manage stores: a card per chain that opens to its locations, each with a ⋯ menu. */
+.sm-chain { margin: 0 0 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.sm-head { display: flex; align-items: center; gap: 4px; padding-right: 6px; }
+.sm-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 12px; border: 0; background: none; box-shadow: none; text-align: left; border-radius: 12px; }
+.sm-toggle b { overflow-wrap: anywhere; }
+.sm-chev { margin-left: auto; color: var(--muted); }
+.sm-body { padding: 0 12px 10px; border-top: 1px solid var(--line); }
+.sm-loc { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.sm-loc .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sm-none { margin: 10px 0; }
+.sm-add { display: block; margin-top: 10px; font-weight: 600; }
+button.sm-add-chain { width: 100%; padding: 12px; border: 1px dashed var(--line); background: none; box-shadow: none; color: var(--muted); font-weight: 600; border-radius: 12px; }
+button.sm-add-chain:hover { color: var(--brand); border-color: var(--brand); }
+
+/* A ⋯ menu. */
+.kebab { position: relative; flex: none; }
+.kb-btn { min-height: 0; width: 34px; height: 34px; padding: 0; border: 0; background: none; box-shadow: none; font-size: 1.2rem; line-height: 1; color: var(--muted); border-radius: 8px; }
+.kb-btn:hover, .kb-btn[aria-expanded="true"] { background: var(--inset); color: var(--text); }
+.kb-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; min-width: 190px; padding: 4px; display: flex; flex-direction: column;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgb(0 0 0 / 18%); }
+.kb-menu[hidden] { display: none; }
+.kb-menu button { min-height: 0; padding: 9px 10px; border: 0; background: none; box-shadow: none; text-align: left; border-radius: 6px; font: inherit; color: var(--text); }
+.kb-menu button:hover { background: var(--inset); }
+.kb-menu button.danger-text { color: var(--danger); }

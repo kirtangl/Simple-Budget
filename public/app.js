@@ -4627,22 +4627,45 @@ sudo docker compose up -d --build</pre>${s.extra}`;
   }, 5000);
 
   // Which store location is being shopped at, grouped by store.
+  // How many products have a place set at a location, and when it was last picked to shop at.
+  const aislesAt = (l) => state.shop.products.filter((p) => p.spots[l.id] && !p.spots[l.id].missing).length;
+  function usedText(at) {
+    const d = daysSince(at);
+    if (d === null) return '';
+    if (d < 1) return 'Today';
+    if (d < 2) return 'Yesterday';
+    if (d < 7) return `${d} days ago`;
+    if (d < 14) return 'Last week';
+    if (d < 30) return `${Math.floor(d / 7)} weeks ago`;
+    if (d < 60) return 'Last month';
+    return `${Math.floor(d / 30)} months ago`;
+  }
+  const aislesText = (l) => { const n = aislesAt(l); return n ? `${n} ${n === 1 ? 'item' : 'items'} with aisles` : 'Aisles not set'; };
+  const aOrAn = (name) => (/^[aeiou]/i.test(name) ? 'an' : 'a');
+  const SLIDERS_ICON = raw('<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 2.5v11M8 2.5v11M13 2.5v11"/><path d="M1.5 10h3M6.5 5h3M11.5 9h3"/></svg>');
+
+  // Where are you shopping: each chain's locations as tiles, with when each was last used. A tap
+  // picks one and closes; Shop at keeps the one already picked. Adding, renaming and deleting
+  // are in Manage stores.
   function shopChange() {
     const loc = shopLocation();
+    const newest = state.shop.locations.filter((l) => l.used_at).sort((a, b) => b.used_at.localeCompare(a.used_at))[0];
+    const sub = (l) => (newest && l.id === newest.id ? 'Last used' : usedText(l.used_at) || aislesText(l));
     openForm({
-      title: 'Shopping at',
-      body: html`${state.shop.stores.map((s) => {
-        const locs = state.shop.locations.filter((l) => l.store_id === s.id);
-        return html`<div class="store-head"><h3 class="form-section">${storeDot(s.id)}${s.name}</h3>
-            <button type="button" class="linkish small" data-action="shop-store-edit" data-id="${s.id}" data-back="change" aria-label="Edit ${s.name}">Edit</button>
-            <button type="button" class="icon ghost" data-action="shop-store-delete" data-id="${s.id}" data-back="change" aria-label="Remove ${s.name}" title="Remove ${s.name}">${BIN_ICON}</button></div>
-          <div class="spot-grid named">${locs.map((l) => html`<span class="loc-pick">
-              <button type="button" class="spot-btn ${loc && loc.id === l.id ? 'on' : ''}" data-pick-loc="${l.id}">${l.name}</button>
-              <button type="button" class="loc-del" data-action="shop-loc-delete" data-id="${l.id}" data-back="change" aria-label="Remove ${locLabel(l)}" title="Remove ${locLabel(l)}">${BIN_ICON}</button></span>`)}
-            <button type="button" class="spot-btn add" data-action="shop-loc-new" data-id="${s.id}" data-back="change">+ ${locs.length ? 'Another' : 'Add a'} ${s.name}</button></div>`;
-      })}
-        <div class="spot-grid named other"><button type="button" class="spot-btn add" data-action="shop-stores">Add or change stores</button></div>`,
+      title: null,
+      cls: 'store-pick',
       noActions: true,
+      body: html`${popHead('Where are you shopping?', {}, html`<p class="pop-sub">Your list is sorted by this store's aisles.</p>`)}
+        ${state.shop.stores.map((s) => {
+          const locs = state.shop.locations.filter((l) => l.store_id === s.id);
+          return html`<section class="sp-chain"><h3 class="sp-head">${storeDot(s.id)}${s.name}</h3>
+            ${locs.length ? html`<div class="sp-grid">${locs.map((l) => html`<button type="button" class="sp-tile ${loc && loc.id === l.id ? 'on' : ''}" data-pick-loc="${l.id}">
+                <span class="sp-name">${l.name}</span><span class="sp-sub">${sub(l)}</span>${loc && loc.id === l.id ? html`<span class="sp-tick" aria-hidden="true">✓</span>` : ''}</button>`)}</div>`
+              : html`<div class="sp-empty"><span class="muted small">No locations yet</span>
+                <button type="button" class="linkish small" data-action="shop-loc-new" data-id="${s.id}" data-back="change">+ Add ${aOrAn(s.name)} ${s.name} location</button></div>`}</section>`;
+        })}
+        <div class="dialog-actions sp-actions"><button type="button" data-action="shop-stores" data-back="change">${SLIDERS_ICON} Manage stores</button><span class="spacer"></span>
+          ${loc ? html`<button type="button" class="primary" data-modal="cancel">Shop at ${locLabel(loc)}</button>` : ''}</div>`,
       afterRender: (form) => {
         form.onclick = (ev) => {
           const b = ev.target.closest('[data-pick-loc]');
@@ -4650,6 +4673,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           remember('shop:location', b.dataset.pickLoc);
           closeForm();
           render();
+          api('POST', `/shop/locations/${b.dataset.pickLoc}/use`).then(() => loadShop(state.shop.list)).catch(() => {});
         };
       },
     });
@@ -4681,6 +4705,45 @@ sudo docker compose up -d --build</pre>${s.extra}`;
             closeForm();
             await shopReload();
             if (onPick) onPick();
+          } catch (err) { form.querySelector('#form-error').textContent = err.message; }
+        };
+      },
+    });
+  }
+
+  // The same aisle or category at every location at once, like Produce. A category a location
+  // hasn't got is added there. It replaces wherever it's set now. back is called after, or on ✕.
+  function spotAllPicker(p, back) {
+    const locs = state.shop.locations;
+    const set = locs.filter((l) => p.spots[l.id]).length;
+    const names = new Map();
+    for (const sec of [...state.shop.sections].sort((a, b) => a.position - b.position || a.name.localeCompare(b.name))) {
+      const k = sec.name.toLowerCase();
+      if (!names.has(k)) names.set(k, { name: sec.name, at: 0 });
+      names.get(k).at += 1;
+    }
+    const btn = (k, label, sub = '') => html`<button type="button" class="spot-btn" data-spot="${JSON.stringify(k)}" ${sub ? raw(`title="${sub}"`) : ''}>${label}</button>`;
+    openForm({
+      title: `${p.name} at every store`,
+      body: html`<p class="muted small">Sets the same aisle or category at all ${locs.length} store locations.</p>
+        ${set ? html`<p class="setup-banner"><span class="grow">This replaces where it's set now at ${set === locs.length ? `all ${set}` : `${set} of ${locs.length}`} locations.</span></p>` : ''}
+        <h3 class="form-section">Category</h3><div class="spot-grid named">${[...names.values()].map((n) => btn({ section: n.name }, n.name,
+          n.at < locs.length ? `Added at the ${locs.length - n.at} ${locs.length - n.at === 1 ? 'location' : 'locations'} without it` : ''))}</div>
+        <h3 class="form-section">Aisle</h3><div class="spot-grid">${Array.from({ length: state.shop.max_aisle + 1 }, (_, n) => btn({ aisle: n }, String(n)))}</div>
+        ${set ? html`<div class="spot-grid named other">${btn({}, 'Unsorted everywhere')}</div>` : ''}`,
+      noActions: true,
+      afterRender: (form) => {
+        form.querySelector('[data-modal="cancel"]')?.addEventListener('click', () => setTimeout(back), { once: true });
+        form.onclick = async (ev) => {
+          const b = ev.target.closest('[data-spot]');
+          if (!b) return;
+          try {
+            await api('PUT', `/shop/products/${p.id}/spots`, JSON.parse(b.dataset.spot));
+            form.onclick = null;
+            closeForm();
+            await shopReload();
+            toast(`${p.name} set at every store`);
+            back();
           } catch (err) { form.querySelector('#form-error').textContent = err.message; }
         };
       },
@@ -5042,10 +5105,11 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           : html`<div class="auto-bubble"><div class="grow"><b>Prices aren't automatic yet</b>
               <span class="muted small">Search ${checker.map((s) => s.name).join(', ')} for this product and pick the one you buy at each, and its prices are kept up to date.</span></div>
               <button type="button" class="mini primary" data-auto-find>Search and match</button></div>`) : ''}
-        ${state.shop.locations.length ? html`<h3 class="form-section">Aisles</h3>
+        ${state.shop.locations.length ? html`<div class="pe-aisles-head"><h3 class="form-section">Aisles</h3>
+            ${state.shop.locations.length > 1 ? html`<button type="button" class="mini warn-btn" data-aisle-all title="Set the same aisle or category at every location">Change all</button>` : ''}</div>
           <div class="pe-aisles">${aisleRows(main)}</div>
           ${more.some((s) => spotsOf(s).length) ? html`<details class="pe-more"><summary>More stores</summary>${aisleRows(more)}</details>` : ''}`
-          : html`<p class="muted small">Add the store locations you shop at (Change store) to set aisles.</p>`}`,
+          : html`<p class="muted small">Add the store locations you shop at (Manage stores) to set aisles.</p>`}`,
       lead: html`<button type="button" class="danger" data-forget>${BIN_ICON} Delete product</button>`,
       afterRender: (form) => {
         const mode = () => form.querySelector('input[name=sold_by]:checked').value;
@@ -5114,6 +5178,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           if (t.closest('[data-back]')) { back(); return; }
           const a = t.closest('[data-aisle]');
           if (a) { const loc = state.shop.locations.find((l) => l.id === Number(a.dataset.aisle)); const draftNow = keep(); spotPicker(p, loc, () => productEditor(shopProduct(p.id), { back, draft: draftNow })); return; }
+          if (t.closest('[data-aisle-all]')) { const draftNow = keep(); spotAllPicker(p, () => productEditor(shopProduct(p.id), { back, draft: draftNow })); return; }
           if (t.closest('[data-auto-find]')) { const draftNow = keep(); findPrices(p, () => productEditor(shopProduct(p.id) || p, { back, draft: draftNow })); return; }
           const f = t.closest('[data-find-store]');
           if (f) { const draftNow = keep(); findPrices(p, () => productEditor(shopProduct(p.id) || p, { back, draft: draftNow }), { only: Number(f.dataset.findStore) }); return; }
@@ -5774,24 +5839,63 @@ sudo docker compose up -d --build</pre>${s.extra}`;
   const updateAgain = () => updatePrices();
 
   // The household's stores, each with its locations, and a section list for each location.
-  function shopStores() {
-    const locs = state.shop.locations;
+  // A ⋯ button with a menu of actions (each a data-action button). Popups that use it call kebabClick.
+  const kebab = (label, items) => html`<div class="kebab"><button type="button" class="kb-btn" data-kebab aria-label="More for ${label}" aria-haspopup="menu" aria-expanded="false">⋯</button>
+    <div class="kb-menu" role="menu" hidden>${items}</div></div>`;
+  function kebabClick(form, ev) {
+    const b = ev.target.closest('[data-kebab]');
+    const open = b && b.nextElementSibling.hidden;
+    form.querySelectorAll('.kb-menu:not([hidden])').forEach((m) => { m.hidden = true; m.previousElementSibling.setAttribute('aria-expanded', 'false'); });
+    if (open) { b.nextElementSibling.hidden = false; b.setAttribute('aria-expanded', 'true'); }
+    return Boolean(b);
+  }
+
+  // Managing stores: each chain with its locations, how many products have aisles at each, and a
+  // ⋯ menu for each. back is where ‹ (and Done) go, like the store picker it was opened from.
+  function shopStores(back = state.storesBack || null) {
+    state.storesBack = back;
+    const shut = (state.storesShut ||= new Set());
     openForm({
-      title: 'Stores',
-      body: html`<p class="muted small">Add each store you shop at. Aisles are remembered separately for each location.</p>
+      title: null,
+      cls: 'store-manage',
+      noActions: true,
+      body: html`<div class="pop-head"><div class="pop-title pe-title">${back ? html`<button type="button" class="pop-btn pe-back" data-back aria-label="Back">‹</button>` : ''}<div><h2>Manage stores</h2>
+          <p class="pop-sub">Each location remembers its own aisles.</p></div></div>
+          <div class="pop-btns"><button type="button" class="pop-btn x" data-modal="cancel" aria-label="Close">✕</button></div></div>
         ${state.shop.stores.map((s) => {
-          const list = locs.filter((l) => l.store_id === s.id);
-          return html`<div class="store-head"><h3 class="form-section">${storeDot(s.id)}${s.name}</h3>
-              <button type="button" class="mini" data-action="shop-store-edit" data-id="${s.id}">Edit</button>
-              <button type="button" class="icon ghost" data-action="shop-store-delete" data-id="${s.id}" aria-label="Remove ${s.name}" title="Remove">${BIN_ICON}</button></div>
-            ${list.length ? html`<ul class="list">${list.map((l) => html`<li><div class="grow"><div class="title">${l.name}</div></div>
-              <button type="button" class="mini" data-action="shop-sections" data-id="${l.id}">Categories</button>
-              <button type="button" class="mini" data-action="shop-loc-rename" data-id="${l.id}">Rename</button>
-              <button type="button" class="icon ghost" data-action="shop-loc-delete" data-id="${l.id}" aria-label="Remove ${locLabel(l)}" title="Remove">${BIN_ICON}</button></li>`)}</ul>`
-              : ''}
-            <button type="button" class="mini" data-action="shop-loc-new" data-id="${s.id}">+ Add a ${s.name}</button>`;
+          const list = state.shop.locations.filter((l) => l.store_id === s.id);
+          const open = !shut.has(s.id);
+          return html`<section class="sm-chain ${open ? 'open' : ''}">
+            <div class="sm-head"><button type="button" class="sm-toggle" data-chain="${s.id}" aria-expanded="${open ? 'true' : 'false'}">${storeDot(s.id)}<b>${s.name}</b>
+                <span class="muted small">${list.length ? `${list.length} ${list.length === 1 ? 'location' : 'locations'}` : 'No locations'}</span><span class="sm-chev" aria-hidden="true">${open ? '▴' : '▾'}</span></button>
+              ${kebab(s.name, html`<button type="button" role="menuitem" data-action="shop-store-edit" data-id="${s.id}" data-focus="name">Rename</button>
+                <button type="button" role="menuitem" data-action="shop-store-edit" data-id="${s.id}" data-focus="search_url">Search link</button>
+                <button type="button" role="menuitem" data-action="shop-store-edit" data-id="${s.id}" data-focus="color">Colour${state.shop.checker ? ' and automatic prices' : ''}</button>
+                <button type="button" role="menuitem" class="danger-text" data-action="shop-store-delete" data-id="${s.id}">Delete ${s.name}</button>`)}</div>
+            ${open ? html`<div class="sm-body">${list.length ? list.map((l) => {
+                const n = aislesAt(l);
+                return html`<div class="sm-loc"><div class="grow"><b>${l.name}</b><span class="small ${n ? 'muted' : 'warn-text'}">${n ? `${n} ${n === 1 ? 'item' : 'items'} with aisles` : 'Aisles not set'}</span></div>
+                  ${kebab(locLabel(l), html`<button type="button" role="menuitem" data-action="shop-sections" data-id="${l.id}">Set aisles…</button>
+                    <button type="button" role="menuitem" data-action="shop-loc-rename" data-id="${l.id}">Rename</button>
+                    <button type="button" role="menuitem" class="danger-text" data-action="shop-loc-delete" data-id="${l.id}">Delete location</button>`)}</div>`;
+              }) : html`<p class="muted small sm-none">No locations yet.</p>`}
+              <button type="button" class="linkish small sm-add" data-action="shop-loc-new" data-id="${s.id}">+ Add ${aOrAn(s.name)} ${s.name} location</button></div>` : ''}
+          </section>`;
         })}
-        <div class="store-new"><button type="button" data-action="shop-store-new">+ Add a store</button></div>`,
+        <button type="button" class="sm-add-chain" data-action="shop-store-new">+ Add a store chain</button>
+        <div class="dialog-actions"><span class="spacer"></span><button type="button" class="primary" data-done>Done</button></div>`,
+      afterRender: (form) => {
+        form.onclick = (ev) => {
+          if (kebabClick(form, ev)) return;
+          const c = ev.target.closest('[data-chain]');
+          if (c) { const id = Number(c.dataset.chain); if (shut.has(id)) shut.delete(id); else shut.add(id); shopStores(back); return; }
+          if (ev.target.closest('[data-back], [data-done]')) {
+            if (back) back(); else closeForm();
+            state.storesBack = null;
+          }
+          if (ev.target.closest('[data-modal="cancel"]')) state.storesBack = null;
+        };
+      },
     });
   }
 
@@ -5816,7 +5920,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           <input name="pos-${s.id}" inputmode="decimal" value="${s.position}" aria-label="Order of ${s.name}" class="sec-pos">
           <button type="button" class="icon ghost" data-action="shop-section-delete" data-id="${s.id}" aria-label="Remove ${s.name}" title="Remove">${BIN_ICON}</button></li>`)}</ul>
         <button type="button" class="mini" data-action="shop-section-new" data-id="${loc.id}">+ Add a category</button>`,
-      lead: html`<button type="button" data-action="shop-stores">Back</button>`,
+      lead: html`<button type="button" data-action="shop-stores" data-back="keep">Back</button>`,
       onSave: async (form) => {
         for (const s of list) {
           const name = val(form, `name-${s.id}`);
@@ -5937,7 +6041,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     'shop-update': () => updatePrices(),
     'shop-helper': () => helperPopup(),
     'shop-change': () => shopChange(),
-    'shop-stores': () => shopStores(),
+    'shop-stores': (el) => shopStores(el.dataset.back === 'change' ? shopChange : el.dataset.back === 'keep' ? state.storesBack : null),
     'shop-sections': (el) => shopSections(Number(el.dataset.id)),
     'shop-store-new': async () => {
       const name = await askText('Add a store', 'Name, like IGA');
@@ -5949,7 +6053,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     'shop-store-edit': (el) => {
       const s = state.shop.stores.find((x) => x.id === Number(el.dataset.id));
       if (!s) return;
-      const back = el.dataset.back === 'change' ? shopChange : shopStores;
+      const back = el.dataset.back === 'change' ? shopChange : () => shopStores();
       openForm({
         title: `Edit ${s.name}`,
         body: html`<div class="fields">
@@ -5960,7 +6064,8 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           ${state.shop.checker ? html`<div class="field"><label for="st-checker">Automatic prices</label><select id="st-checker" name="checker">
             <option value="">None</option>${state.shop.checker.stores.map((k) => html`<option value="${k}" ${raw(s.checker === k ? 'selected' : '')}>From ${k[0].toUpperCase()}${k.slice(1)}'s website</option>`)}</select>
             <p class="muted small">Which website the price-checker gets this store's prices from.</p></div>` : ''}`,
-        lead: html`<button type="button" data-action="${back === shopChange ? 'shop-change' : 'shop-stores'}">Back</button>`,
+        lead: html`<button type="button" data-action="${back === shopChange ? 'shop-change' : 'shop-stores'}" data-back="keep">Back</button>`,
+        afterRender: (form) => { const f = el.dataset.focus && form.elements[el.dataset.focus]; if (f) setTimeout(() => f.focus()); },
         onSave: async (form) => {
           await api('PATCH', `/shop/stores/${s.id}`, { name: val(form, 'name'), color: val(form, 'color'), search_url: val(form, 'search_url'),
             ...(state.shop.checker ? { checker: val(form, 'checker') || null } : {}) });
@@ -5972,12 +6077,16 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     'shop-store-delete': async (el) => {
       const s = state.shop.stores.find((x) => x.id === Number(el.dataset.id));
       if (!s) return;
-      const ok = await askChoice({ title: 'Remove this store?', text: html`<p><b>${s.name}</b></p><p>Its locations, and the aisles and prices kept for it, are forgotten. Your lists stay.</p>`,
-        choices: [{ label: 'Keep it', value: 'no' }, { label: 'Remove', value: 'yes', danger: true }] });
+      const locs = state.shop.locations.filter((l) => l.store_id === s.id);
+      const set = locs.reduce((n, l) => n + aislesAt(l), 0);
+      const ok = await askChoice({ title: `Delete all of ${s.name}?`, text: html`<p class="setup-banner"><span class="grow"><b>This removes the whole store, not just one location.</b></span></p>
+          <p>${locs.length ? `Its ${locs.length === 1 ? 'location' : `${locs.length} locations`} (${locs.map((l) => l.name).join(', ')})` : 'It'}${set ? `, the ${set === 1 ? 'aisle or category' : `${set} aisles and categories`} set at them,` : ''} and every price and automatic match kept for ${s.name} are deleted. This can't be undone.</p>
+          <p class="muted small">Your lists and products stay.</p>`,
+        choices: [{ label: 'Keep it', value: 'no' }, { label: `Delete ${s.name}`, value: 'yes', danger: true }] });
       if (ok !== 'yes') return;
       await api('DELETE', `/shop/stores/${s.id}`);
       await shopReload();
-      (el.dataset.back === 'change' ? shopChange : shopStores)();
+      (el.dataset.back === 'change' ? shopChange : () => shopStores())();
     },
     'shop-loc-new': async (el) => {
       const store = Number(el.dataset.id);
@@ -5999,8 +6108,8 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     'shop-loc-delete': async (el) => {
       const l = state.shop.locations.find((x) => x.id === Number(el.dataset.id));
       if (!l) return;
-      const ok = await askChoice({ title: 'Remove this location?', text: html`<p><b>${locLabel(l)}</b></p><p>Where things are at this location is forgotten. Your lists and prices stay.</p>`,
-        choices: [{ label: 'Keep it', value: 'no' }, { label: 'Remove', value: 'yes', danger: true }] });
+      const ok = await askChoice({ title: 'Delete this location?', text: html`<p><b>${locLabel(l)}</b></p><p>Its aisles and categories are forgotten${aislesAt(l) ? ` (${aislesAt(l)} items have one here)` : ''}. Your lists, prices and the store's other locations stay.</p>`,
+        choices: [{ label: 'Keep it', value: 'no' }, { label: 'Delete', value: 'yes', danger: true }] });
       if (ok !== 'yes') return;
       await api('DELETE', `/shop/locations/${l.id}`);
       await shopReload();

@@ -4,7 +4,13 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 
 ## v0.9.11 (18 October 2026)
 
+### New
+- **Change all** in Edit product sets one aisle or category at every store location at once, handy for things like Produce that sit in the same place everywhere. It's orange because it replaces wherever the product is set now. A category a location hasn't got yet is added there.
+- **Manage stores** is redone: each store is a card you can fold away, showing its locations and how many items have aisles at each ("Aisles not set" in orange). A ⋯ menu on the store has Rename, Search link, Colour and Delete, and one on each location has Set aisles…, Rename and Delete location. **+ Add a … location** sits under each store, and **+ Add a store chain** at the bottom.
+
 ### Improved
+- **Where are you shopping?** shows each store's locations as tiles, with which one was used last and when each was last used (shared by the household). Tapping one picks it and closes; **Shop at …** keeps the one you're at. Adding, renaming and deleting moved to **Manage stores**.
+- Deleting a whole store now says plainly that it removes every one of its locations and the aisles set at them, not just one location.
 - On a phone, the totals under the shopping list no longer leave gaps. Each total is on its own line with its amount on the right, and on a wider screen, like a tablet, Total shop, Spent so far and Still to buy share one line with Total after savings under them.
 
 - When no store is picked on the Shopping tab, a banner above the list says so, with **+ Add a store location** (or **Choose store**). Prices on the list, totals and aisles all need one.

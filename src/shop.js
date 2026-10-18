@@ -349,6 +349,13 @@ function createShop(db, { checker = null } = {}) {
     res.json(one('SELECT * FROM shop_locations WHERE id = ?', id));
   });
 
+  // Picked to shop at: the store picker shows when each was last used.
+  router.post('/locations/:id/use', (req, res) => {
+    const { changes } = db.prepare("UPDATE shop_locations SET used_at = datetime('now') WHERE id = ?").run(Number(req.params.id));
+    if (!changes) return res.status(404).json({ error: 'Not found.' });
+    res.json({ ok: true });
+  });
+
   router.delete('/locations/:id', (req, res) => {
     const { changes } = db.prepare('DELETE FROM shop_locations WHERE id = ?').run(Number(req.params.id));
     if (!changes) return res.status(404).json({ error: 'Not found.' });
@@ -484,6 +491,39 @@ function createShop(db, { checker = null } = {}) {
       if (aisle !== null || sectionId || missing) {
         db.prepare('INSERT INTO shop_spots (product_id, location_id, aisle, section_id, missing) VALUES (?, ?, ?, ?, ?)')
           .run(id, locationId, aisle, sectionId, missing ? 1 : 0);
+      }
+    });
+    res.json(productView(id));
+  });
+
+  // The same place at every location: { aisle }, { section: name } (made at any location that
+  // hasn't a category by that name, in the same place among the aisles), { missing: true }, or {}
+  // for unsorted. It replaces wherever it was at each.
+  router.put('/products/:id/spots', (req, res) => {
+    const id = Number(req.params.id);
+    if (!exists('shop_products', id)) return res.status(404).json({ error: 'Not found.' });
+    const b = body(req);
+    const aisle = b.aisle === null || b.aisle === undefined || b.aisle === '' ? null : int(b.aisle, 0, MAX_AISLE, 'The aisle');
+    const section = b.section === undefined || b.section === null ? null : text(b.section, 'The category');
+    const missing = b.missing === true;
+    if ([aisle !== null, section !== null, missing].filter(Boolean).length > 1) throw new BadRequest('Pick one place for it.');
+    transaction(db, () => {
+      const like = section && one('SELECT name, position FROM shop_sections WHERE name = ? COLLATE NOCASE ORDER BY id LIMIT 1', section);
+      if (section && !like) throw new BadRequest("There's no category by that name.");
+      for (const { id: loc } of all('SELECT id FROM shop_locations')) {
+        let sectionId = null;
+        if (section) {
+          const at = one('SELECT id FROM shop_sections WHERE location_id = ? AND name = ? COLLATE NOCASE', loc, section);
+          if (at) sectionId = at.id;
+          else {
+            if (count('shop_sections', 'WHERE location_id = ?', loc) >= LIMITS.sections) throw new BadRequest(`A location already has as many sections as it can keep (${LIMITS.sections}).`);
+            sectionId = Number(db.prepare('INSERT INTO shop_sections (location_id, name, position) VALUES (?, ?, ?)').run(loc, like.name, like.position).lastInsertRowid);
+          }
+        }
+        db.prepare('DELETE FROM shop_spots WHERE product_id = ? AND location_id = ?').run(id, loc);
+        if (aisle !== null || sectionId || missing) {
+          db.prepare('INSERT INTO shop_spots (product_id, location_id, aisle, section_id, missing) VALUES (?, ?, ?, ?, ?)').run(id, loc, aisle, sectionId, missing ? 1 : 0);
+        }
       }
     });
     res.json(productView(id));
@@ -970,7 +1010,7 @@ function createHelper(db) {
 
 const SHOP_TABLES = {
   stores: ['shop_stores', ['id', 'name', 'sort_order', 'color', 'search_url', 'checker']],
-  locations: ['shop_locations', ['id', 'store_id', 'name']],
+  locations: ['shop_locations', ['id', 'store_id', 'name', 'used_at']],
   sections: ['shop_sections', ['id', 'location_id', 'name', 'position']],
   products: ['shop_products', ['id', 'name', 'size', 'unit', 'price_per', 'sold_by', 'step_g', 'each_g', 'setup']],
   prices: ['shop_prices', ['product_id', 'store_id', 'price_cents', 'checked_at', 'was_cents']],
