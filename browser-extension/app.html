@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coles button – Simple Budget</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header>
+    <h1>Coles prices for Simple Budget</h1>
+    <p class="note">Press <b>Check Coles prices</b> and this opens Coles in another tab, searches for what's on your lists a few seconds apart, and sends the prices to Simple Budget. Leave that tab alone until it's done.</p>
+  </header>
+
+  <section id="setup" class="card" hidden>
+    <h2>Connect to Simple Budget</h2>
+    <p class="note">Both are in Simple Budget under Shopping → Check prices → Coles button.</p>
+    <label for="addr">Simple Budget's address</label>
+    <input id="addr" placeholder="http://192.168.1.20:3000" autocomplete="off">
+    <label for="key">Key</label>
+    <input id="key" autocomplete="off">
+    <div class="row"><button id="connect" class="primary">Connect</button><span id="setup-msg" class="msg"></span></div>
+  </section>
+
+  <section id="main" hidden>
+    <div class="row">
+      <button id="run" class="primary">Check Coles prices</button>
+      <button id="stop" hidden>Stop</button>
+      <label class="tick"><input type="checkbox" id="all"> Also check prices that are up to date</label>
+      <span class="grow"></span>
+      <button id="change" class="link">Change connection</button>
+    </div>
+    <p id="status" class="msg"></p>
+    <table>
+      <thead><tr><th>On your list</th><th>Coles product</th><th class="num">Price</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="row" id="save-row" hidden>
+      <button id="save" class="primary">Save to Simple Budget</button>
+      <span id="save-msg" class="msg"></span>
+    </div>
+  </section>
+
+  <details><summary>Debug (send this if something looks wrong)</summary><pre id="debug"></pre></details>
+  <script src="app.js"></script>
+</body>
+</html>

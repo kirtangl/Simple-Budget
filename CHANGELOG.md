@@ -2,6 +2,26 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v0.9.9 (17 October 2026)
+
+### New
+- **Automatic price search** in a product looks it up on the Woolworths, Coles and Aldi websites at once. Tap **Use this** on the one you buy at each store (or **None of these**) and its price is saved, along with whether it's on special and its normal price. From then on its price can be kept up to date for you. This needs the new price-checker, which whoever runs the server turns on.
+- When products on your list have prices from before the stores' Wednesday price changes, a banner says how many are out of date and when they were last checked. **Update** gets this week's prices for just what's on the list, shows each store's progress, then what changed (old → new), what couldn't be found (with **Find new match**), and what isn't matched yet.
+- **Cheaper similar**: when another brand of the same kind and size costs less (often at Aldi), it shows under the product and on the list as a hint. It never changes Best buys or the totals.
+- If a store asks you to prove you're a person, its page opens in the app so you can solve it yourself, then the check carries on. If it still won't, that store says **Try again later**.
+- **Coles button**: Coles turns automatic price checkers away, so its prices come from a small extension for Brave or Chrome on your computer instead. Press it and it searches Coles for what's on your lists, a few seconds apart, in your own browser, and sends the prices back. Download it and see the steps under **Check prices → Coles button**.
+- **Refresh prices** in Saved products gets the latest price for every product with an automatic price, whenever you like.
+
+### Improved
+- **Saved products** is now a list: each product's price at the store you're shopping at (marked **auto** or **manual**), the best price anywhere and where, and **+** to put it on the list. What's on the list is highlighted, with the list's total at the bottom and what it would be at the best prices. **Edit** shows a pencil and a bin beside each product, and a deleted one can be brought back with **Undo** for a few seconds.
+- **Check prices** shows every product with a box for its price at each store, and **Auto** beside it to search the stores' websites for it. **Needs checking** shows just what has no price or an old one.
+- The search's suggestions show each product's price at the store you're at and the best price elsewhere.
+- Cheaper similar products stand out on the list in blue, and a button above the list says how many there are and lists them.
+- Loose fruit and veg get the right price from Automatic price search. Woolworths and Coles sell bananas "each", so the price is worked out from their price per kg (at Woolworths, from the weight they say one weighs): 1 kg of bananas at $4.50/kg is saved as $4.50, not 81c. Aldi's per-kg prices work the same way.
+- Automatic price search looks for the name alone (just "Bananas", not "Bananas 1000g"), and lists what's the same size as yours first.
+
+For whoever runs the server: automatic prices need the new price-checker container (about 2 GB, since it has its own browser). See "Automatic prices" in the README to turn it on; without it, the app works as before. The price-checker visits the stores' home pages twice a week at random times, never solves a store's puzzle itself, and leaves a store alone for a while if it keeps asking.
+
 ## v0.9.8 (17 October 2026)
 
 ### New

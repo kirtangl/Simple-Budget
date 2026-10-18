@@ -13,9 +13,9 @@ async function withServer(options, fn) {
   const base = `http://127.0.0.1:${server.address().port}/api`;
   const caller = () => {
     let cookie = '';
-    return async (method, path, body) => {
+    return async (method, path, body, headers = {}) => {
       const res = await fetch(base + path, {
-        method, headers: { 'content-type': 'application/json', cookie }, body: body ? JSON.stringify(body) : undefined,
+        method, headers: { 'content-type': 'application/json', cookie, ...headers }, body: body ? JSON.stringify(body) : undefined,
       });
       const set = res.headers.get('set-cookie');
       if (set) cookie = set.split(';')[0];
@@ -278,4 +278,227 @@ test('shopping: store search links and when prices were checked', () => withServ
   delete backup.shopping.prices[0].checked_at;
   await call('POST', '/import', backup);
   assert.equal((await call('GET', '/shop')).body.products[0].checked[iga.id], null);
+}));
+
+// Automatic prices, through the real price-checker server with made-up stores in place of the websites.
+async function withChecker(fn) {
+  const { createJobs } = require('../price-checker/lib/jobs');
+  const { createServer } = require('../price-checker/server');
+  const { createChecker } = require('../src/checker');
+  const shelf = {
+    woolworths: [
+      { name: 'Test Brand Rolled Oats 750g', size: '750g', price_cents: 280, was_cents: 350, special: true, url: 'https://shop.example/w/1' },
+      { name: 'Fancy Rolled Oats', size: '750g', price_cents: 550, url: 'https://shop.example/w/2' },
+    ],
+    coles: [{ name: 'Test Brand Rolled Oats', size: '750g', price_cents: 300, url: 'https://shop.example/c/1' }],
+    aldi: [
+      { name: 'Cheap Label Rolled Oats', size: '750 g', price_cents: 199, url: 'https://shop.example/a/1' },
+      { name: 'Cheap Label Muesli', size: '750 g', price_cents: 150, url: 'https://shop.example/a/2' },
+    ],
+  };
+  const stores = Object.fromEntries(Object.keys(shelf).map((id) => [id, {
+    id, home: 'https://shop.example/', gap: [0, 0], challenged: async () => false,
+    search: async (page, q) => shelf[id].filter((r) => r.name.toLowerCase().includes(q.toLowerCase().split(' ')[1] || q)).map((r) => ({ ...r })),
+  }]));
+  const browser = { page: async () => ({}), closePage: async () => {}, idle: () => {}, size: { width: 1366, height: 768 } };
+  const jobs = createJobs({ browser, stores, sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))) });
+  const server = createServer({ jobs, browser, token: 'test-token' });
+  server.listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  try {
+    await fn({ checker: createChecker({ url, token: 'test-token' }), url, shelf });
+  } finally { server.close(); }
+}
+
+const until = async (call, id, ok = (j) => j.state === 'done') => {
+  for (let i = 0; i < 200; i++) {
+    const r = await call('GET', `/shop/checker/jobs/${id}`);
+    if (ok(r.body)) return r.body;
+    await new Promise((r2) => setTimeout(r2, 20));
+  }
+  throw new Error('the check never finished');
+};
+
+test('shopping: automatic prices are off without a price-checker', () => withServer({}, async (call) => {
+  assert.equal((await call('GET', '/shop')).body.checker, null);
+  const id = (await call('POST', '/shop/items', { name: 'Oats' })).body.product_id;
+  const r = await call('POST', '/shop/checker/find', { product_id: id });
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /not set up/);
+}));
+
+test('shopping: the price-checker only answers with its token', () => withChecker(async ({ url }) => {
+  const { createChecker } = require('../src/checker');
+  await assert.rejects(createChecker({ url, token: 'wrong' }).start({ type: 'search', q: 'x' }), /PRICE_CHECKER_TOKEN/);
+  await assert.rejects(createChecker({ url: 'http://127.0.0.1:9', token: 'x' }).get('j1'), /Couldn't reach/);
+  assert.equal((await fetch(`${url}/screen/coles`, { headers: { authorization: 'Bearer test-token' } })).status, 409);
+}));
+
+test('shopping: automatic price search, matching, the cheaper similar hint and updates', () => withChecker(({ checker, shelf }) => withServer({ checker }, async (call) => {
+  const stores = await storesOf(call);
+  let shop = (await call('GET', '/shop')).body;
+  assert.deepEqual(shop.checker.stores, ['woolworths', 'coles', 'aldi']);
+  assert.match(shop.checker.since, /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/);
+  assert.equal(shop.stores.find((s) => s.name === 'Coles').checker, 'coles');
+
+  const id = (await call('POST', '/shop/items', { name: 'Rolled oats' })).body.product_id;
+  await call('PATCH', `/shop/products/${id}`, { size: 750, unit: 'g' });
+  let r = await call('POST', '/shop/checker/find', { product_id: id });
+  assert.equal(r.status, 201);
+  const found = await until(call, r.body.id);
+  assert.equal(found.stores[stores.Woolworths].state, 'done');
+  assert.equal(found.results[stores.Woolworths].length, 2);
+  assert.equal(found.results[stores.Aldi].length, 1);
+
+  // Woolworths and Coles matched, Aldi left out: the Aldi oats are a cheaper similar.
+  r = await call('PUT', `/shop/products/${id}/matches`, { job: found.id, picks: { [stores.Woolworths]: 0, [stores.Coles]: 0, [stores.Aldi]: null } });
+  assert.equal(r.status, 200);
+  let p = r.body;
+  assert.deepEqual([p.prices[stores.Woolworths], p.was[stores.Woolworths], p.prices[stores.Coles]], [280, 350, 300]);
+  assert.equal(p.matches[stores.Coles].url, 'https://shop.example/c/1');
+  assert.deepEqual(p.matches[stores.Aldi], { url: '', name: '', size: null, missing_at: null }); // none of them, remembered
+  assert.equal(p.similar.name, 'Cheap Label Rolled Oats');
+  assert.deepEqual([p.similar.store_id, p.similar.price_cents], [stores.Aldi, 199]);
+  assert.equal((await call('PUT', `/shop/products/${id}/matches`, { job: found.id, picks: { [stores.Coles]: 7 } })).status, 400);
+  assert.equal((await call('PUT', `/shop/products/${id}/matches`, { job: 'j999', picks: {} })).status, 404);
+
+  // Nothing's out of date yet, so an update has nothing to do except the store it isn't matched at.
+  r = await call('POST', '/shop/checker/update', { list: 'shared' });
+  assert.deepEqual([r.body.id, r.body.total], [null, 0]);
+  assert.deepEqual(r.body.unmatched, []);
+  const bread = (await call('POST', '/shop/items', { name: 'Test bread' })).body.product_id;
+  r = await call('POST', '/shop/checker/update', { list: 'shared' });
+  assert.equal(r.body.unmatched.length, 3);
+  assert.ok(r.body.unmatched.every((u) => u.product_id === bread));
+
+  // A week later (dates moved back), with new prices at the stores: only the list's matched prices update.
+  const backup = (await call('GET', '/export')).body;
+  backup.shopping.prices = backup.shopping.prices.map((x) => ({ ...x, checked_at: '2026-01-01 00:00:00' }));
+  await call('POST', '/import', backup);
+  shelf.woolworths[0].price_cents = 320;
+  Object.assign(shelf.woolworths[0], { was_cents: null, special: false });
+  const colesOats = shelf.coles.pop();
+  r = await call('POST', '/shop/checker/update', { list: 'shared' });
+  assert.equal(r.status, 201);
+  assert.equal(r.body.total, 2);
+  const done = await until(call, r.body.id, (j) => j.state === 'done' && j.changes);
+  assert.deepEqual(done.changes, [{ product_id: id, store_id: stores.Woolworths, old_cents: 280, new_cents: 320, special: false }]);
+  assert.deepEqual(done.missing, [{ product_id: id, store_id: stores.Coles }]);
+  p = (await call('GET', '/shop')).body.products.find((x) => x.id === id);
+  assert.equal(p.prices[stores.Woolworths], 320);
+  assert.equal(p.was[stores.Woolworths], undefined);
+  assert.notEqual(p.checked[stores.Woolworths], '2026-01-01 00:00:00');
+  assert.ok(p.matches[stores.Coles].missing_at);
+  assert.equal(p.checked[stores.Coles], '2026-01-01 00:00:00');
+
+  // Refresh prices now checks every saved product's matched prices, however recent.
+  r = await call('POST', '/shop/checker/update', { all: true });
+  assert.equal(r.status, 201);
+  assert.equal(r.body.total, 2);
+  await until(call, r.body.id, (j) => j.state === 'done' && j.changes);
+
+  // A new match at just Coles keeps the similar hint (only a search of every store replaces it).
+  shelf.coles.push(colesOats);
+  r = await call('POST', '/shop/checker/find', { product_id: id, store_ids: [stores.Coles] });
+  assert.deepEqual(Object.keys(r.body.stores), [String(stores.Coles)]);
+  const again = await until(call, r.body.id);
+  p = (await call('PUT', `/shop/products/${id}/matches`, { job: again.id, picks: { [stores.Coles]: 0 } })).body;
+  assert.equal(p.matches[stores.Coles].missing_at, null);
+  assert.equal(p.similar.name, 'Cheap Label Rolled Oats');
+
+  // Kept in a backup.
+  shop = (await call('GET', '/export')).body.shopping;
+  assert.equal(shop.similar.length, 1);
+  assert.equal(shop.matches.length, 3);
+  assert.ok(shop.stores.every((s) => 'checker' in s));
+})));
+
+test('shopping: prices go out of date at 9am on Wednesdays', () => {
+  const { priceDay } = require('../src/shop');
+  const at = (s) => priceDay(new Date(s));
+  const local = (s) => { const d = new Date(s); return d.toISOString().slice(0, 19).replace('T', ' '); };
+  assert.equal(at('2026-10-14T09:30:00'), local('2026-10-14T09:00:00')); // Wednesday, after 9
+  assert.equal(at('2026-10-14T08:30:00'), local('2026-10-07T09:00:00')); // Wednesday, before 9
+  assert.equal(at('2026-10-13T12:00:00'), local('2026-10-07T09:00:00')); // Tuesday
+  assert.equal(at('2026-10-18T12:00:00'), local('2026-10-14T09:00:00')); // Sunday
+});
+
+test('shopping: the browser helper (Coles button) uses its own key', () => withServer({}, async (call, caller) => {
+  const stores = await storesOf(call);
+  const oats = (await call('POST', '/shop/items', { name: 'Rolled oats' })).body.product_id;
+  await call('PATCH', `/shop/products/${oats}`, { size: 750, unit: 'g' });
+  const milk = (await call('POST', '/shop/items', { name: 'Milk' })).body.product_id;
+  const bread = (await call('POST', '/shop/items', { name: 'Bread' })).body.product_id;
+  // A new key replaces the old one; the extension sends it, not a login cookie, from its own origin.
+  const old = (await call('POST', '/shop/helper/key', {})).body.key;
+  assert.equal((await call('POST', '/shop/helper/key', {})).body.key, old);
+  const key = (await call('POST', '/shop/helper/key', { new: true })).body.key;
+  assert.notEqual(key, old);
+  const ext = caller();
+  const as = (k) => ({ authorization: `Bearer ${k}`, origin: 'chrome-extension://abcdefgh' });
+  assert.equal((await ext('GET', '/shop-helper/coles')).status, 401);
+  assert.equal((await ext('GET', '/shop-helper/coles', null, as(old))).status, 401);
+  assert.equal((await ext('GET', '/shop/', null, as(key))).status, 401); // only the helper's routes
+  assert.equal((await ext('GET', '/shop-helper/nowhere', null, as(key))).status, 404);
+
+  let r = await ext('GET', '/shop-helper/coles', null, as(key));
+  assert.equal(r.body.store.id, stores.Coles);
+  assert.deepEqual(r.body.items.map((i) => [i.name, i.q, i.match, i.out_of_date]),
+    [['Bread', 'Bread', null, false], ['Milk', 'Milk', null, false], ['Rolled oats', 'Rolled oats', null, false]]);
+
+  r = await ext('POST', '/shop-helper/coles/results', {
+    found: [{ product_id: oats, url: 'https://shop.example/c/oats', name: 'Test Rolled Oats', size: '750g', price_cents: 300, was_cents: 350 },
+      { product_id: milk, url: 'javascript:alert(1)', name: 'Bad', price_cents: 100 }],
+    none: [bread],
+  }, as(key));
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.changes, [{ product_id: oats, old_cents: null, new_cents: 300 }]);
+  const p = (await call('GET', '/shop')).body.products.find((x) => x.id === oats);
+  assert.deepEqual([p.prices[stores.Coles], p.was[stores.Coles], p.matches[stores.Coles].url], [300, 350, 'https://shop.example/c/oats']);
+  r = await ext('GET', '/shop-helper/coles', null, as(key));
+  const by = Object.fromEntries(r.body.items.map((i) => [i.name, i]));
+  assert.equal(by.Bread.none, true);
+  assert.equal(by.Milk.match, null);
+  assert.equal(by['Rolled oats'].match.name, 'Test Rolled Oats');
+  assert.equal(by['Rolled oats'].out_of_date, false);
+  // Loose bananas, sold each with a price per kg, cost 1 kg's worth for a 1 kg product, or a kilo's
+  // price for one priced per kg.
+  const bananas = (await call('POST', '/shop/items', { name: 'Bananas' })).body.product_id;
+  await call('PATCH', `/shop/products/${bananas}`, { size: 1000, unit: 'g' });
+  const loose = { url: 'https://shop.example/c/bananas', name: 'Test Bananas Loose', size: 'approx. 180g', price_cents: 72, sold: 'each', per_kg_cents: 400 };
+  await ext('POST', '/shop-helper/coles/results', { found: [{ product_id: bananas, ...loose }] }, as(key));
+  assert.equal((await call('GET', '/shop')).body.products.find((x) => x.id === bananas).prices[stores.Coles], 400);
+  await call('PATCH', `/shop/products/${bananas}`, { size: 1, unit: 'kg', price_per: '100g' });
+  await ext('POST', '/shop-helper/coles/results', { found: [{ product_id: bananas, ...loose }] }, as(key));
+  assert.equal((await call('GET', '/shop')).body.products.find((x) => x.id === bananas).prices[stores.Coles], 40);
+  await call('PATCH', `/shop/products/${bananas}`, { size: null, unit: null, price_per: 'each' });
+  await ext('POST', '/shop-helper/coles/results', { found: [{ product_id: bananas, ...loose }] }, as(key));
+  assert.equal((await call('GET', '/shop')).body.products.find((x) => x.id === bananas).prices[stores.Coles], 72); // one banana
+
+  await ext('POST', '/shop-helper/coles/results', { missing: [oats] }, as(key));
+  r = await ext('GET', '/shop-helper/coles', null, as(key));
+  assert.equal(r.body.items.find((i) => i.product_id === oats).match.missing, true);
+}));
+
+test('shopping: the Coles button downloads as a zip of the extension', () => withServer({}, async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const zlib = require('node:zlib');
+  const { zipFolder } = require('../src/zip');
+  const dir = path.join(__dirname, '..', 'browser-extension');
+  const z = zipFolder(dir, 'top');
+  assert.equal(z.readUInt32LE(z.length - 22), 0x06054b50);
+  const count = z.readUInt16LE(z.length - 12);
+  assert.equal(count, fs.readdirSync(dir).length);
+  // The first file is there whole, under the top folder, with its checksum.
+  const nameLen = z.readUInt16LE(26);
+  const name = z.subarray(30, 30 + nameLen).toString();
+  const size = z.readUInt32LE(18);
+  const data = z.subarray(30 + nameLen, 30 + nameLen + size);
+  assert.ok(name.startsWith('top/'));
+  assert.deepEqual(data, fs.readFileSync(path.join(dir, name.slice(4))));
+  assert.equal(z.readUInt32LE(14), zlib.crc32(data));
+  const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.version, require('../package.json').version);
 }));

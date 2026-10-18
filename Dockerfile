@@ -8,6 +8,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY src ./src
 COPY public ./public
+COPY browser-extension ./browser-extension
 
 # Set by the release workflow to the release's version, e.g. 0.8.0-beta.1.
 ARG APP_VERSION=
