@@ -4536,6 +4536,9 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           <span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="${rows.length}" aria-valuenow="${done}"><i style="width:${Math.round((done / rows.length) * 100)}%"></i></span></div>` : ''}
       </div>
       ${autoBanner()}
+      ${rows.length && !loc ? html`<div class="setup-banner shop-noloc"><span class="grow"><b>${shop.locations.length ? 'Which store are you at?' : 'Add the store you shop at'}</b>
+          Prices on the list, totals and aisles all need a store location, like Woolworths Castletown.</span>
+        <button type="button" class="mini primary" data-action="${shop.locations.length ? 'shop-change' : 'shop-stores'}">${shop.locations.length ? 'Choose store' : '+ Add a store location'}</button></div>` : ''}
       ${tools}
       ${rows.length ? html`<div class="shop-list">${groups.length ? groups.map(section)
           : html`<div class="card"><p class="empty">Nothing left that's cheapest at ${storeName(store)}. Turn off Best buys to see everything.</p></div>`}</div>

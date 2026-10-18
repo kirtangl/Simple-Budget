@@ -7,6 +7,8 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 ### Improved
 - On a phone, the totals under the shopping list no longer leave gaps. Each total is on its own line with its amount on the right, and on a wider screen, like a tablet, Total shop, Spent so far and Still to buy share one line with Total after savings under them.
 
+- When no store is picked on the Shopping tab, a banner above the list says so, with **+ Add a store location** (or **Choose store**). Prices on the list, totals and aisles all need one.
+
 For whoever runs the server: nothing to do beyond **Update now**.
 
 ## v0.9.10 (18 October 2026)

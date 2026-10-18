@@ -2059,6 +2059,7 @@ dialog.item-pop { width: min(520px, calc(100vw - 24px)); }
 .setup-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; padding: 8px 10px; border-radius: 8px;
   background: color-mix(in srgb, var(--due) 12%, var(--card)); border: 1px solid color-mix(in srgb, var(--due) 35%, var(--card)); font-size: .85rem; }
 .setup-banner .grow { flex: 1 1 200px; }
+.shop-noloc b { display: block; }
 .kg-offer { margin-top: 4px; }
 .setup-tag { min-height: 0; margin-left: 6px; padding: 0 8px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--due) 50%, var(--card));
   background: color-mix(in srgb, var(--due) 12%, var(--card)); color: var(--due); font-size: .72rem; font-weight: 700; box-shadow: none; vertical-align: 1px; }
