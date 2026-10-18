@@ -10,6 +10,13 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 - **Cheaper similar**: when another brand of the same kind and size costs less (often at Aldi), it shows under the product and on the list as a hint. It never changes Best buys or the totals.
 - If a store asks you to prove you're a person, its page opens in the app so you can solve it yourself, then the check carries on. If it still won't, that store says **Try again later**.
 - **Coles button**: Coles turns automatic price checkers away, so its prices come from a small extension for Brave or Chrome on your computer instead. Press it and it searches Coles for what's on your lists, a few seconds apart, in your own browser, and sends the prices back. Download it and see the steps under **Check prices → Coles button**.
+- **Refresh prices** in Saved products gets the latest price for every product with an automatic price, whenever you like.
+
+### Improved
+- **Saved products** is now a list: each product's price at the store you're shopping at (marked **auto** or **manual**), the best price anywhere and where, and **+** to put it on the list. What's on the list is highlighted, with the list's total at the bottom and what it would be at the best prices. **Edit** shows a pencil and a bin beside each product, and a deleted one can be brought back with **Undo** for a few seconds.
+- **Check prices** shows every product with a box for its price at each store, and **Auto** beside it to search the stores' websites for it. **Needs checking** shows just what has no price or an old one.
+- The search's suggestions show each product's price at the store you're at and the best price elsewhere.
+- Cheaper similar products stand out on the list in blue, and a button above the list says how many there are and lists them.
 
 For whoever runs the server: automatic prices need the new price-checker container (about 2 GB, since it has its own browser). See "Automatic prices" in the README to turn it on; without it, the app works as before. The price-checker visits the stores' home pages twice a week at random times, never solves a store's puzzle itself, and leaves a store alone for a while if it keeps asking.
 

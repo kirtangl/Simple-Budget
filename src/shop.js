@@ -492,13 +492,19 @@ function createShop(db, { checker = null } = {}) {
   });
 
   // The products on a list whose matched prices are out of date: { list }. Products on the list not
-  // matched at a store come back as unmatched, to find.
+  // matched at a store come back as unmatched, to find. { all: true } checks every saved product's
+  // matched prices now, however recently they were checked.
   router.post('/checker/update', async (req, res) => {
     needChecker();
-    const [where, args] = onList(ownerOf(req, listOf(req)));
-    const since = priceDay();
+    const every = body(req).all === true;
+    const since = every ? null : priceDay();
     const stores = checkerStores();
-    const products = all(`SELECT DISTINCT product_id AS id FROM shop_items WHERE done_at IS NULL AND ${where}`, ...args).map((r) => r.id);
+    let products;
+    if (every) products = all('SELECT id FROM shop_products ORDER BY name').map((r) => r.id);
+    else {
+      const [where, args] = onList(ownerOf(req, listOf(req)));
+      products = all(`SELECT DISTINCT product_id AS id FROM shop_items WHERE done_at IS NULL AND ${where}`, ...args).map((r) => r.id);
+    }
     const keys = {};
     const items = {};
     const toCheck = [];
@@ -506,10 +512,10 @@ function createShop(db, { checker = null } = {}) {
     for (const pid of products) {
       for (const s of stores) {
         const m = one('SELECT * FROM shop_matches WHERE product_id = ? AND store_id = ?', pid, s.id);
-        if (!m) { unmatched.push({ product_id: pid, store_id: s.id }); continue; }
+        if (!m) { if (!every) unmatched.push({ product_id: pid, store_id: s.id }); continue; }
         if (!m.url) continue; // not sold there, or not wanted
         const price = one('SELECT checked_at FROM shop_prices WHERE product_id = ? AND store_id = ?', pid, s.id);
-        if (price && price.checked_at && price.checked_at >= since) continue;
+        if (since && price && price.checked_at && price.checked_at >= since) continue;
         const key = `${pid}:${s.id}`;
         keys[s.id] = s.checker;
         items[key] = [pid, s.id];

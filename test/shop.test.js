@@ -392,6 +392,12 @@ test('shopping: automatic price search, matching, the cheaper similar hint and u
   assert.ok(p.matches[stores.Coles].missing_at);
   assert.equal(p.checked[stores.Coles], '2026-01-01 00:00:00');
 
+  // Refresh prices now checks every saved product's matched prices, however recent.
+  r = await call('POST', '/shop/checker/update', { all: true });
+  assert.equal(r.status, 201);
+  assert.equal(r.body.total, 2);
+  await until(call, r.body.id, (j) => j.state === 'done' && j.changes);
+
   // A new match at just Coles keeps the similar hint (only a search of every store replaces it).
   shelf.coles.push(colesOats);
   r = await call('POST', '/shop/checker/find', { product_id: id, store_ids: [stores.Coles] });

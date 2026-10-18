@@ -1923,17 +1923,39 @@ button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
 .spot-btn.on + .loc-del { color: var(--on-brand); }
 .fields.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 @media (max-width: 560px) { .fields.three { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-/* The product list: buttons under their aisles. */
-.prod-tools { display: flex; gap: 8px; align-items: center; }
-.prod-tools input { flex: 1; min-width: 0; }
-#prod-body { max-height: min(60vh, 560px); overflow-y: auto; }
-.prod-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; margin: 6px 0 4px; }
-.prod-btn { position: relative; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; min-height: 52px;
-  padding: 6px 10px; text-align: left; font-weight: 600; }
-.prod-name { overflow-wrap: anywhere; padding-right: 22px; }
-.prod-meta { font-size: .75rem; font-weight: 400; color: var(--muted); }
-.prod-btn.on { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 12%, var(--card)); }
-.prod-badge { position: absolute; top: 4px; right: 6px; font-size: .75rem; color: var(--brand); }
+/* Saved products: a row per product with its price here, the best price and how many are on the list. */
+.prod-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.prod-tools input { flex: 1 1 160px; min-width: 0; }
+#prod-body { max-height: min(58vh, 560px); overflow-y: auto; }
+.sp-cols, .sp-row { display: grid; grid-template-columns: minmax(0, 1fr) 68px 76px 44px; gap: 8px; align-items: center; }
+.sp-cols.no-here, .sp-list.no-here .sp-row:not(.edit) { grid-template-columns: minmax(0, 1fr) 76px 44px; }
+.sp-cols { padding: 6px 10px 0; font-size: .7rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.sp-cols span:nth-child(n+2) { text-align: right; }
+.sp-cols span:last-child { text-align: center; }
+.sp-list { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 4px; padding: 0; list-style: none; }
+.sp-row { min-height: 52px; padding: 6px 8px 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+.sp-row.on { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 12%, var(--card)); }
+.sp-row.edit { grid-template-columns: minmax(0, 1fr) auto auto; }
+.sp-main { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; min-height: 0; padding: 0; border: 0; background: none; box-shadow: none; color: inherit; text-align: left; font-weight: 600; }
+.sp-name { overflow-wrap: anywhere; font-weight: 600; }
+.sp-meta { font-size: .75rem; font-weight: 400; color: var(--muted); overflow-wrap: anywhere; }
+.sp-here, .sp-best { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; white-space: nowrap; }
+.sp-here small, .sp-best small { font-size: .68rem; font-weight: 400; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.sp-here small.sp-auto { color: var(--info); }
+.sp-best { font-weight: 700; }
+.sp-best.here { color: var(--brand); }
+.sp-best.away { color: var(--due); }
+.sp-qty { justify-self: center; min-width: 32px; min-height: 32px; padding: 0 8px; border-radius: 999px; font-weight: 700; }
+.sp-qty.on { border-color: var(--brand); background: var(--brand); color: var(--on-brand); }
+.sp-del { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--card)); }
+.sp-foot { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.sp-save { font-size: .8rem; font-weight: 600; color: var(--due); }
+.undo-bar { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; padding: 10px 12px;
+  border-radius: 10px; background: var(--text); color: var(--card); }
+.undo-bar[hidden] { display: none; }
+@media (max-width: 400px) {
+  .sp-cols, .sp-row { grid-template-columns: minmax(0, 1fr) 60px 66px 38px; gap: 6px; }
+}
 .store-head { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line); }
 .store-head h3.form-section { flex: 1; min-width: 0; margin: 0; padding: 0; border: 0; }
 .store-new { margin-top: 16px; }
@@ -1947,11 +1969,27 @@ button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
 .price-meta .linkish.small { font-size: .78rem; }
 a.lookup { color: var(--link); text-decoration: none; font-weight: 600; white-space: nowrap; }
 a.lookup:hover { text-decoration: underline; }
-.check-stores { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
-.check-stores .spot-btn { min-height: 40px; padding: 6px 12px; }
-.check-list > li { gap: 8px; align-items: center; }
-.check-list .title { overflow-wrap: anywhere; }
-.check-list input.check-price { flex: none; width: 84px; }
+/* Check prices: a row per product with a box for each store's price, and Auto. */
+dialog.wide-pop { width: min(760px, calc(100vw - 24px)); }
+@media (max-width: 720px) { dialog.wide-pop { width: 100vw; } }
+.cp-head { display: grid; gap: 8px; padding: 8px 0 2px; font-size: .7rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.cp-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.cp-row { display: grid; grid-template-columns: var(--cp-cols); gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+.cp-name { display: flex; flex-direction: column; min-width: 0; }
+.cp-price { display: block; margin: 0; }
+.cp-price input { width: 100%; min-width: 0; }
+.cp-row [data-auto] { justify-content: center; }
+.cp-price input.old { border-color: var(--due); }
+.cp-store { display: none; }
+@media (max-width: 720px) {
+  .cp-head { display: none; }
+  .cp-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .cp-name { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+  .cp-store { display: flex; align-items: center; margin-bottom: 2px; font-size: .72rem; color: var(--muted); overflow: hidden; white-space: nowrap; }
+  .cp-name { grid-column: 1 / 3; grid-row: 1; }
+  .cp-row [data-auto] { grid-column: 3; grid-row: 1; justify-self: end; }
+}
 .check-on { font-size: .72rem; font-weight: 600; color: var(--brand); white-space: nowrap; }
 .spot-btn.on .store-dot { box-shadow: 0 0 0 2px var(--on-brand); }
 /* Automatic prices: the out-of-date banner, a check's progress, search results and the puzzle popup. */
@@ -1980,7 +2018,13 @@ h3.form-section.find-head { margin-top: 14px; }
 .match-line.warn { white-space: normal; }
 .similar-line { margin: 8px 0 0; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--info) 8%, var(--card)); overflow-wrap: anywhere; }
 .similar-line .muted { display: block; margin-top: 2px; }
-.similar-pill { display: block; margin-top: 3px; font-size: .75rem; color: var(--muted); overflow-wrap: anywhere; }
+.similar-pill { display: inline-flex; align-items: center; min-height: 0; margin-top: 4px; padding: 1px 9px; border: 1px solid color-mix(in srgb, var(--info) 45%, var(--card));
+  border-radius: 999px; background: color-mix(in srgb, var(--info) 10%, var(--card)); box-shadow: none; color: var(--info); font-size: .75rem; font-weight: 600; text-align: left; overflow-wrap: anywhere; }
+.similar-pill .store-dot { width: 7px; height: 7px; margin-right: 5px; flex: none; }
+.similar-chip { min-height: 0; padding: 4px 12px; border: 1px solid color-mix(in srgb, var(--info) 45%, var(--card)); border-radius: 999px;
+  background: color-mix(in srgb, var(--info) 10%, var(--card)); color: var(--info); font-size: .82rem; font-weight: 600; }
+.combo-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; }
+.combo-meta { font-size: .78rem; color: var(--muted); }
 .auto-find { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 12px; }
 .upd-list > li { gap: 10px; align-items: center; }
 .upd-list .title { overflow-wrap: anywhere; }

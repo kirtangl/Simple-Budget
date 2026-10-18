@@ -181,9 +181,10 @@
 
   // A text box that drops down a list of existing values, filtered as you type.
   // Typing something not in the list is fine too.
-  const combo = ({ id, name, value, options, placeholder = '' }) => html`
+  // meta, if given, is a line shown beside each option: { option: text }.
+  const combo = ({ id, name, value, options, meta = null, placeholder = '' }) => html`
     <div class="combo"><input id="${id}" name="${name}" value="${value}" placeholder="${placeholder}" autocomplete="off"
-      role="combobox" aria-autocomplete="list" aria-expanded="false" data-combo="${JSON.stringify(options)}"><ul class="combo-list" role="listbox" hidden></ul></div>`;
+      role="combobox" aria-autocomplete="list" aria-expanded="false" data-combo="${JSON.stringify(options)}" ${raw(meta ? html`data-combo-meta="${JSON.stringify(meta)}"`.s : '')}><ul class="combo-list" role="listbox" hidden></ul></div>`;
 
   function options(list, selected, { empty = '— None —', label = (x) => x.name } = {}) {
     return html`<option value="">${empty}</option>${list.map((x) => html`<option value="${x.id}" ${x.id === selected ? raw('selected') : ''}>${label(x)}</option>`)}`;
@@ -4196,6 +4197,20 @@ sudo docker compose up -d --build</pre>`;
     return per && p.size && BASE[p.unit] ? Math.round((c * p.size * BASE[p.unit]) / per) : c;
   }
   const productLabel = (p) => (sizeLabel(p) ? `${p.name} · ${sizeLabel(p)}` : p.name);
+  // For the search's suggestions: each product's price at this store and the best price anywhere.
+  function priceHints(store) {
+    const out = {};
+    for (const p of state.shop.products) {
+      if (out[p.name]) continue;
+      const here = itemCost(p, store);
+      const best = bestPrice(p, store);
+      const parts = [];
+      if (here != null) parts.push(`${storeName(store)} ${money(here)}`);
+      if (best && (here == null || best.cents < here)) parts.push(`best ${money(best.cents)} ${storeName(best.store)}`);
+      if (parts.length) out[p.name] = parts.join(' · ');
+    }
+    return out;
+  }
 
   // Looking a product up on a store's website: its search page, searched for the name and size.
   const lookupUrl = (s, name, size = '') => (s && s.search_url && name
@@ -4353,6 +4368,7 @@ sudo docker compose up -d --build</pre>`;
     const keyOf = (g) => `${loc ? loc.id : 0}:${g.key}`;
     const anyShut = groups.some((g) => collapsed.has(keyOf(g)));
     const done = rows.length - left.length;
+    const similarCount = left.filter((r) => r.p.similar).length;
 
     const head = loc
       ? html`<div class="shop-store">
@@ -4379,7 +4395,7 @@ sudo docker compose up -d --build</pre>`;
         <div class="si-name" data-action="shop-item" data-id="${it.id}">
           <div class="title">${p.name}${sizeLabel(p) ? html` <span class="shop-size">${sizeLabel(p)}</span>` : ''}</div>
           ${!got && cheaper ? html`<span class="shop-deal-pill">${storeDot(cheaper.store)}${storeName(cheaper.store)} ${money2(cheaper.cents)} · save ${money((price - cheaper.cents) * it.qty)}</span>` : ''}
-          ${!got && p.similar ? html`<span class="similar-pill">Cheaper similar: ${storeName(p.similar.store_id)} ${p.similar.name} ${money2(p.similar.price_cents)}</span>` : ''}
+          ${!got && p.similar ? html`<button type="button" class="similar-pill" data-action="shop-similar" title="A similar product costs less for the amount">${storeDot(p.similar.store_id)}Cheaper similar: ${storeName(p.similar.store_id)} ${p.similar.name} ${money2(p.similar.price_cents)}</button>` : ''}
         </div>
         <div class="si-who">${got ? html`${it.done_by_name ? html`<span class="who-init" style="--tag:${it.done_by_colour || 'var(--brand)'}" title="Checked off by ${it.done_by_name}">${it.done_by_name.slice(0, 1).toUpperCase()}</span>` : ''}
           ${at ? html`<span class="who-at">${storeDot(at)}${storeName(at)}</span>` : ''}`
@@ -4420,6 +4436,7 @@ sudo docker compose up -d --build</pre>`;
     const tools = rows.length ? html`<div class="shop-tools">
         ${store ? html`<button type="button" class="best-toggle" role="switch" aria-checked="${filter ? 'true' : 'false'}" data-action="shop-best">
           <span class="switch" aria-hidden="true"></span>Best buys at ${storeDot(store)}<b>${storeName(store)}</b><span class="muted">${bestCount} of ${left.length}</span></button>` : ''}
+        ${similarCount ? html`<button type="button" class="similar-chip" data-action="shop-similar">${similarCount} cheaper similar</button>` : ''}
         <span class="spacer"></span>
         ${groups.length ? html`<button type="button" class="linkish small" data-action="shop-fold-all" data-open="${anyShut ? '1' : ''}">${anyShut ? 'Expand all' : 'Collapse all'}</button>` : ''}
         <button type="button" class="mini" data-action="shop-check">Check prices</button>
@@ -4436,7 +4453,7 @@ sudo docker compose up -d --build</pre>`;
           <form id="shop-add" class="shop-search" autocomplete="off">
             <span class="search-ico">${raw(SEARCH_ICON)}</span>
             <label for="shop-name" class="sr-only">Search or add an item</label>
-            ${combo({ id: 'shop-name', name: 'name', value: '', options: [...new Set(shop.products.map((p) => p.name))], placeholder: 'Search or add an item, like Milk' })}
+            ${combo({ id: 'shop-name', name: 'name', value: '', options: [...new Set(shop.products.map((p) => p.name))], meta: priceHints(store), placeholder: 'Search or add an item, like Milk' })}
             <span class="search-end">
               <button type="button" class="search-clear" data-action="shop-search-clear" aria-label="Clear the search" hidden>✕</button>
               <button type="submit" class="primary">Add</button>
@@ -4673,50 +4690,123 @@ sudo docker compose up -d --build</pre>`;
     });
   }
 
-  // Everything bought before, as buttons under their aisles here. A tap puts it on the list (or
-  // adds one more); in edit mode a tap opens it instead.
+  // A product's price per 100 g or mL, or per kg or L, like the shelf labels: "$2.20/100g".
+  function unitPrice(p, cents) {
+    if (cents == null || !p.size || !BASE[p.unit]) return '';
+    const big = p.unit === 'kg' || p.unit === 'L';
+    const per = big ? 1000 : 100;
+    return `${money(Math.round((cents * per) / (p.size * BASE[p.unit])))}/${big ? p.unit : `100${p.unit}`}`;
+  }
+  // Whether a store's price is kept up to date automatically (matched on its website) or typed in.
+  const priceIsAuto = (p, sid) => Boolean(state.shop.checker && p.matches?.[sid]?.url && !p.matches[sid].missing_at);
+  const PENCIL_ICON = raw('<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2.5l2.5 2.5L6 12.5H3.5V10z"/></svg>');
+
+  // Products being deleted, for a few seconds while Undo is offered: id -> timer.
+  const forgetting = new Map();
+
+  // Everything bought before, under its aisle here, with its price here and the best price
+  // anywhere. + puts it on the list (or adds one more); tapping a name opens it. Edit switches to
+  // renaming and deleting.
   function productList() {
     const loc = shopLocation();
     const store = loc ? loc.store_id : null;
+    const editing = () => Boolean(state.productEdit);
+    const money2 = (c) => moneyFmt.format((c || 0) / 100);
     const body = () => {
       const q = (state.productQuery || '').trim().toLowerCase();
-      const onList = new Map(state.shop.items.map((it) => [it.product_id, it]));
-      const list = state.shop.products.filter((p) => !q || productLabel(p).toLowerCase().includes(q))
+      const onList = new Map(state.shop.items.filter((it) => !it.done_at).map((it) => [it.product_id, it]));
+      const list = state.shop.products.filter((p) => !forgetting.has(p.id) && (!q || productLabel(p).toLowerCase().includes(q)))
         .sort((a, b) => a.name.localeCompare(b.name));
       if (!list.length) return html`<p class="empty">${state.shop.products.length ? 'Nothing matches.' : 'Things you add to a list show here.'}</p>`;
       const groups = loc ? groupBy(list, loc, (p) => p) : [{ key: 'all', label: 'All products', rows: list }];
-      return html`${groups.map((g) => html`<h3 class="form-section">${g.label}</h3><div class="prod-grid">${g.rows.map((p) => {
+      const row = (p) => {
         const it = onList.get(p.id);
-        const on = it && !it.done_at;
-        const price = store != null ? p.prices[store] : null;
-        const meta = [sizeLabel(p), price != null ? `${money(price)}${pricePerText(p)}` : ''].filter(Boolean).join(' · ');
-        return html`<button type="button" class="prod-btn ${on ? 'on' : ''}" data-prod="${p.id}">
-          <span class="prod-name">${p.name}</span>${meta ? html`<span class="prod-meta">${meta}</span>` : ''}
-          ${on ? html`<span class="prod-badge">×${it.qty}</span>` : ''}</button>`;
-      })}</div>`)}`;
+        const here = itemCost(p, store);
+        const best = bestPrice(p, store);
+        const bestHereToo = best && (best.store === store || (here != null && best.cents === here));
+        if (editing()) {
+          const meta = [sizeLabel(p), here != null ? `${storeName(store)} ${money2(here)}` : '', best ? `best ${money2(best.cents)}` : ''].filter(Boolean).join(' · ');
+          return html`<li class="sp-row edit"><button type="button" class="sp-main" data-open="${p.id}"><span class="sp-name">${p.name}</span>
+              ${meta ? html`<span class="sp-meta">${meta}</span>` : ''}</button>
+            <button type="button" class="icon ghost" data-open="${p.id}" aria-label="Edit ${p.name}" title="Edit">${PENCIL_ICON}</button>
+            <button type="button" class="icon sp-del" data-del="${p.id}" aria-label="Delete ${p.name}" title="Delete">${BIN_ICON}</button></li>`;
+        }
+        const meta = [sizeLabel(p), unitPrice(p, here ?? (best && best.cents))].filter(Boolean).join(' · ');
+        return html`<li class="sp-row ${it ? 'on' : ''}">
+          <button type="button" class="sp-main" data-open="${p.id}"><span class="sp-name">${p.name}</span>${meta ? html`<span class="sp-meta">${meta}</span>` : ''}</button>
+          ${store ? html`<span class="sp-here num">${here != null ? money2(here) : '—'}${here != null ? html`<small class="${priceIsAuto(p, store) ? 'sp-auto' : ''}">${priceIsAuto(p, store) ? 'auto' : 'manual'}</small>` : ''}</span>` : ''}
+          <span class="sp-best num ${best ? (bestHereToo ? 'here' : 'away') : ''}">${best ? money2(best.cents) : '—'}${best ? html`<small>${bestHereToo ? 'here' : storeName(best.store)}${!bestHereToo && priceIsAuto(p, best.store) ? ' · auto' : ''}</small>` : ''}</span>
+          <button type="button" class="sp-qty ${it ? 'on' : ''}" data-add="${p.id}" aria-label="${it ? `One more ${p.name}, ${it.qty} on the list` : `Add ${p.name} to the list`}">${it ? `×${it.qty}` : '+'}</button></li>`;
+      };
+      return html`${editing() ? '' : html`<div class="sp-cols ${store ? '' : 'no-here'}" aria-hidden="true"><span>Product</span>${store ? html`<span>${storeName(store)}</span>` : ''}<span>Best</span><span>Qty</span></div>`}
+        ${groups.map((g) => html`<h3 class="form-section">${g.label}</h3><ul class="sp-list ${store ? '' : 'no-here'}">${g.rows.map(row)}</ul>`)}`;
     };
-    const editing = () => Boolean(state.productEdit);
+    // The list's total here, and if everything on it were bought where it's cheapest.
+    const foot = () => {
+      if (editing() || !store) return '';
+      let here = 0;
+      let best = 0;
+      for (const it of state.shop.items) {
+        const p = !it.done_at && shopProduct(it.product_id);
+        const c = p && itemCost(p, store);
+        if (c == null) continue;
+        here += c * it.qty;
+        best += bestPrice(p, store).cents * it.qty;
+      }
+      return here ? html`<div class="sp-foot"><b>List total ${money2(here)} at ${storeName(store)}</b>
+        ${best < here ? html`<span class="sp-save">${money2(best)} if bought at the best prices</span>` : ''}</div>` : '';
+    };
+    const anyAuto = autoStores().length && state.shop.products.some((p) => Object.values(p.matches || {}).some((m) => m.url));
     openForm({
-      title: 'Saved products',
-      body: html`<div class="prod-tools">
+      title: editing() ? 'Edit saved products' : 'Saved products',
+      body: html`<div class="prod-tools sp-tools">
           <label for="prod-q" class="sr-only">Search saved products</label>
           <input id="prod-q" type="search" placeholder="Search" value="${state.productQuery || ''}" autocomplete="off">
-          <button type="button" class="mini ${editing() ? 'primary' : ''}" id="prod-edit" aria-pressed="${editing() ? 'true' : 'false'}">${editing() ? 'Done editing' : 'Edit'}</button>
-          ${state.shop.products.length ? html`<button type="button" class="mini" data-action="shop-check">Check prices</button>` : ''}
+          ${editing() ? html`<button type="button" class="mini primary" id="prod-edit">Done</button>`
+            : html`<button type="button" class="mini" id="prod-edit">Edit</button>
+              ${state.shop.products.length ? html`<button type="button" class="mini" data-action="shop-check">Check prices</button>` : ''}
+              ${anyAuto ? html`<button type="button" class="mini" data-refresh-all>Refresh prices</button>` : ''}`}
         </div>
-        <p class="muted small" id="prod-help">${editing() ? 'Tap a product to change its name, size, prices or aisle.' : `Tap to add to the list. Tap again for one more.${loc ? ` Sorted by aisle at ${locLabel(loc)}.` : ''}`}</p>
-        <div id="prod-body">${body()}</div>`,
+        ${editing() ? html`<p class="muted small">Tap a product to change its name, size, prices or aisle. Deleting it also takes it off your lists.</p>` : ''}
+        <div id="prod-body">${body()}</div>
+        <div id="prod-foot">${foot()}</div>
+        <div class="undo-bar" hidden><span></span><button type="button" class="mini" data-undo>Undo</button></div>`,
       afterRender: (form) => {
-        const redraw = () => { form.querySelector('#prod-body').innerHTML = body().s; };
+        const redraw = () => {
+          form.querySelector('#prod-body').innerHTML = body().s;
+          form.querySelector('#prod-foot').innerHTML = html`${foot()}`.s;
+        };
+        let undo = null;
+        const undoBar = form.querySelector('.undo-bar');
         form.querySelector('#prod-q').oninput = (ev) => { state.productQuery = ev.target.value; redraw(); };
         form.onclick = async (ev) => {
           if (ev.target.closest('#prod-edit')) { state.productEdit = !state.productEdit; productList(); return; }
-          const b = ev.target.closest('[data-prod]');
-          if (!b) return;
-          const p = shopProduct(Number(b.dataset.prod));
-          if (editing()) { shopProductForm(p, { back: productList }); return; }
+          if (ev.target.closest('[data-refresh-all]')) { updatePrices({ all: true }); return; }
+          if (ev.target.closest('[data-undo]') && undo) { undo(); return; }
+          const open = ev.target.closest('[data-open]');
+          if (open) { shopProductForm(shopProduct(Number(open.dataset.open)), { back: productList }); return; }
+          const del = ev.target.closest('[data-del]');
+          if (del) {
+            const p = shopProduct(Number(del.dataset.del));
+            if (!p) return;
+            // Gone from here now; deleted for real once Undo has had its chance.
+            forgetting.set(p.id, setTimeout(async () => {
+              forgetting.delete(p.id);
+              try { await api('DELETE', `/shop/products/${p.id}`); } catch (err) { toast(err.message); }
+              await loadShop(state.shop.list);
+              render();
+              if (form.isConnected && $modal.open) redraw();
+            }, 5000));
+            undo = () => { clearTimeout(forgetting.get(p.id)); forgetting.delete(p.id); undo = null; undoBar.hidden = true; redraw(); };
+            undoBar.querySelector('span').textContent = `${p.name} deleted`;
+            undoBar.hidden = false;
+            redraw();
+            return;
+          }
+          const add = ev.target.closest('[data-add]');
+          if (!add) return;
           try {
-            await api('POST', '/shop/items', { list: state.shop.list, product_id: p.id });
+            await api('POST', '/shop/items', { list: state.shop.list, product_id: Number(add.dataset.add) });
             await loadShop(state.shop.list);
             redraw();
             render();
@@ -4726,65 +4816,104 @@ sudo docker compose up -d --build</pre>`;
     });
   }
 
-  // Checking prices at one store: what has no price there or an old one comes first (what's on
-  // the list before the rest), each with Look up. Typing a price saves it as checked today, and
-  // Still right keeps the price and marks it checked.
+  // What's on the list with a cheaper similar product somewhere (a hint, not counted in totals).
+  function similarList() {
+    const loc = shopLocation();
+    const store = loc ? loc.store_id : null;
+    const list = state.shop.items.filter((it) => !it.done_at).map((it) => shopProduct(it.product_id)).filter((p) => p && p.similar);
+    openForm({
+      title: 'Cheaper similar',
+      body: html`<p class="muted small">Similar products that cost less for the amount, found by Automatic price search. They're only a hint: best buys and totals don't count them.</p>
+        <ul class="list upd-list">${list.map((p) => {
+          const here = itemCost(p, store) ?? bestPrice(p, store)?.cents;
+          return html`<li><div class="grow"><div class="title">${productLabel(p)}${here != null ? html` <span class="muted small">${money(here)}</span>` : ''}</div>
+            <div class="small">${storeDot(p.similar.store_id)}${storeName(p.similar.store_id)}: ${p.similar.name}${p.similar.size ? ` ${p.similar.size}` : ''} <b>${money(p.similar.price_cents)}</b>
+              <a class="lookup" href="${p.similar.url}" target="_blank" rel="noopener noreferrer">View ↗</a></div></div>
+            <button type="button" class="mini" data-open="${p.id}">Open</button></li>`;
+        })}</ul>${list.length ? '' : html`<p class="empty">Nothing on the list has a cheaper similar product.</p>`}`,
+      afterRender: (form) => {
+        form.onclick = (ev) => {
+          const o = ev.target.closest('[data-open]');
+          if (o) shopProductForm(shopProduct(Number(o.dataset.open)), { back: similarList });
+        };
+      },
+    });
+  }
+
+  // Checking prices: every saved product with a box for its price at each store (what's on the
+  // list first), and Auto to search the stores' websites for it. Typing a price saves it as
+  // checked today; a price older than four weeks is marked.
   function priceCheck() {
     const stores = state.shop.stores;
     if (!stores.length) return;
-    const store = stores.find((s) => s.id === state.checkStore) || stores.find((s) => s.id === shopLocation()?.store_id) || stores[0];
-    state.checkStore = store.id;
+    const auto = autoStores();
     const onList = new Set(state.shop.items.filter((it) => !it.done_at).map((it) => it.product_id));
-    const due = (p) => p.prices[store.id] == null || priceOld(p, store.id);
-    const all = [...state.shop.products].sort((a, b) => Number(due(b)) - Number(due(a))
-      || Number(onList.has(b.id)) - Number(onList.has(a.id))
-      || (daysSince(b.checked?.[store.id]) ?? 1e9) - (daysSince(a.checked?.[store.id]) ?? 1e9) || a.name.localeCompare(b.name));
-    const dueCount = all.filter(due).length;
-    const list = state.checkAll ? all : all.filter(due);
-    const same = new Set();
+    const due = (p) => stores.some((s) => p.prices[s.id] == null || priceOld(p, s.id));
+    const all = [...state.shop.products].sort((a, b) => Number(onList.has(b.id)) - Number(onList.has(a.id)) || a.name.localeCompare(b.name));
+    const shown = () => {
+      const q = (state.checkQuery || '').trim().toLowerCase();
+      return all.filter((p) => (!state.checkDue || due(p)) && (!q || productLabel(p).toLowerCase().includes(q)));
+    };
+    const coles = stores.find((s) => s.checker === 'coles');
+    const cols = `minmax(0, 1fr) repeat(${stores.length}, 86px)${auto.length ? ' 64px' : ''}`;
+    const rows = () => shown().map((p) => html`<li class="cp-row" data-row="${p.id}">
+        <div class="cp-name"><span class="sp-name">${p.name}</span><span class="sp-meta">${sizeLabel(p)}${onList.has(p.id) ? html`${sizeLabel(p) ? ' · ' : ''}<span class="check-on">on the list</span>` : ''}</span></div>
+        ${stores.map((s) => html`<label class="cp-price"><span class="cp-store">${storeDot(s.id)}${s.name}</span>
+          <input name="cp-${p.id}-${s.id}" inputmode="decimal" placeholder="$" value="${moneyInput(p.prices[s.id])}" class="${priceOld(p, s.id) ? 'old' : ''}"
+            title="${p.prices[s.id] != null ? `${checkedText(p.checked?.[s.id])}${priceIsAuto(p, s.id) ? ' · automatic' : ''}` : 'No price yet'}" aria-label="${productLabel(p)} at ${s.name}${PER[p.price_per] ? ` ${pricePerText(p)}` : ''}"></label>`)}
+        ${auto.length ? html`<button type="button" class="mini" data-auto="${p.id}" title="Automatic price search">Auto</button>` : ''}</li>`);
     openForm({
       title: 'Check prices',
-      body: html`<div class="check-stores" role="radiogroup" aria-label="Store">${stores.map((s) => html`<button type="button" role="radio" class="spot-btn ${s.id === store.id ? 'on' : ''}"
-          aria-checked="${s.id === store.id ? 'true' : 'false'}" data-check-store="${s.id}">${storeDot(s.id)}${s.name}</button>`)}</div>
-        <p class="muted small">${dueCount ? `${dueCount} ${dueCount === 1 ? 'product has' : 'products have'} no price at ${store.name} or one older than four weeks.` : `Every price at ${store.name} has been checked in the last four weeks.`}
-          ${store.search_url ? '' : html` Add a search link to ${store.name} (Edit in Stores) to look products up.`}</p>
-        ${store.checker === 'coles' ? html`<p class="muted small">Or let the <button type="button" class="linkish small" data-action="shop-helper">Coles button</button> in your browser fill these in.</p>` : ''}
-        <ul class="list check-list">${list.map((p) => html`<li>
-          <div class="grow"><div class="title">${p.name}${sizeLabel(p) ? html` <span class="shop-size">${sizeLabel(p)}</span>` : ''}${onList.has(p.id) ? html` <span class="check-on">on the list</span>` : ''}</div>
-            <div class="price-meta">${p.prices[store.id] != null ? html`<span class="price-age ${priceOld(p, store.id) ? 'old' : ''}" data-age="${p.id}">${checkedText(p.checked?.[store.id])}</span>
-              ${priceOld(p, store.id) ? html`<button type="button" class="linkish small" data-same="${p.id}">Still right</button>` : ''}` : html`<span class="price-age old">No price</span>`}
-              ${lookupLink(store, p.name, sizeLabel(p))}</div></div>
-          <input class="check-price" name="cp-${p.id}" inputmode="decimal" placeholder="$" value="${moneyInput(p.prices[store.id])}" aria-label="${productLabel(p)} at ${store.name}">
-          ${PER[p.price_per] ? html`<span class="muted small">${pricePerText(p)}</span>` : ''}</li>`)}</ul>
-        ${list.length ? '' : html`<p class="empty">Nothing to check.</p>`}
-        ${dueCount < all.length ? html`<button type="button" class="linkish small" data-check-all>${state.checkAll ? 'Show only what needs checking' : `Show all ${all.length} products`}</button>` : ''}`,
+      cls: 'wide-pop',
+      body: html`<div class="prod-tools sp-tools">
+          <label for="cp-q" class="sr-only">Search</label>
+          <input id="cp-q" type="search" placeholder="Search" value="${state.checkQuery || ''}" autocomplete="off">
+          <button type="button" class="mini ${state.checkDue ? 'primary' : ''}" data-check-due aria-pressed="${state.checkDue ? 'true' : 'false'}">Needs checking</button>
+        </div>
+        <p class="muted small">Type a price to save it as checked today. Orange ones are older than four weeks.${auto.length ? ' Auto searches the stores\' websites for that product.' : ''}
+          ${coles ? html` Or let the <button type="button" class="linkish small" data-action="shop-helper">Coles button</button> fill in Coles.` : ''}</p>
+        <div class="cp-head" style="grid-template-columns:${cols}" aria-hidden="true"><span>Product</span>${stores.map((s) => html`<span>${s.name}</span>`)}${auto.length ? html`<span></span>` : ''}</div>
+        <ul class="cp-list" style="--cp-cols:${cols}">${rows()}</ul>
+        <p class="empty" id="cp-none" ${raw(shown().length ? 'hidden' : '')}>Nothing to check.</p>`,
       afterRender: (form) => {
-        form.onclick = (ev) => {
-          const pick = ev.target.closest('[data-check-store]');
-          if (pick) { state.checkStore = Number(pick.dataset.checkStore); priceCheck(); return; }
-          if (ev.target.closest('[data-check-all]')) { state.checkAll = !state.checkAll; priceCheck(); return; }
-          const b = ev.target.closest('[data-same]');
-          if (b) {
-            same.add(Number(b.dataset.same));
-            const age = form.querySelector(`[data-age="${b.dataset.same}"]`);
-            if (age) { age.textContent = 'Checked today'; age.classList.remove('old'); }
-            b.remove();
+        const list = form.querySelector('.cp-list');
+        const redraw = () => {
+          list.innerHTML = rows().map((r) => r.s).join('');
+          form.querySelector('#cp-none').hidden = list.children.length > 0;
+        };
+        form.querySelector('#cp-q').oninput = (ev) => { state.checkQuery = ev.target.value; redraw(); };
+        form.onclick = async (ev) => {
+          if (ev.target.closest('[data-check-due]')) { await saveTyped(form); state.checkDue = !state.checkDue; priceCheck(); return; }
+          const a = ev.target.closest('[data-auto]');
+          if (a) {
+            try { await saveTyped(form); } catch (err) { form.querySelector('#form-error').textContent = err.message; return; }
+            const p = shopProduct(Number(a.dataset.auto));
+            if (p) findPrices(p, priceCheck);
           }
         };
       },
       onSave: async (form) => {
-        let saved = 0;
-        for (const p of list) {
-          const cents = moneyVal(form, `cp-${p.id}`, `The price of ${p.name}`);
-          const changed = cents !== (p.prices[store.id] ?? null);
-          if (!changed && !same.has(p.id)) continue;
-          await api('PATCH', `/shop/products/${p.id}`, { prices: { [store.id]: cents }, checked: same.has(p.id) ? [store.id] : [] });
-          saved += 1;
-        }
-        await loadShop(state.shop.list);
-        if (saved) toast(`Saved ${saved} ${saved === 1 ? 'price' : 'prices'} at ${store.name}`);
+        const saved = await saveTyped(form);
+        if (saved) toast(`Saved ${saved} ${saved === 1 ? 'price' : 'prices'}`);
       },
     });
+    // Saves the prices typed so far, so nothing's lost going to Auto. Returns how many changed.
+    async function saveTyped(form) {
+      let saved = 0;
+      for (const p of all) {
+        const prices = {};
+        for (const s of stores) {
+          if (!form.elements[`cp-${p.id}-${s.id}`]) continue;
+          const cents = moneyVal(form, `cp-${p.id}-${s.id}`, `The ${s.name} price of ${p.name}`);
+          if (cents !== (p.prices[s.id] ?? null)) prices[s.id] = cents;
+        }
+        if (!Object.keys(prices).length) continue;
+        await api('PATCH', `/shop/products/${p.id}`, { prices, checked: [] });
+        saved += Object.keys(prices).length;
+      }
+      if (saved) await loadShop(state.shop.list);
+      return saved;
+    }
   }
 
   // ---------- Automatic prices (the price-checker) ----------
@@ -5028,7 +5157,8 @@ sudo docker compose up -d --build</pre>`;
 
   // Updating the list's out-of-date prices: each store's progress, then what changed, what
   // couldn't be found, and what isn't matched yet.
-  function updatePrices() {
+  function updatePrices({ all = false } = {}) {
+    const back = all ? productList : updateAgain;
     const money2 = (c) => (c == null ? '—' : moneyFmt.format(c / 100));
     const stores = autoStores();
     const name = (id) => { const p = shopProduct(id); return p ? productLabel(p) : 'A product'; };
@@ -5040,7 +5170,7 @@ sudo docker compose up -d --build</pre>`;
       const unmatched = new Map();
       for (const u of j.unmatched || []) unmatched.set(u.product_id, [...(unmatched.get(u.product_id) || []), u.store_id]);
       box.innerHTML = html`
-        ${j.id ? html`<div class="auto-stores">${stores.filter((s) => j.stores[s.id]).map((s) => autoProgress(j, s))}</div>` : html`<p class="muted">Every matched price on the list is up to date.</p>`}
+        ${j.id ? html`<div class="auto-stores">${stores.filter((s) => j.stores[s.id]).map((s) => autoProgress(j, s))}</div>` : html`<p class="muted">${all ? 'No saved product has an automatic price yet.' : 'Every matched price on the list is up to date.'}</p>`}
         ${finished && j.changes ? html`<h3 class="form-section">${j.changes.length ? `${j.changes.length} ${j.changes.length === 1 ? 'price' : 'prices'} changed` : 'No prices changed'}</h3>
           ${j.changes.length ? html`<ul class="list upd-list">${j.changes.map((c) => html`<li><div class="grow"><div class="title">${name(c.product_id)}</div>
             <div class="muted small">${storeDot(c.store_id)}${storeName(c.store_id)}${c.special ? html` · <span class="good">Special</span>` : ''}</div></div>
@@ -5058,13 +5188,14 @@ sudo docker compose up -d --build</pre>`;
     };
     openForm({
       title: 'Update prices',
-      body: html`<p class="muted small">Gets this week's prices from the stores' websites for what's on the list. One check runs at a time, a few seconds per product.</p>
+      body: html`<p class="muted small">Gets this week's prices from the stores' websites for ${all ? 'every saved product with an automatic price' : 'what\'s on the list'}. One check runs at a time, a few seconds per product.</p>
         <div id="upd-body"><div class="auto-store"><span class="auto-spin" aria-hidden="true"></span>Starting…</div></div>`,
-      lead: html`<button type="button" class="danger" data-upd-stop>Stop</button>`,
+      lead: html`${all ? html`<button type="button" data-upd-back>Back</button>` : ''}<button type="button" class="danger" data-upd-stop>Stop</button>`,
       afterRender: async (form) => {
         let job = null;
         form.onclick = async (ev) => {
           if (solveClick(form, ev)) return;
+          if (ev.target.closest('[data-upd-back]')) { productList(); return; }
           if (ev.target.closest('[data-upd-stop]') && job && job.id) {
             try { await api('POST', `/shop/checker/jobs/${job.id}/cancel`); } catch { /* finished */ }
             return;
@@ -5072,11 +5203,11 @@ sudo docker compose up -d --build</pre>`;
           const f = ev.target.closest('[data-find-for]');
           if (f) {
             const p = shopProduct(Number(f.dataset.findFor));
-            if (p) findPrices(p, updateAgain, { only: f.dataset.findStore ? Number(f.dataset.findStore) : null });
+            if (p) findPrices(p, back, { only: f.dataset.findStore ? Number(f.dataset.findStore) : null });
           }
         };
         try {
-          job = await api('POST', '/shop/checker/update', { list: state.shop.list });
+          job = await api('POST', '/shop/checker/update', all ? { all: true } : { list: state.shop.list });
           if (job.id) followJob(job, (j) => { job = j; draw(j); }, form); else draw(job);
         } catch (err) { form.querySelector('#form-error').textContent = err.message; }
       },
@@ -5279,7 +5410,8 @@ sudo docker compose up -d --build</pre>`;
       if (loc && p) spotPicker(p, loc);
     },
     'shop-products': () => { state.productQuery = ''; state.productEdit = false; productList(); },
-    'shop-check': () => { state.checkAll = false; priceCheck(); },
+    'shop-check': () => { state.checkQuery = ''; priceCheck(); },
+    'shop-similar': () => similarList(),
     'shop-update': () => updatePrices(),
     'shop-helper': () => helperPopup(),
     'shop-change': () => shopChange(),
@@ -5384,9 +5516,10 @@ sudo docker compose up -d --build</pre>`;
     const q = input.value.trim().toLowerCase();
     const exact = options.some((o) => o.toLowerCase() === q);
     const matches = showAll || exact || !q ? options : options.filter((o) => o.toLowerCase().includes(q));
-    const items = matches.map((o) => ({ value: o, label: o }));
+    const meta = JSON.parse(input.dataset.comboMeta || '{}');
+    const items = matches.map((o) => ({ value: o, label: o, meta: meta[o] }));
     if (q && !exact) items.push({ value: input.value.trim(), label: `Add "${input.value.trim()}"`, add: true });
-    list.innerHTML = html`${items.map((it) => html`<li role="option" data-value="${it.value}" class="${it.add ? 'add' : ''} ${it.value.toLowerCase() === q ? 'active' : ''}">${it.label}</li>`)}`.s;
+    list.innerHTML = html`${items.map((it) => html`<li role="option" data-value="${it.value}" class="${it.add ? 'add' : ''} ${it.value.toLowerCase() === q ? 'active' : ''}">${it.meta ? html`<span>${it.label}</span><span class="combo-meta">${it.meta}</span>` : it.label}</li>`)}`.s;
     list.hidden = !items.length;
     input.setAttribute('aria-expanded', String(!list.hidden));
   }
