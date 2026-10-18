@@ -11,6 +11,9 @@ const { CheckerError } = require('./checker');
 
 const MAX_AISLE = 20;
 const UNITS = ['g', 'kg', 'mL', 'L', 'each', 'pack'];
+// How a product is bought: by the pack (or each), by weight (priced per kg, with an amount on the
+// list), or by volume (packs again, compared per L).
+const SOLD_BY = ['pack', 'weight', 'volume'];
 // A price can be for each one, or by weight or volume, worked out from the size: $10 per kg for a
 // 500 g pack is $5. [what it's measured in, how many g or mL the price is for]
 const PRICE_PER = { each: null, kg: ['weight', 1000], '100g': ['weight', 100], L: ['volume', 1000], '100mL': ['volume', 100] };
@@ -23,6 +26,8 @@ const DEFAULT_SECTIONS = [['Produce', 0.1], ['Bakery', 0.2], ['Deli', 0.3], ['Me
 const LIMITS = { stores: 20, locations: 50, sections: 60, products: 5000, items: 500 };
 
 class BadRequest extends Error {}
+
+const ITEM_COLS = 'id, product_id, qty, grams, note, swap_store_id, swap_kind, done_at, done_by, done_store_id';
 
 const text = (v, label) => {
   const s = typeof v === 'string' ? v.trim().replace(/\s+/g, ' ') : '';
@@ -102,6 +107,47 @@ function measureOf(text) {
 }
 const WORDS_SKIPPED = new Set(['the', 'and', 'with', 'for', 'pack', 'each']);
 const wordsOf = (s) => new Set(String(s || '').toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 2 && !WORDS_SKIPPED.has(w)));
+// A store's name for something with its size taken out, so the same product in another size can be
+// told apart from another flavour: "Oats Traditional 750g" and "Oats Traditional 1kg" match,
+// "Oats Honey 750g" doesn't.
+const SIZE_WORDS = /\b\d+(?:\.\d+)?\s*(?:x\s*\d+(?:\.\d+)?\s*)?(?:kg|g|ml|l|pk|pack|each)\b/gi;
+const bareName = (s) => String(s || '').toLowerCase().replace(SIZE_WORDS, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
+
+// From a store's search, besides the product it's matched to: the same product's other size (a
+// pack or bottle bigger or smaller, the cheapest for the amount) and the cheapest close match (a
+// word of the name in common, from half to twice the size). Both are compared per g or mL, so a
+// 1.94 L bottle and a 2 L one can be. Not for things bought by weight.
+function optionsAt(p, list, match) {
+  const out = {};
+  if (!Array.isArray(list) || p.sold_by === 'weight') return out;
+  const ok = (r) => r && typeof r.url === 'string' && /^https:\/\//.test(r.url) && typeof r.name === 'string' && r.available !== false
+    && Number.isInteger(r.price_cents) && r.price_cents > 0 && r.price_cents <= 100000;
+  const own = p.size && MEASURE[p.unit] ? measureOf(`${p.size}${p.unit}`) : null;
+  const matched = match && match.url ? match : null;
+  const ref = (matched && measureOf(matched.size)) || own;
+  if (!ref) return out;
+  const sizeOfR = (r) => measureOf(r.size) || measureOf(r.name);
+  if (matched) {
+    const bare = bareName(matched.name);
+    for (const r of list) {
+      if (!ok(r) || r.url === matched.url || bareName(r.name) !== bare) continue;
+      const m = sizeOfR(r);
+      if (!m || m[0] !== ref[0] || Math.abs(m[1] - ref[1]) <= ref[1] * 0.02) continue;
+      const cost = r.price_cents / m[1];
+      if (!out.size || cost < out.size.cost) out.size = { ...r, cost };
+    }
+  }
+  const words = wordsOf(p.name);
+  for (const r of list) {
+    if (!ok(r) || (matched && r.url === matched.url) || (out.size && r.url === out.size.url)) continue;
+    const m = sizeOfR(r);
+    if (!m || m[0] !== ref[0] || m[1] < ref[1] / 2 || m[1] > ref[1] * 2) continue;
+    if (![...wordsOf(r.name)].some((w) => words.has(w))) continue;
+    const cost = r.price_cents / m[1];
+    if (!out.similar || cost < out.similar.cost) out.similar = { ...r, cost };
+  }
+  return out;
+}
 
 // Pricing by weight or volume needs a size it can be worked out from.
 function pricePer(per, size, unit) {
@@ -165,18 +211,52 @@ function createShop(db, { checker = null } = {}) {
     const prices = all('SELECT * FROM shop_prices');
     const spots = all('SELECT * FROM shop_spots');
     const matches = all('SELECT * FROM shop_matches');
-    const similar = new Map(all('SELECT * FROM shop_similar').map((x) => [x.product_id, x]));
-    return all('SELECT * FROM shop_products ORDER BY name COLLATE NOCASE, size').map((p) => ({
-      ...p,
-      prices: Object.fromEntries(prices.filter((x) => x.product_id === p.id).map((x) => [x.store_id, x.price_cents])),
-      checked: Object.fromEntries(prices.filter((x) => x.product_id === p.id).map((x) => [x.store_id, x.checked_at])),
-      was: Object.fromEntries(prices.filter((x) => x.product_id === p.id && x.was_cents).map((x) => [x.store_id, x.was_cents])),
-      matches: Object.fromEntries(matches.filter((x) => x.product_id === p.id)
-        .map((x) => [x.store_id, { url: x.url, name: x.name, size: x.size, missing_at: x.missing_at }])),
-      similar: similar.get(p.id) || null,
-      spots: Object.fromEntries(spots.filter((x) => x.product_id === p.id)
-        .map((x) => [x.location_id, { aisle: x.aisle, section_id: x.section_id, missing: Boolean(x.missing) }])),
-    }));
+    const options = all('SELECT * FROM shop_options');
+    return all('SELECT * FROM shop_products ORDER BY name COLLATE NOCASE, size').map((p) => {
+      const mine = prices.filter((x) => x.product_id === p.id);
+      const opts = {};
+      for (const o of options.filter((x) => x.product_id === p.id)) {
+        (opts[o.store_id] ||= {})[o.kind] = { name: o.name, size: o.size, url: o.url, price_cents: o.price_cents, was_cents: o.was_cents, seen_at: o.seen_at };
+      }
+      const view = {
+        ...p,
+        setup: Boolean(p.setup),
+        prices: Object.fromEntries(mine.map((x) => [x.store_id, x.price_cents])),
+        checked: Object.fromEntries(mine.map((x) => [x.store_id, x.checked_at])),
+        was: Object.fromEntries(mine.filter((x) => x.was_cents).map((x) => [x.store_id, x.was_cents])),
+        matches: Object.fromEntries(matches.filter((x) => x.product_id === p.id)
+          .map((x) => [x.store_id, { url: x.url, name: x.name, size: x.size, missing_at: x.missing_at }])),
+        options: opts,
+        spots: Object.fromEntries(spots.filter((x) => x.product_id === p.id)
+          .map((x) => [x.location_id, { aisle: x.aisle, section_id: x.section_id, missing: Boolean(x.missing) }])),
+      };
+      view.similar = cheaperSimilar(view);
+      return view;
+    });
+  }
+
+  // The close match that's cheapest for the amount, when it's at least 5% cheaper than the best
+  // matched price (by its price per g, mL or each): only ever a hint.
+  function cheaperSimilar(p) {
+    const own = p.size && MEASURE[p.unit] ? measureOf(`${p.size}${p.unit}`) : null;
+    let best = null;
+    for (const [sid, m] of Object.entries(p.matches)) {
+      const cents = p.prices[sid];
+      const size = m.url && cents != null ? measureOf(m.size) || own : null;
+      if (size && (!best || cents / size[1] < best[1])) best = [size[0], cents / size[1]];
+    }
+    if (!best) return null;
+    let found = null;
+    for (const [sid, o] of Object.entries(p.options)) {
+      const s = o.similar;
+      const size = s && measureOf(s.size || s.name);
+      if (!size || size[0] !== best[0]) continue;
+      const cost = s.price_cents / size[1];
+      if (cost < best[1] * 0.95 && (!found || cost < found.cost)) found = { ...s, store_id: Number(sid), cost };
+    }
+    if (!found) return null;
+    delete found.cost;
+    return found;
   }
 
   function view(req) {
@@ -190,13 +270,16 @@ function createShop(db, { checker = null } = {}) {
       max_aisle: MAX_AISLE,
       units: UNITS,
       price_per: Object.keys(PRICE_PER),
+      sold_by: SOLD_BY,
+      // When the stores last changed their prices: a price checked since then is this week's.
+      price_day: priceDay(),
       // Automatic prices, when there's a price-checker: what counts as up to date.
       checker: checker && checker.on ? { stores: CHECKER_STORES, since: priceDay() } : null,
       stores: all('SELECT * FROM shop_stores ORDER BY sort_order, id'),
       locations: all('SELECT * FROM shop_locations ORDER BY name COLLATE NOCASE'),
       sections: all('SELECT * FROM shop_sections ORDER BY location_id, position, name COLLATE NOCASE'),
       products: productsView(),
-      items: all(`SELECT id, product_id, qty, done_at, done_by, done_store_id FROM shop_items WHERE ${where} ORDER BY id`, ...args)
+      items: all(`SELECT ${ITEM_COLS} FROM shop_items WHERE ${where} ORDER BY id`, ...args)
         .map((it) => {
           const who = it.done_at ? logins.get(it.done_by) : null;
           return { ...it, done_by_name: who ? who.name : null, done_by_colour: who ? who.colour : null };
@@ -314,15 +397,19 @@ function createShop(db, { checker = null } = {}) {
     const plain = found.find((p) => p.size === null);
     if (plain) return plain.id;
     if (count('shop_products') >= LIMITS.products) throw new BadRequest(`That's more products than the list can keep (${LIMITS.products}).`);
-    return Number(db.prepare('INSERT INTO shop_products (name) VALUES (?)').run(name).lastInsertRowid);
+    // Typed in new: bought by the pack until it's set up.
+    return Number(db.prepare('INSERT INTO shop_products (name, setup) VALUES (?, 1)').run(name).lastInsertRowid);
   };
   const productView = (id) => productsView().find((p) => p.id === id);
   const sameProduct = (name, size, unit, id) => one(`SELECT id FROM shop_products WHERE name = ? AND coalesce(size, 0) = ? AND coalesce(unit, '') = ? AND id <> ?`,
     name, size ?? 0, unit ?? '', id);
   const sizeText = (size, unit) => (size ? ` (${size} ${unit})` : unit ? ` (${unit})` : '');
 
-  // { name?, size?, unit?, price_per?, prices?: { [store id]: cents | null }, checked?: [store ids] }.
-  // A changed price counts as checked today, and so does one in checked: looked at and still right.
+  // { name?, size?, unit?, price_per?, sold_by?, step_g?, each_g?, prices?: { [store id]: cents | null },
+  // checked?: [store ids], converted?: [store ids] }. A changed price counts as checked today, and
+  // so does one in checked: looked at and still right. A converted one is the same price said
+  // another way (per kg instead of per pack), so it keeps when it was checked. Saying how it's sold sets the product up. Something bought by weight
+  // is priced per kg (or 100 g), and its size is the usual amount.
   router.patch('/products/:id', (req, res) => {
     const id = Number(req.params.id);
     const before = one('SELECT * FROM shop_products WHERE id = ?', id);
@@ -331,6 +418,12 @@ function createShop(db, { checker = null } = {}) {
     const name = 'name' in b ? text(b.name, 'The name') : before.name;
     const { size, unit } = 'size' in b || 'unit' in b ? sizeOf({ size: b.size, unit: b.unit }) : before;
     const per = pricePer('price_per' in b ? b.price_per : before.price_per, size, unit);
+    const soldBy = 'sold_by' in b ? b.sold_by : before.sold_by;
+    if (!SOLD_BY.includes(soldBy)) throw new BadRequest(`It should be sold by ${SOLD_BY.join(', ')}.`);
+    if (soldBy === 'weight' && PRICE_PER[per]?.[0] !== 'weight') throw new BadRequest('Something bought by weight is priced per kg. Give its usual amount in g or kg.');
+    const grams = (v, label) => (v === null || v === '' ? null : int(v, 1, 100000, label));
+    const step = 'step_g' in b ? grams(b.step_g, 'The step') : before.step_g;
+    const each = 'each_g' in b ? grams(b.each_g, 'What one weighs') : before.each_g;
     if (sameProduct(name, size, unit, id)) throw new BadRequest(`"${name}${sizeText(size, unit)}" is already in your product list.`);
     const prices = b.prices && typeof b.prices === 'object' ? Object.entries(b.prices) : [];
     const set = prices.map(([s, cents]) => {
@@ -338,10 +431,27 @@ function createShop(db, { checker = null } = {}) {
       return [Number(s), cents === null || cents === '' ? null : int(cents, 0, 100000, 'The price')];
     });
     const checked = new Set(Array.isArray(b.checked) ? b.checked.map(Number) : []);
+    const converted = new Set(Array.isArray(b.converted) ? b.converted.map(Number) : []);
     transaction(db, () => {
-      db.prepare('UPDATE shop_products SET name = ?, size = ?, unit = ?, price_per = ? WHERE id = ?').run(name, size, unit, per, id);
+      db.prepare('UPDATE shop_products SET name = ?, size = ?, unit = ?, price_per = ?, sold_by = ?, step_g = ?, each_g = ?, setup = ? WHERE id = ?')
+        .run(name, size, unit, per, soldBy, step, each, 'sold_by' in b ? 0 : before.setup, id);
+      // What's on a list now goes by weight (its usual amount, as many times as it was on), or by count.
+      if (soldBy !== before.sold_by && soldBy === 'weight') {
+        const usual = Math.round(size * GRAMS[unit]);
+        db.prepare('UPDATE shop_items SET grams = min(100000, qty * ?), qty = 1 WHERE product_id = ? AND grams IS NULL AND done_at IS NULL').run(usual, id);
+      } else if (soldBy !== before.sold_by) {
+        db.prepare('UPDATE shop_items SET grams = NULL WHERE product_id = ?').run(id);
+      }
       for (const [s, cents] of set) {
         if (cents === null) { db.prepare('DELETE FROM shop_prices WHERE product_id = ? AND store_id = ?').run(id, s); continue; }
+        if (converted.has(s) && cents > 0) {
+          const old = one('SELECT price_cents FROM shop_prices WHERE product_id = ? AND store_id = ?', id, s);
+          if (old) {
+            db.prepare('UPDATE shop_prices SET price_cents = ?, was_cents = CASE WHEN was_cents THEN round(was_cents * ? / ?) END WHERE product_id = ? AND store_id = ?')
+              .run(cents, cents, old.price_cents, id, s);
+            continue;
+          }
+        }
         db.prepare(`INSERT INTO shop_prices (product_id, store_id, price_cents, checked_at) VALUES (?, ?, ?, datetime('now'))
           ON CONFLICT (product_id, store_id) DO UPDATE SET price_cents = excluded.price_cents,
           was_cents = CASE WHEN price_cents <> excluded.price_cents THEN NULL ELSE was_cents END,
@@ -395,6 +505,8 @@ function createShop(db, { checker = null } = {}) {
     const who = ownerOf(req, listOf(req));
     const [where, args] = onList(who);
     const qty = b.qty === undefined ? 1 : int(b.qty, 1, 99, 'How many');
+    // Something bought by weight goes on in its usual amount (1 kg if it hasn't one).
+    const usual = (p) => (p.sold_by !== 'weight' ? null : p.size && GRAMS[p.unit] && MEASURE[p.unit] === 'weight' ? Math.round(p.size * GRAMS[p.unit]) : 1000);
     const result = transaction(db, () => {
       let productId;
       if (b.product_id !== undefined) {
@@ -404,35 +516,53 @@ function createShop(db, { checker = null } = {}) {
         productId = productNamed(text(b.name, 'The item'));
       }
       const existing = one(`SELECT * FROM shop_items WHERE product_id = ? AND ${where}`, productId, ...args);
+      const g = usual(one('SELECT * FROM shop_products WHERE id = ?', productId));
       if (existing && existing.done_at) {
-        db.prepare('UPDATE shop_items SET qty = ?, done_at = NULL, done_by = NULL, done_store_id = NULL WHERE id = ?').run(qty, existing.id);
+        db.prepare('UPDATE shop_items SET qty = ?, grams = ?, note = NULL, swap_store_id = NULL, swap_kind = NULL, done_at = NULL, done_by = NULL, done_store_id = NULL WHERE id = ?')
+          .run(qty, g === null ? null : g * qty, existing.id);
         return { id: existing.id, added: false };
       }
       if (existing) {
-        db.prepare('UPDATE shop_items SET qty = min(99, qty + ?) WHERE id = ?').run(qty, existing.id);
+        // Weighed: another usual amount; counted or packs: one more.
+        if (g !== null && existing.grams !== null) db.prepare('UPDATE shop_items SET grams = min(100000, grams + ?) WHERE id = ?').run(g * qty, existing.id);
+        else db.prepare('UPDATE shop_items SET qty = min(99, qty + ?) WHERE id = ?').run(qty, existing.id);
         return { id: existing.id, added: false };
       }
       if (count('shop_items', `WHERE ${where}`, ...args) >= LIMITS.items) throw new BadRequest(`That's more than one list can hold (${LIMITS.items}).`);
-      const { lastInsertRowid } = db.prepare('INSERT INTO shop_items (product_id, owner_id, qty) VALUES (?, ?, ?)').run(productId, who, qty);
+      const { lastInsertRowid } = db.prepare('INSERT INTO shop_items (product_id, owner_id, qty, grams) VALUES (?, ?, ?, ?)')
+        .run(productId, who, qty, g === null ? null : g * qty);
       return { id: Number(lastInsertRowid), added: true };
     });
-    res.status(result.added ? 201 : 200).json(one('SELECT id, product_id, qty, done_at FROM shop_items WHERE id = ?', result.id));
+    res.status(result.added ? 201 : 200).json(one(`SELECT ${ITEM_COLS} FROM shop_items WHERE id = ?`, result.id));
   });
 
-  // { qty } and/or { done: true | false, store_id }. Ticking off notes who did it, and at which store.
+  // { qty }, { grams } (null to count them instead), { note }, { swap_store_id, swap_kind } (the store
+  // whose other size, or close match, it's swapped to for this shop, or null) and/or { done: true | false, store_id }. Ticking off
+  // notes who did it, and at which store.
   router.patch('/items/:id', (req, res) => {
     const item = itemFor(req);
     if (!item) return res.status(404).json({ error: 'Not found.' });
     const b = body(req);
     const store = b.store_id && exists('shop_stores', b.store_id) ? Number(b.store_id) : null;
+    const note = 'note' in b ? (typeof b.note === 'string' ? b.note.trim().replace(/\s+/g, ' ') : '') : null;
+    if (note && note.length > 200) throw new BadRequest('The note is too long (200 characters at most).');
+    if ('swap_store_id' in b && b.swap_store_id !== null && !exists('shop_stores', b.swap_store_id)) throw new BadRequest('That store no longer exists.');
+    const swapKind = b.swap_kind === undefined ? 'size' : b.swap_kind;
+    if ('swap_store_id' in b && b.swap_store_id !== null && !['size', 'similar'].includes(swapKind)) throw new BadRequest('Swap to the other size or the close match.');
     transaction(db, () => {
       if ('qty' in b) db.prepare('UPDATE shop_items SET qty = ? WHERE id = ?').run(int(b.qty, 1, 99, 'How many'), item.id);
+      if ('grams' in b) db.prepare('UPDATE shop_items SET grams = ? WHERE id = ?').run(b.grams === null ? null : int(b.grams, 1, 100000, 'The weight'), item.id);
+      if ('note' in b) db.prepare('UPDATE shop_items SET note = ? WHERE id = ?').run(note || null, item.id);
+      if ('swap_store_id' in b) {
+        db.prepare('UPDATE shop_items SET swap_store_id = ?, swap_kind = ? WHERE id = ?')
+          .run(b.swap_store_id === null ? null : Number(b.swap_store_id), b.swap_store_id === null ? null : swapKind, item.id);
+      }
       if (b.done === true && !item.done_at) {
         db.prepare("UPDATE shop_items SET done_at = datetime('now'), done_by = ?, done_store_id = ? WHERE id = ?").run(req.login.id, store, item.id);
       }
       if (b.done === false) db.prepare('UPDATE shop_items SET done_at = NULL, done_by = NULL, done_store_id = NULL WHERE id = ?').run(item.id);
     });
-    res.json(one('SELECT id, product_id, qty, done_at, done_by, done_store_id FROM shop_items WHERE id = ?', item.id));
+    res.json(one(`SELECT ${ITEM_COLS} FROM shop_items WHERE id = ?`, item.id));
   });
 
   // Taken off the list without being bought. It stays in the product list.
@@ -528,14 +658,19 @@ function createShop(db, { checker = null } = {}) {
 
   // The products on a list whose matched prices are out of date: { list }. Products on the list not
   // matched at a store come back as unmatched, to find. { all: true } checks every saved product's
-  // matched prices now, however recently they were checked.
+  // matched prices now, however recently they were checked, and { product_ids } just those.
+  // Each is searched for again at each store (one search a product a store), which brings back its
+  // other size and close matches too.
   router.post('/checker/update', async (req, res) => {
     needChecker();
-    const every = body(req).all === true;
+    const b = body(req);
+    const some = Array.isArray(b.product_ids) ? b.product_ids.map(Number).filter((n) => Number.isInteger(n)).slice(0, LIMITS.products) : null;
+    const every = b.all === true || Boolean(some);
     const since = every ? null : priceDay();
     const stores = checkerStores();
     let products;
-    if (every) products = all('SELECT id FROM shop_products ORDER BY name').map((r) => r.id);
+    if (some) products = some.filter((id) => exists('shop_products', id));
+    else if (every) products = all('SELECT id FROM shop_products ORDER BY name').map((r) => r.id);
     else {
       const [where, args] = onList(ownerOf(req, listOf(req)));
       products = all(`SELECT DISTINCT product_id AS id FROM shop_items WHERE done_at IS NULL AND ${where}`, ...args).map((r) => r.id);
@@ -545,6 +680,7 @@ function createShop(db, { checker = null } = {}) {
     const toCheck = [];
     const unmatched = [];
     for (const pid of products) {
+      const p = one('SELECT name FROM shop_products WHERE id = ?', pid);
       for (const s of stores) {
         const m = one('SELECT * FROM shop_matches WHERE product_id = ? AND store_id = ?', pid, s.id);
         if (!m) { if (!every) unmatched.push({ product_id: pid, store_id: s.id }); continue; }
@@ -554,7 +690,7 @@ function createShop(db, { checker = null } = {}) {
         const key = `${pid}:${s.id}`;
         keys[s.id] = s.checker;
         items[key] = [pid, s.id];
-        toCheck.push({ key, store: s.checker, url: m.url, name: m.name, size: m.size });
+        toCheck.push({ key, store: s.checker, url: m.url, name: m.name, size: m.size, q: p.name, search: true });
       }
     }
     if (!toCheck.length) return res.json({ id: null, type: 'update', state: 'done', stores: {}, total: 0, changes: [], missing: [], unmatched });
@@ -585,6 +721,11 @@ function createShop(db, { checker = null } = {}) {
         const target = meta.items[r.key];
         if (!target) continue;
         const [pid, sid] = target;
+        const p = one('SELECT * FROM shop_products WHERE id = ?', pid);
+        if (Array.isArray(r.others)) {
+          const m = one('SELECT * FROM shop_matches WHERE product_id = ? AND store_id = ?', pid, sid);
+          saveOptions(p, sid, optionsAt(p, r.others, r.found ? { url: m && m.url, name: r.name, size: r.size } : m));
+        }
         if (!r.found) {
           if (!r.error) {
             db.prepare("UPDATE shop_matches SET missing_at = datetime('now') WHERE product_id = ? AND store_id = ?").run(pid, sid);
@@ -593,7 +734,8 @@ function createShop(db, { checker = null } = {}) {
           continue;
         }
         if (!(Number.isInteger(r.price_cents) && r.price_cents > 0 && r.price_cents <= 100000)) continue;
-        const { cents, was } = priceFor(one('SELECT * FROM shop_products WHERE id = ?', pid), r);
+        const { cents, was } = priceFor(p, r);
+        fillWeight(p, r);
         const before = one('SELECT price_cents FROM shop_prices WHERE product_id = ? AND store_id = ?', pid, sid);
         savePrice(pid, sid, cents, was);
         db.prepare('UPDATE shop_matches SET missing_at = NULL WHERE product_id = ? AND store_id = ?').run(pid, sid);
@@ -604,6 +746,28 @@ function createShop(db, { checker = null } = {}) {
     meta.missing = missing;
     rev += 1;
   }
+
+  // A store's other size and close match for a product, from its latest search.
+  const saveOptions = (p, sid, found) => {
+    db.prepare('DELETE FROM shop_options WHERE product_id = ? AND store_id = ?').run(p.id, sid);
+    for (const kind of ['size', 'similar']) {
+      const r = found[kind];
+      if (!r) continue;
+      const was = Number.isInteger(r.was_cents) && r.was_cents > r.price_cents && r.was_cents <= 100000 ? r.was_cents : null;
+      db.prepare(`INSERT INTO shop_options (product_id, store_id, kind, name, size, url, price_cents, was_cents, seen_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`)
+        .run(p.id, sid, kind, String(r.name).slice(0, 200), r.size ? String(r.size).slice(0, 40) : null, String(r.url).slice(0, 500), r.price_cents, was);
+    }
+  };
+  // What one weighs, for counting things bought by weight, from the store when it says (Woolworths
+  // does for loose fruit and veg) and nobody has said yet.
+  const fillWeight = (p, r) => {
+    const g = Number(r.each_grams);
+    if (!p.each_g && Number.isInteger(g) && g > 0 && g <= 100000) {
+      db.prepare('UPDATE shop_products SET each_g = ? WHERE id = ? AND each_g IS NULL').run(g, p.id);
+      p.each_g = g;
+    }
+  };
 
   const savePrice = (pid, sid, cents, was) => {
     const normal = Number.isInteger(was) && was > cents && was <= 100000 ? was : null;
@@ -653,8 +817,8 @@ function createShop(db, { checker = null } = {}) {
   });
 
   // The store listings picked for a product from a find: { job, picks: { [store id]: result's index,
-  // or null for none of them } }. Their prices are saved, and a cheaper similar product among all the
-  // results (by its price per g, mL or each) is kept as a hint.
+  // or null for none of them } }. Their prices are saved, and each store searched keeps the other
+  // size and closest cheaper match among its results (see optionsAt).
   router.put('/products/:id/matches', async (req, res) => {
     const id = Number(req.params.id);
     const p = one('SELECT * FROM shop_products WHERE id = ?', id);
@@ -682,48 +846,15 @@ function createShop(db, { checker = null } = {}) {
           .run(id, Number(sid), String(r.url).slice(0, 500), String(r.name).slice(0, 200), r.size ? String(r.size).slice(0, 40) : null);
         const price = priceFor(p, r);
         savePrice(id, Number(sid), price.cents, price.was);
+        fillWeight(p, r);
       }
-      const similar = cheaperSimilar(p, results, meta.stores);
-      if (similar) {
-        db.prepare(`INSERT INTO shop_similar (product_id, store_id, name, size, price_cents, url, seen_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-          ON CONFLICT (product_id) DO UPDATE SET store_id = excluded.store_id, name = excluded.name, size = excluded.size,
-          price_cents = excluded.price_cents, url = excluded.url, seen_at = excluded.seen_at`)
-          .run(id, similar.store_id, similar.name.slice(0, 200), similar.size ? String(similar.size).slice(0, 40) : null, similar.price_cents, String(similar.url).slice(0, 500));
-      } else if (meta.all) {
-        db.prepare('DELETE FROM shop_similar WHERE product_id = ?').run(id);
+      for (const [sid, key] of Object.entries(meta.stores)) {
+        if (!Array.isArray(results[key])) continue;
+        saveOptions(p, Number(sid), optionsAt(p, results[key], one('SELECT * FROM shop_matches WHERE product_id = ? AND store_id = ?', id, Number(sid))));
       }
     });
     res.json(productView(id));
   });
-
-  // The cheapest result, per g, mL or each, that's like the product (a word of its name in common,
-  // and a size from half to twice as big) and at least 5% cheaper than its best matched price.
-  function cheaperSimilar(p, results, storeKeys) {
-    const own = p.size && MEASURE[p.unit] ? measureOf(`${p.size}${p.unit}`) : null;
-    const matched = all(`SELECT m.url, m.size, x.price_cents FROM shop_matches m
-      JOIN shop_prices x ON x.product_id = m.product_id AND x.store_id = m.store_id WHERE m.product_id = ?`, p.id);
-    let best = null;
-    for (const m of matched) {
-      const size = measureOf(m.size) || own;
-      if (size && (!best || m.price_cents / size[1] < best[1])) best = [size[0], m.price_cents / size[1]];
-    }
-    if (!best) return null;
-    const words = wordsOf(p.name);
-    const ref = own && own[0] === best[0] ? own[1] : null;
-    let found = null;
-    for (const [sid, key] of Object.entries(storeKeys)) {
-      for (const r of results[key] || []) {
-        if (matched.some((m) => m.url === r.url) || r.available === false || !Number.isInteger(r.price_cents)) continue;
-        const size = measureOf(r.size);
-        if (!size || size[0] !== best[0]) continue;
-        if (ref && (size[1] < ref / 2 || size[1] > ref * 2)) continue;
-        if (![...wordsOf(r.name)].some((w) => words.has(w))) continue;
-        const cost = r.price_cents / size[1];
-        if (cost < best[1] * 0.95 && (!found || cost < found.cost)) found = { ...r, store_id: Number(sid), cost };
-      }
-    }
-    return found;
-  }
 
   // The key the browser helper (the Coles button) uses, made the first time it's asked for.
   // { new: true } makes a new one, and the old one stops working.
@@ -841,13 +972,13 @@ const SHOP_TABLES = {
   stores: ['shop_stores', ['id', 'name', 'sort_order', 'color', 'search_url', 'checker']],
   locations: ['shop_locations', ['id', 'store_id', 'name']],
   sections: ['shop_sections', ['id', 'location_id', 'name', 'position']],
-  products: ['shop_products', ['id', 'name', 'size', 'unit', 'price_per']],
+  products: ['shop_products', ['id', 'name', 'size', 'unit', 'price_per', 'sold_by', 'step_g', 'each_g', 'setup']],
   prices: ['shop_prices', ['product_id', 'store_id', 'price_cents', 'checked_at', 'was_cents']],
-  // Each product's own listing at a store, for automatic prices, and a cheaper similar one.
+  // Each product's own listing at a store, for automatic prices, and its other size and close match there.
   matches: ['shop_matches', ['product_id', 'store_id', 'url', 'name', 'size', 'missing_at']],
-  similar: ['shop_similar', ['product_id', 'store_id', 'name', 'size', 'price_cents', 'url', 'seen_at']],
+  options: ['shop_options', ['product_id', 'store_id', 'kind', 'name', 'size', 'url', 'price_cents', 'was_cents', 'seen_at']],
   spots: ['shop_spots', ['product_id', 'location_id', 'aisle', 'section_id', 'missing']],
-  items: ['shop_items', ['id', 'product_id', 'owner_id', 'qty', 'added_at', 'done_at', 'done_by', 'done_store_id']],
+  items: ['shop_items', ['id', 'product_id', 'owner_id', 'qty', 'grams', 'note', 'swap_store_id', 'swap_kind', 'added_at', 'done_at', 'done_by', 'done_store_id']],
 };
 
 function exportShop(db) {
@@ -859,6 +990,8 @@ function exportShop(db) {
 // shopping list refers to them. Returns how many products were restored, and how many rows were left out.
 function importShop(db, data) {
   if (!data || typeof data !== 'object' || !Array.isArray(data.stores)) return null;
+  // Backups from before 0.9.10 kept one cheaper similar product each.
+  if (!data.options && Array.isArray(data.similar)) data = { ...data, options: data.similar.map((x) => ({ ...x, kind: 'similar' })) };
   for (const [table] of Object.values(SHOP_TABLES).reverse()) db.exec(`DELETE FROM ${table}`);
   let skipped = 0;
   for (const [key, [table, cols]] of Object.entries(SHOP_TABLES)) {

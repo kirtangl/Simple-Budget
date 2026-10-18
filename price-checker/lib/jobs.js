@@ -101,13 +101,16 @@ function createJobs({
   }
 
   // A matched product's listing now: the store's own lookup when it has one, otherwise a search for
-  // its name, picking the same listing (by address, or else by name and size).
+  // its name, picking the same listing (by address, or else by name and size). With search, it's
+  // always a search, and the rest of the results come back too (as others), for its other sizes
+  // and close matches. { match, others }.
   async function refreshOne(job, key, page, item) {
     const store = stores[key];
-    if (store.lookup) return search(job, key, page, item.name, () => store.lookup(page, item));
+    if (store.lookup && !item.search) return { match: await search(job, key, page, item.name, () => store.lookup(page, item)), others: null };
     const found = (await search(job, key, page, item.q || item.name)) || [];
-    return found.find((r) => sameUrl(r.url, item.url))
+    const match = found.find((r) => sameUrl(r.url, item.url))
       || found.find((r) => sameText(r.name, item.name) && sameText(r.size, item.size)) || null;
+    return { match, others: item.search ? found : null };
   }
 
   async function runStore(job, key, tasks) {
@@ -128,8 +131,8 @@ function createJobs({
           if (job.type === 'search') {
             job.results[key] = (await search(job, key, page, task.q)) || [];
           } else {
-            const r = await refreshOne(job, key, page, task);
-            job.results.push(r ? { key: task.key, store: key, found: true, ...r } : { key: task.key, store: key, found: false });
+            const { match, others } = await refreshOne(job, key, page, task);
+            job.results.push({ key: task.key, store: key, found: Boolean(match), ...match, ...(others ? { others } : {}) });
           }
           errors = 0;
         } catch (err) {
@@ -193,7 +196,7 @@ function createJobs({
     if (browser.idle) browser.idle();
   }
 
-  // { type: 'search', q, stores: [keys] }, { type: 'refresh', items: [{ key, store, url, name, size, q }] }
+  // { type: 'search', q, stores: [keys] }, { type: 'refresh', items: [{ key, store, url, name, size, q, search }] }
   // or { type: 'warmup' }.
   function start(input) {
     const b = input && typeof input === 'object' ? input : {};
@@ -210,7 +213,7 @@ function createJobs({
       const items = (Array.isArray(b.items) ? b.items : []).filter((i) => i && known(i.store) && typeof i.name === 'string').slice(0, MAX_SEARCHES);
       for (const i of items) {
         if (!job.tasks[i.store]) { job.tasks[i.store] = []; job.order.push(i.store); }
-        job.tasks[i.store].push({ key: String(i.key ?? ''), url: String(i.url || ''), name: i.name, size: i.size || null, q: i.q || null });
+        job.tasks[i.store].push({ key: String(i.key ?? ''), url: String(i.url || ''), name: i.name, size: i.size || null, q: i.q || null, search: i.search === true });
       }
       job.results = [];
     } else if (b.type === 'warmup') {
