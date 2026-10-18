@@ -198,7 +198,7 @@
   // should throw an Error with a friendly message to keep the dialog open.
   // Every popup gets the red ✕ at the top (ones with their own heading add it there). lead is a
   // button for the left of the bottom row, like Back.
-  function openForm({ title, body, onSave, onDelete, saveLabel = 'Save', afterRender, noActions = false, cls = '', lead = null }) {
+  function openForm({ title, body, onSave, onDelete, saveLabel = 'Save', afterRender, noActions = false, cls = '', lead = null, focus = true }) {
     $modal.className = cls;
     $modalForm.onclick = null; // a popup's own click handler (afterRender) goes with it
     $modalForm.innerHTML = html`
@@ -216,7 +216,7 @@
     if (!$modal.open) $modal.showModal();
     watchScroll();
     const first = $modalForm.querySelector('input:not([type=checkbox]), select, textarea');
-    if (first && window.matchMedia('(min-width: 721px)').matches) first.focus();
+    if (focus && first && window.matchMedia('(min-width: 721px)').matches) first.focus();
   }
 
   // Popups that need a scrollbar get a thin line above their buttons, which stay at the bottom while the rest scrolls.
@@ -3181,6 +3181,48 @@
   }
   const noteInline = (t) => raw(html`${t}`.s.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>'));
 
+  // A release's "### Extra steps": what to do on the server besides Update now, as its words and
+  // the commands in its code block (run in the app's folder).
+  function extraSteps(text) {
+    const out = { words: [], commands: [] };
+    let inside = false; let code = false;
+    for (const line of String(text || '').split(/\r?\n/)) {
+      const head = /^#{1,6}\s+(.*)$/.exec(line);
+      if (head && !code) { inside = /^extra steps?$/i.test(head[1].trim()); continue; }
+      if (!inside) continue;
+      if (/^\s*```/.test(line)) { code = !code; continue; }
+      if (code) { if (line.trim()) out.commands.push(line.trim()); continue; }
+      if (line.trim()) out.words.push(line.replace(/^\s*[-*]\s+/, '').trim());
+    }
+    return out.words.length || out.commands.length ? out : null;
+  }
+  const versionAfter = (a, b) => {
+    const x = String(a).split(/[.-]/).map((n) => parseInt(n, 10) || 0);
+    const y = String(b).split(/[.-]/).map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+    return false;
+  };
+  // The extra steps of every release from (not including) one version up to another, oldest first.
+  const stepsBetween = (u, from, to) => (u.releases || [])
+    .filter((r) => versionAfter(r.version, from) && !versionAfter(r.version, to))
+    .map((r) => ({ version: r.version, steps: extraSteps(r.notes) })).filter((r) => r.steps).reverse();
+  // The commands to copy: into the app's folder first, when it's been saved.
+  const stepCommands = (u, list) => {
+    const lines = list.flatMap((r) => r.steps.commands);
+    if (!lines.length) return '';
+    return [u.server_folder ? `cd "${u.server_folder}"` : null, ...lines].filter(Boolean).join('\n');
+  };
+  function extraStepsCard(u, list, when) {
+    if (!list.length) return '';
+    const cmds = stepCommands(u, list);
+    return html`<div class="upd-extra">
+      <div class="upd-extra-head"><b>Extra steps ${when}</b>${cmds ? html`<button class="mini" data-action="copy-extra-steps" data-cmds="${cmds}">Copy commands</button>` : ''}</div>
+      ${list.map((r) => html`${list.length > 1 ? html`<div class="upd-extra-ver mono">v${r.version}</div>` : ''}${r.steps.words.map((w) => html`<p class="small">${noteInline(w)}</p>`)}`)}
+      ${cmds ? html`<pre class="upd-cmd">${cmds}</pre>
+        ${u.server_folder ? '' : html`<p class="small muted">Run these in the app's folder on the server. Save the folder under Preferences and it's included for you.</p>`}` : ''}
+    </div>`;
+  }
+
   // "Today, 7:42 pm", "Yesterday, …" or "Thu 1 Oct, …".
   function updWhen(iso) {
     const d = new Date(iso);
@@ -3264,6 +3306,7 @@
     } else if (u.available) {
       const behind = u.behind > 1 ? ` · ${u.behind} versions behind` : ' · 1 version behind';
       s = { mode: 'new', eyebrow: `Update available${behind}`, title: `Simple Budget v${l.version} is ready`, secondary: ['check-updates', 'Check again'] };
+      s.extra = extraStepsCard(u, stepsBetween(u, u.current, l.version), 'for this update');
       if (u.can_install && u.building) {
         s.title = `Simple Budget v${l.version} is on its way`;
         s.sub = "It's still being built on GitHub, which takes a few minutes after it's published. This page checks again by itself.";
@@ -3278,7 +3321,7 @@
         s.sub = "This copy is updated from the terminal. In its folder on the server, run the two commands below. Your data stays as it is.";
         s.primary = ['copy-update-cmd', 'Copy commands'];
         s.extra = html`<pre class="upd-cmd">git pull
-sudo docker compose up -d --build</pre>`;
+sudo docker compose up -d --build</pre>${s.extra}`;
       }
     } else if (u.waiting) {
       s = { mode: 'ok', eyebrow: 'New version · waiting a day', title: `Simple Budget v${u.waiting.version} is out`,
@@ -3288,6 +3331,8 @@ sudo docker compose up -d --build</pre>`;
       s = { mode: 'done', eyebrow: 'Updated', title: `Welcome to v${u.current}`,
         sub: u.just_updated.backup ? 'Everything went smoothly. Your backup is listed under Backups if you ever need it.' : 'Everything went smoothly.',
         primary: ['upd-see-new', "See what's new"], secondary: ['upd-dismiss', 'Dismiss'] };
+      // Steps the versions just installed need, if they haven't been done.
+      if (u.just_updated.from) s.extra = extraStepsCard(u, stepsBetween(u, u.just_updated.from, u.current), 'to finish this update');
     } else if (u.error) {
       s = { mode: 'warn', eyebrow: "Couldn't check", title: "Couldn't reach GitHub", sub: u.error, secondary: ['check-updates', 'Try again'] };
     } else if (!u.checkedAt) {
@@ -3433,6 +3478,10 @@ sudo docker compose up -d --build</pre>`;
       ${row('wait_day', u.wait_day, 'Wait a day before offering updates', "A new version shows up 24 hours after it's released, so one that's pulled never reaches you", !main)}
       ${row('beta', u.beta, 'Include beta versions', betaNote, !main || u.beta_locked)}
       ${keep ? pick('backups_keep', keep, 'Backups to keep', 'Made before updates and restores. Manual backups are always kept', [[5, 'Last 5'], [10, 'Last 10'], [20, 'Last 20']], !main) : ''}
+      <form class="upd-pref upd-folder-pref" data-folder-form>
+        <label for="upd-folder"><span class="upd-pref-title">Server folder</span><span class="upd-card-sub">Where the app's docker-compose.yml is, like /opt/docker/simple-budget. Used for the commands an update's extra steps show</span></label>
+        <span class="upd-folder-in"><input id="upd-folder" name="folder" value="${u.server_folder || ''}" placeholder="/opt/docker/simple-budget" autocomplete="off" spellcheck="false" ${main ? '' : raw('disabled')}>
+          <button type="submit" class="mini" ${main ? '' : raw('disabled')}>Save</button></span></form>
       ${main ? '' : html`<p class="upd-card-sub" style="margin:8px 0 0">Only the main login can change these.</p>`}
     </section>`;
   }
@@ -3448,6 +3497,17 @@ sudo docker compose up -d --build</pre>`;
       toast('Saved');
     } catch (err) { toast(err.message); }
     render();
+  });
+
+  // The server folder, under Preferences.
+  document.addEventListener('submit', async (ev) => {
+    if (!ev.target.matches || !ev.target.matches('[data-folder-form]')) return;
+    ev.preventDefault();
+    try {
+      state.updates = await api('PUT', '/updates/prefs', { server_folder: ev.target.elements.folder.value });
+      toast('Saved');
+      render();
+    } catch (err) { toast(err.message); }
   });
 
   // After "Update now": watch the app go down and come back on the new version, then reload.
@@ -4054,6 +4114,7 @@ sudo docker compose up -d --build</pre>`;
       await copyText('git pull\nsudo docker compose up -d --build', 'Commands');
     },
     'copy-token-cmd': async () => { await copyText(TOKEN_CMD, 'Commands'); },
+    'copy-extra-steps': async (el) => { await copyText(el.dataset.cmds, 'Commands'); },
     'toggle-token-card': () => { state.tokenOpen = !state.tokenOpen; render(); },
     'ignore-token': async (el) => {
       state.updates = await api('PUT', '/updates/prefs', { token_ignored: el.dataset.on === '1' });
@@ -4281,26 +4342,26 @@ sudo docker compose up -d --build</pre>`;
     for (const { it, p } of rows) {
       if (it.done_at) {
         const at = boughtAt(it, p, store);
-        const c = itemCost(p, at);
-        if (c != null) { out.spent.set(at, (out.spent.get(at) || 0) + c * it.qty); out.spentTotal += c * it.qty; }
+        const c = lineCost(it, p, at);
+        if (c != null) { out.spent.set(at, (out.spent.get(at) || 0) + c); out.spentTotal += c; }
         continue;
       }
-      const here = itemCost(p, store);
+      const here = lineCost(it, p, store);
       if (here == null) { out.unpriced += 1; continue; }
-      const best = bestPrice(p, store);
-      out.remaining += here * it.qty;
-      out.split.set(best.store, (out.split.get(best.store) || 0) + best.cents * it.qty);
-      out.saving += (here - best.cents) * it.qty;
+      const best = lineBest(it, p, store);
+      out.remaining += here;
+      out.split.set(best.store, (out.split.get(best.store) || 0) + best.cents);
+      out.saving += here - best.cents;
     }
     return out;
   }
   // The store a ticked item counts at: where it was bought, or this one when that isn't known
   // (ticked before a store was chosen) or has no price.
-  const boughtAt = (it, p, store) => (it.done_store_id && itemCost(p, it.done_store_id) != null ? it.done_store_id : store);
+  const boughtAt = (it, p, store) => (it.done_store_id && lineCost(it, p, it.done_store_id) != null ? it.done_store_id : store);
   // What a row costs: at the store it was bought at once ticked off, otherwise at this one.
-  const rowCost = ({ it, p }, store) => { const c = itemCost(p, it.done_at ? boughtAt(it, p, store) : store); return c == null ? null : c * it.qty; };
+  const rowCost = ({ it, p }, store) => lineCost(it, p, it.done_at ? boughtAt(it, p, store) : store);
   // The same, buying it wherever is cheapest if it's still to get.
-  const rowBest = (r, store) => { const b = !r.it.done_at && itemCost(r.p, store) != null ? bestPrice(r.p, store) : null; return b ? b.cents * r.it.qty : rowCost(r, store); };
+  const rowBest = (r, store) => { const b = !r.it.done_at && lineCost(r.it, r.p, store) != null ? lineBest(r.it, r.p, store) : null; return b ? b.cents : rowCost(r, store); };
 
   // The totals under the list: tiles for the whole shop, what's spent, what's left and the best
   // it could be; a bar of where the money goes; and a line per store.
@@ -4384,26 +4445,30 @@ sudo docker compose up -d --build</pre>`;
 
     const row = ({ it, p }) => {
       const g = shopSpot(p, loc);
-      const price = store ? itemCost(p, store) : null;
+      const price = store ? lineCost(it, p, store) : null;
       const cost = rowCost({ it, p }, store);
-      const best = store && price != null ? bestPrice(p, store) : null;
+      const best = store && price != null ? lineBest(it, p, store) : null;
+      const weighed = isWeighed(p) && it.grams != null;
+      const swap = swappedAt(it, p, store);
       const cheaper = best && best.store !== store ? best : null;
       const got = Boolean(it.done_at);
       const at = got && it.done_store_id;
       return html`<li class="shop-item ${got ? 'got' : ''}" data-name="${productLabel(p).toLowerCase()}" data-pname="${p.name.toLowerCase()}">
         <input type="checkbox" data-action="shop-tick" data-id="${it.id}" ${raw(got ? 'checked' : '')} aria-label="${got ? 'Not got' : 'Got'} ${p.name}">
         <div class="si-name" data-action="shop-item" data-id="${it.id}">
-          <div class="title">${p.name}${sizeLabel(p) ? html` <span class="shop-size">${sizeLabel(p)}</span>` : ''}</div>
-          ${!got && cheaper ? html`<span class="shop-deal-pill">${storeDot(cheaper.store)}${storeName(cheaper.store)} ${money2(cheaper.cents)} · save ${money((price - cheaper.cents) * it.qty)}</span>` : ''}
+          <div class="title">${p.name}${swap ? html` <span class="shop-size swapped" title="Swapped to the other size for this shop">⇄ ${swap.size || 'other size'}</span>`
+            : isWeighed(p) ? html` <span class="shop-size">by the kg</span>` : sizeLabel(p) ? html` <span class="shop-size">${sizeLabel(p)}</span>` : ''}
+            ${p.setup ? html`<button type="button" class="setup-tag" data-action="shop-setup" data-id="${p.id}">Set up</button>` : ''}</div>
+          ${!got && cheaper ? html`<span class="shop-deal-pill">${storeDot(cheaper.store)}${storeName(cheaper.store)} ${money2(cheaper.cents)} · save ${money(price - cheaper.cents)}</span>` : ''}
           ${!got && p.similar ? html`<button type="button" class="similar-pill" data-action="shop-similar" title="A similar product costs less for the amount">${storeDot(p.similar.store_id)}Cheaper similar: ${storeName(p.similar.store_id)} ${p.similar.name} ${money2(p.similar.price_cents)}</button>` : ''}
         </div>
         <div class="si-who">${got ? html`${it.done_by_name ? html`<span class="who-init" style="--tag:${it.done_by_colour || 'var(--brand)'}" title="Checked off by ${it.done_by_name}">${it.done_by_name.slice(0, 1).toUpperCase()}</span>` : ''}
           ${at ? html`<span class="who-at">${storeDot(at)}${storeName(at)}</span>` : ''}`
           : loc && g.key === 'unsorted' ? html`<button type="button" class="linkish small" data-action="shop-spot" data-id="${p.id}">Set aisle</button>` : ''}</div>
-        <div class="si-qty">${got ? html`<span class="shop-qty">×${it.qty}</span>` : html`<span class="stepper">
-          <button type="button" data-action="shop-qty" data-id="${it.id}" data-step="-1" aria-label="One less ${p.name}">−</button>
-          <span class="shop-qty" aria-label="${it.qty} of ${p.name}">${it.qty}</span>
-          <button type="button" data-action="shop-qty" data-id="${it.id}" data-step="1" aria-label="One more ${p.name}">+</button></span>`}</div>
+        <div class="si-qty">${got ? html`<span class="shop-qty">${weighed ? gramsText(it.grams) : `×${it.qty}`}</span>` : html`<span class="stepper ${weighed ? 'weighed' : ''}">
+          <button type="button" data-action="shop-qty" data-id="${it.id}" data-step="-1" aria-label="${weighed ? `${gramsText(stepOf(p))} less` : 'One less'} ${p.name}">−</button>
+          <span class="shop-qty" aria-label="${weighed ? gramsText(it.grams) : it.qty} of ${p.name}">${weighed ? gramsText(it.grams) : it.qty}</span>
+          <button type="button" data-action="shop-qty" data-id="${it.id}" data-step="1" aria-label="${weighed ? `${gramsText(stepOf(p))} more` : 'One more'} ${p.name}">+</button></span>`}</div>
         <div class="si-total num">${cost != null ? money2(cost) : got ? '—'
           : html`<button type="button" class="linkish small" data-action="shop-item" data-id="${it.id}">+ price</button>`}</div>
       </li>`;
@@ -4613,77 +4678,418 @@ sudo docker compose up -d --build</pre>`;
     });
   }
 
-  // A product: its name, size, a price at each store, and where it is here. Opened from the list
-  // (with how many, and taking it off), or from Saved products (with forgetting it).
-  function shopProductForm(p, { item = null, back = null } = {}) {
+  // ---------- A product on the list, and editing a product ----------
+  //
+  // Tapping something on the list opens what's on this list: how much (a weight, a count or packs),
+  // its price at every store for that much, the other size a store sells, and a note for this shop.
+  // Edit product changes the product itself: how it's sold, its usual amount, its prices and its
+  // aisle at every store location.
+
+  const SOLD_LABELS = { pack: 'Pack / each', weight: 'Weight (kg)', volume: 'Volume (L)' };
+  const SOLD_UNITS = { pack: ['g', 'kg', 'mL', 'L', 'each', 'pack'], weight: ['g', 'kg'], volume: ['mL', 'L'] };
+  const STEPS = [100, 250, 500, 1000];
+  const isWeighed = (p) => p.sold_by === 'weight';
+  // A weight in g as people say it: 250 g, 1 kg, 1.5 kg.
+  const gramsText = (g) => (g >= 1000 ? `${+(g / 1000).toFixed(2)} kg` : `${Math.round(g)} g`);
+  const stepOf = (p) => p.step_g || 250;
+  // A product's size in g or mL, when it has one.
+  const sizeIn = (p) => (p.size && BASE[p.unit] ? p.size * BASE[p.unit] : null);
+  // A weighed product's price per kg at a store.
+  function perKgAt(p, store) {
+    const c = store == null ? null : p.prices[store];
+    if (c == null) return null;
+    if (p.price_per === 'kg' || p.price_per === '100g') return Math.round((c * 1000) / PER[p.price_per]);
+    const g = sizeIn(p);
+    return g && MEASURE_OF[p.unit] === 'weight' ? Math.round((itemCost(p, store) * 1000) / g) : null;
+  }
+  const MEASURE_OF = { g: 'weight', kg: 'weight', mL: 'volume', L: 'volume' };
+  // How much of a weighed item is on the list, in g: its weight, or how many × what one weighs.
+  const itemGrams = (it, p) => (it.grams != null ? it.grams : p.each_g ? it.qty * p.each_g : null);
+  // The other size a store sells, when the list has swapped to it for this shop.
+  const swappedAt = (it, p, store) => (it.swap_store_id === store ? p.options?.[store]?.size || null : null);
+  // What a list item costs at a store: its weight at the price per kg, or how many packs (of the
+  // other size, if it's swapped to that at this store). Null with no price there.
+  function lineCost(it, p, store) {
+    if (store == null) return null;
+    if (isWeighed(p)) {
+      const k = perKgAt(p, store);
+      const g = itemGrams(it, p);
+      return k == null || g == null ? null : Math.round((k * g) / 1000);
+    }
+    const swap = swappedAt(it, p, store);
+    if (swap) return swap.price_cents * it.qty;
+    const c = itemCost(p, store);
+    return c == null ? null : c * it.qty;
+  }
+  // The cheapest store for a list item, keeping this one when it's as cheap.
+  function lineBest(it, p, store) {
+    const here = lineCost(it, p, store);
+    let best = here != null ? { store, cents: here } : null;
+    for (const s of state.shop.stores) {
+      const c = lineCost(it, p, s.id);
+      if (c != null && (!best || c < best.cents)) best = { store: s.id, cents: c };
+    }
+    return best;
+  }
+  // Checked since the stores last changed their prices (Wednesday 9am) shows green, before that orange.
+  const freshness = (at) => (at && state.shop.price_day && at >= state.shop.price_day ? 'fresh' : 'stale');
+  const checkedTag = (at) => html`<span class="checked-tag ${freshness(at)}">${checkedText(at)}</span>`;
+  // A price per kg or L for the amount: "$3.67/kg".
+  const perUnitText = (cents, amount, unit) => (amount ? `${money(Math.round((cents * 1000) / amount))}/${unit === 'volume' ? 'L' : 'kg'}` : '');
+
+  function shopItemPopup(itemId) {
+    const it = state.shop.items.find((x) => x.id === itemId);
+    const p = it && shopProduct(it.product_id);
+    if (!p) { closeForm(); return; }
+    const money2 = (c) => moneyFmt.format((c || 0) / 100);
     const loc = shopLocation();
+    const store = loc ? loc.store_id : null;
+    const weighed = isWeighed(p);
+    const counting = weighed && it.grams == null;
     const spot = loc ? shopSpot(p, loc) : null;
-    const reopen = () => { const again = shopProduct(p.id); if (again) shopProductForm(again, { item: item && state.shop.items.find((x) => x.id === item.id), back }); };
-    const checked = new Set(); // prices marked Still right
+    const measure = MEASURE_OF[p.unit];
+    const sub = [spot && spot.key !== 'unsorted' ? spot.label : '',
+      weighed ? `sold by the kg${p.each_g ? ` · about ${gramsText(p.each_g)} each` : ''}`
+        : sizeLabel(p) ? `${sizeLabel(p)} ${p.sold_by === 'volume' ? 'bottle' : 'pack'}` : ''].filter(Boolean).join(' · ');
+
+    // How much: a weight with − / + by the step and quick picks, a count, or packs.
+    let amount;
+    if (weighed && !counting) {
+      const step = stepOf(p);
+      const picks = [2, 4, 6, 8].map((n) => n * step);
+      amount = html`<div class="ip-amount"><button type="button" class="ip-step" data-grams="${Math.max(0, it.grams - step)}" aria-label="${gramsText(step)} less">−</button>
+          <div class="ip-big"><b>${gramsText(it.grams)}</b><span>steps of ${gramsText(step)}</span></div>
+          <button type="button" class="ip-step plus" data-grams="${Math.min(100000, it.grams + step)}" aria-label="${gramsText(step)} more">+</button></div>
+        <div class="ip-picks">${picks.map((g) => html`<button type="button" class="ip-pick ${g === it.grams ? 'on' : ''}" data-grams="${g}">${gramsText(g)}</button>`)}
+          <button type="button" class="ip-pick other" data-other>Other…</button></div>`;
+    } else {
+      // Swapped to the other size at this store: that size.
+      const swapHere = swappedAt(it, p, store);
+      const packSize = swapHere ? swapHere.size || 'other size' : sizeLabel(p);
+      const each = weighed ? (p.each_g ? `about ${gramsText(it.qty * p.each_g)} · ${gramsText(p.each_g)} each` : '') : packSize ? `${it.qty} × ${packSize} ${p.sold_by === 'volume' ? 'bottle' : 'pack'}` : '';
+      amount = html`<div class="ip-amount"><button type="button" class="ip-step" data-qty="${it.qty - 1}" aria-label="One less">−</button>
+          <div class="ip-big"><b>× ${it.qty}</b><span>${each}</span></div>
+          <button type="button" class="ip-step plus" data-qty="${Math.min(99, it.qty + 1)}" aria-label="One more">+</button></div>
+        ${weighed && !p.each_g ? html`<div class="ip-each"><label for="ip-each">What does one weigh?</label>
+          <span class="ip-each-in"><input id="ip-each" name="each_g" inputmode="numeric" placeholder="Like 180"><span>g each</span></span>
+          <button type="button" class="mini" data-each>Save</button></div>` : ''}`;
+    }
+    const swapNow = swappedAt(it, p, store);
+    const swapSize = swapNow && measureText(swapNow.size || swapNow.name);
+    const packAmount = swapNow ? (swapSize ? swapSize[1] : null) : sizeIn(p) && measure ? sizeIn(p) : null;
+    const packMeasure = swapNow ? swapSize && swapSize[0] : measure;
+    const total = !weighed && packAmount ? `Total ${packMeasure === 'weight' ? gramsText(packAmount * it.qty) : `${+((packAmount * it.qty) / 1000).toFixed(2)} L`}` : '';
+    const toggle = weighed ? html`<span class="seg small" role="group" aria-label="Weigh or count">
+        <button type="button" class="${counting ? '' : 'on'}" data-mode="weight" aria-pressed="${counting ? 'false' : 'true'}">Weight</button>
+        <button type="button" class="${counting ? 'on' : ''}" data-mode="count" aria-pressed="${counting ? 'true' : 'false'}">Count</button></span>` : html`<span class="muted small">${total}</span>`;
+
+    // The other size each store sells (from its last search), to swap to for this shop.
+    const sizes = weighed ? [] : state.shop.stores.filter((s) => p.options?.[s.id]?.size && p.matches?.[s.id]?.url)
+      .sort((a, b) => Number(b.id === store) - Number(a.id === store));
+    const sizeLine = (s) => {
+      const o = p.options[s.id].size;
+      const m = measureText(o.size || o.name);
+      const per = m ? perUnitText(o.price_cents, m[1], m[0]) : '';
+      const kind = p.sold_by === 'volume' ? 'bottle' : 'pack';
+      if (it.swap_store_id === s.id) {
+        return html`<div class="ip-size on">${storeDot(s.id)}<span class="grow">Swapped to the ${o.size || 'other'} ${kind} at ${s.name} for this shop · ${money2(o.price_cents)}${per ? ` (${per})` : ''}</span>
+          <button type="button" class="mini" data-swap="">Undo</button></div>`;
+      }
+      return html`<div class="ip-size">${storeDot(s.id)}<span class="grow">${s.name} also sells ${o.size ? `a ${o.size} ${kind}` : o.name} for ${money2(o.price_cents)}${per ? ` (${per})` : ''}</span>
+        <button type="button" class="mini primary" data-swap="${s.id}">Swap</button></div>`;
+    };
+
+    // Every store's price for that much, cheapest first.
+    const priced = state.shop.stores.map((s) => ({ s, c: lineCost(it, p, s.id) })).filter((x) => x.c != null).sort((a, b) => a.c - b.c);
+    const unpriced = state.shop.stores.filter((s) => lineCost(it, p, s.id) == null);
+    const cheapest = priced.length ? priced[0].c : null;
+    const priceSub = (s) => {
+      if (weighed) { const k = perKgAt(p, s.id); return k != null ? `${money2(k)}/kg` : ''; }
+      const swap = swappedAt(it, p, s.id);
+      if (swap) { const m = measureText(swap.size || swap.name); return [`${money2(swap.price_cents)} each`, m ? perUnitText(swap.price_cents, m[1], m[0]) : ''].filter(Boolean).join(' · '); }
+      const one = itemCost(p, s.id);
+      return [`${money2(one)} each`, sizeIn(p) && measure ? perUnitText(one, sizeIn(p), measure) : ''].filter(Boolean).join(' · ');
+    };
+    const priceRow = ({ s, c }) => html`<li class="ip-price ${c === cheapest ? 'best' : ''}">
+        ${storeDot(s.id)}<div class="grow"><b>${s.name}</b><span class="muted small">${priceSub(s)}${priceIsAuto(p, s.id) ? ' · auto' : ''}</span></div>
+        ${c === cheapest ? html`<span class="ip-best">Best</span>` : html`<span class="ip-more">+${money2(c - cheapest)}</span>`}
+        <b class="num">${money2(c)}</b></li>`;
+    const oldest = priced.map(({ s }) => p.checked?.[s.id]).filter(Boolean).sort()[0] || null;
+    const forWhat = weighed ? (counting ? `${it.qty}${p.each_g ? ` (about ${gramsText(it.qty * p.each_g)})` : ''}` : gramsText(it.grams))
+      : `${it.qty} ${it.qty === 1 ? (p.sold_by === 'volume' ? 'bottle' : 'pack') : (p.sold_by === 'volume' ? 'bottles' : 'packs')}`;
+    const auto = autoStores().some((s) => p.matches?.[s.id]?.url);
+
     openForm({
-      title: productLabel(p),
-      body: html`<div class="field"><label for="sp-name">Name</label><input id="sp-name" name="name" value="${p.name}" required></div>
-        <div class="fields three">
-          <div class="field"><label for="sp-size">Size</label><input id="sp-size" name="size" inputmode="decimal" placeholder="Like 2 or 500" value="${p.size ?? ''}"></div>
-          <div class="field"><label for="sp-unit">Unit</label><select id="sp-unit" name="unit"><option value="">None</option>
-            ${state.shop.units.map((u) => html`<option ${raw(p.unit === u ? 'selected' : '')}>${u}</option>`)}</select></div>
-          ${item ? html`<div class="field"><label for="sp-qty">How many</label><input id="sp-qty" name="qty" type="number" min="1" max="99" inputmode="numeric" value="${item.qty}"></div>` : ''}
-        </div>
-        <h3 class="form-section">Price<span class="muted small">Leave blank if you don't know it</span></h3>
-        <div class="field"><label for="sp-per">Price is</label><select id="sp-per" name="price_per">
-          ${state.shop.price_per.map((k) => html`<option value="${k}" ${raw(p.price_per === k ? 'selected' : '')}>${PER_LABELS[k] || k}</option>`)}</select>
-          <p class="muted small">Per kg or per L works out the cost from the size: $10 per kg for 500 g is $5.</p></div>
-        <div class="fields three">${state.shop.stores.map((s) => html`<div class="field price-field"><label for="sp-${s.id}">${storeDot(s.id)}${s.name}</label>
-          <input id="sp-${s.id}" name="price-${s.id}" inputmode="decimal" placeholder="$" value="${moneyInput(p.prices[s.id])}">
-          <div class="price-meta">${p.prices[s.id] != null ? html`<span class="price-age ${priceOld(p, s.id) ? 'old' : ''}" data-age="${s.id}">${checkedText(p.checked?.[s.id])}</span>
-            ${priceOld(p, s.id) ? html`<button type="button" class="linkish small" data-same="${s.id}">Still right</button>` : ''}` : ''}
-            ${p.was?.[s.id] ? html`<span class="price-special">Special · was ${money(p.was[s.id])}</span>` : ''}
-            ${lookupLink(s, p.name, sizeLabel(p))}</div>
-          ${matchLine(p, s)}</div>`)}</div>
+      title: null,
+      cls: 'item-pop',
+      noActions: true,
+      focus: false,
+      body: html`${popHead(p.name, {}, sub ? html`<p class="pop-sub">${sub}</p>` : '')}
+        ${p.setup ? html`<div class="setup-banner"><span class="grow">New here. Say whether it's bought by the pack or by weight.</span><button type="button" class="mini primary" data-edit>Set up</button></div>` : ''}
+        <section class="ip-card">
+          <div class="ip-card-head"><span class="ip-kicker">On this list</span>${toggle}</div>
+          ${amount}
+          ${sizes.length ? html`<div class="ip-sizes">${sizes.map(sizeLine)}</div>` : ''}
+        </section>
+        <div class="ip-prices-head"><b>Price for ${forWhat}</b>
+          <span class="ip-checked">${oldest ? checkedTag(oldest) : ''}${auto ? html`<button type="button" class="mini" data-refresh>Refresh prices</button>` : ''}</span></div>
+        ${priced.length ? html`<ul class="ip-prices">${priced.map(priceRow)}</ul>`
+          : html`<p class="muted small">${counting && !p.each_g ? 'Say what one weighs to price them.' : 'No prices yet. Add them in Edit product.'}</p>`}
+        ${priced.length && unpriced.length ? html`<p class="muted small ip-none">No price at ${unpriced.map((s) => s.name).join(', ')}.</p>` : ''}
         ${p.similar ? html`<p class="similar-line small">Cheaper similar: ${storeDot(p.similar.store_id)}${storeName(p.similar.store_id)} ${p.similar.name}${p.similar.size ? ` ${p.similar.size}` : ''}
-          <b>${money(p.similar.price_cents)}</b> <a class="lookup" href="${p.similar.url}" target="_blank" rel="noopener noreferrer">View ↗</a>
-          <span class="muted">Only a hint: it isn't used for best buys or totals.</span></p>` : ''}
-        ${autoStores().length ? html`<div class="auto-find"><button type="button" class="primary" data-auto-find>Automatic price search</button>
-          <span class="muted small">Finds this product at ${autoStores().map((s) => s.name).join(', ')}, and keeps its prices up to date.</span></div>` : ''}
-        ${state.shop.stores.some((s) => s.search_url) ? html`<p class="muted small">Look up opens the store's website, searched for this product, so you can check its price.</p>` : ''}
-        ${loc ? html`<h3 class="form-section">At ${locLabel(loc)}</h3>
-          <div class="row"><span>${spot.label}</span><button type="button" class="mini" data-spot-change>Change</button></div>` : ''}`,
-      lead: item ? html`<button type="button" class="danger" data-action="shop-remove" data-id="${item.id}">Take off list</button>`
-        : html`<button type="button" class="danger" data-action="shop-forget" data-id="${p.id}">Forget</button>`,
+          <b>${money2(p.similar.price_cents)}</b> <a class="lookup" href="${p.similar.url}" target="_blank" rel="noopener noreferrer">View ↗</a></p>` : ''}
+        <div class="field ip-note"><label for="ip-note">Note for this shop</label>
+          <input id="ip-note" name="note" maxlength="200" value="${it.note || ''}" placeholder="${weighed ? 'Like a bit green, not too ripe' : 'Like only if it\'s on special'}"></div>
+        <div class="dialog-actions ip-actions"><button type="button" class="danger" data-off>Take off list</button><span class="spacer"></span>
+          <button type="button" data-edit>${PENCIL_ICON} Edit product</button><button type="button" class="primary" data-done>Done</button></div>`,
       afterRender: (form) => {
-        const change = form.querySelector('[data-spot-change]');
-        if (change) change.onclick = () => spotPicker(p, loc, reopen);
-        const find = form.querySelector('[data-auto-find]');
-        if (find) find.onclick = () => findPrices(p, reopen);
-        form.querySelectorAll('[data-find-store]').forEach((b) => { b.onclick = () => findPrices(p, reopen, { only: Number(b.dataset.findStore) }); });
-        // Look up searches for the name and size as they're typed.
-        const relink = () => {
-          const unit = val(form, 'unit');
-          const size = val(form, 'size') ? `${val(form, 'size')} ${unit}` : unit;
-          form.querySelectorAll('a[data-lookup]').forEach((a) => {
-            const url = lookupUrl(state.shop.stores.find((x) => x.id === Number(a.dataset.lookup)), val(form, 'name'), size);
-            if (url) a.href = url;
-          });
+        const fail = (err) => { form.querySelector('#form-error').textContent = err.message; };
+        const change = async (body) => {
+          try {
+            await api('PATCH', `/shop/items/${it.id}`, body);
+            await loadShop(state.shop.list);
+            render();
+            shopItemPopup(it.id);
+          } catch (err) { fail(err); }
         };
-        for (const n of ['name', 'size', 'unit']) form.elements[n].addEventListener('input', relink);
-        form.querySelectorAll('[data-same]').forEach((b) => {
-          b.onclick = () => {
-            checked.add(Number(b.dataset.same));
-            const age = form.querySelector(`[data-age="${b.dataset.same}"]`);
-            if (age) { age.textContent = 'Checked today'; age.classList.remove('old'); }
-            b.remove();
-          };
+        const saveNote = async () => {
+          const note = form.elements.note.value.trim();
+          if (note === (it.note || '')) return;
+          await api('PATCH', `/shop/items/${it.id}`, { note });
+          it.note = note;
+          await loadShop(state.shop.list);
+        };
+        form.elements.note.addEventListener('change', () => saveNote().catch(fail));
+        form.onclick = async (ev) => {
+          const t = ev.target;
+          if (solveClick(form, ev)) return;
+          if (t.closest('[data-done]')) { try { await saveNote(); closeForm(); render(); } catch (err) { fail(err); } return; }
+          if (t.closest('[data-edit]')) { try { await saveNote(); } catch { /* the note waits */ } productEditor(p, { back: () => shopItemPopup(it.id) }); return; }
+          if (t.closest('[data-off]')) {
+            try { await api('DELETE', `/shop/items/${it.id}`); closeForm(); await shopReload(); toast('Taken off the list'); } catch (err) { fail(err); }
+            return;
+          }
+          const g = t.closest('[data-grams]');
+          if (g) {
+            const grams = Number(g.dataset.grams);
+            if (grams < 1) { form.querySelector('[data-off]').focus(); fail(new Error('That\'s none. Take it off the list instead.')); return; }
+            change({ grams });
+            return;
+          }
+          if (t.closest('[data-other]')) {
+            const typed = await askText('How much?', 'In g, or kg like 1.2 kg', it.grams != null ? gramsText(it.grams) : '');
+            if (typed == null) { shopItemPopup(it.id); return; }
+            const m = /^\s*(\d+(?:\.\d+)?)\s*(kg|g)?\s*$/i.exec(typed);
+            const grams = m ? Math.round(Number(m[1]) * ((m[2] || (Number(m[1]) < 20 ? 'kg' : 'g')).toLowerCase() === 'kg' ? 1000 : 1)) : NaN;
+            if (!(grams >= 1 && grams <= 100000)) { shopItemPopup(it.id); toast('Type a weight, like 750 g or 1.2 kg'); return; }
+            change({ grams });
+            return;
+          }
+          const q = t.closest('[data-qty]');
+          if (q) {
+            const qty = Number(q.dataset.qty);
+            if (qty < 1) { fail(new Error('That\'s none. Take it off the list instead.')); return; }
+            change({ qty });
+            return;
+          }
+          const mode = t.closest('[data-mode]');
+          if (mode && (mode.dataset.mode === 'count') !== counting) {
+            if (mode.dataset.mode === 'count') change({ grams: null, qty: Math.min(99, Math.max(1, p.each_g ? Math.round(it.grams / p.each_g) : 1)) });
+            else change({ grams: Math.max(1, Math.min(100000, p.each_g ? it.qty * p.each_g : stepOf(p) * 4)) });
+            return;
+          }
+          if (t.closest('[data-each]')) {
+            const g = Number(form.elements.each_g.value.trim());
+            if (!Number.isInteger(g) || g < 1 || g > 100000) { fail(new Error('Type what one weighs in g, like 180.')); return; }
+            try { await api('PATCH', `/shop/products/${p.id}`, { each_g: g }); await loadShop(state.shop.list); render(); shopItemPopup(it.id); } catch (err) { fail(err); }
+            return;
+          }
+          const sw = t.closest('[data-swap]');
+          if (sw) { change({ swap_store_id: sw.dataset.swap ? Number(sw.dataset.swap) : null }); return; }
+          if (t.closest('[data-refresh]')) refreshProduct(p, form, () => shopItemPopup(it.id));
+        };
+      },
+    });
+  }
+
+  // A store's size, like "1.5kg" or "2 L", as [weight or volume, g or mL].
+  function measureText(text) {
+    const m = /(\d+(?:\.\d+)?)\s*(kg|g|ml|l)\b/i.exec(String(text || ''));
+    if (!m) return null;
+    const u = m[2].toLowerCase();
+    return [u === 'kg' || u === 'g' ? 'weight' : 'volume', Number(m[1]) * (u === 'kg' || u === 'l' ? 1000 : 1)];
+  }
+
+  // Gets one product's prices from the stores again (with its other sizes and close matches), then
+  // calls done. The button shows it's going; a store that wants a person opens for them to solve.
+  async function refreshProduct(p, form, done) {
+    const btn = form.querySelector('[data-refresh]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+    try {
+      const job = await api('POST', '/shop/checker/update', { product_ids: [p.id] });
+      if (!job.id) { done(); return; }
+      followJob(job, async (j) => {
+        if (jobRunning(j) || !j.changes) return;
+        const stuck = Object.entries(j.stores).filter(([, st]) => st.state === 'try_later' || st.state === 'error').map(([id]) => storeName(Number(id)));
+        await loadShop(state.shop.list);
+        render();
+        done();
+        toast(stuck.length ? `Couldn't check ${stuck.join(' or ')} just now` : j.changes.length ? `${j.changes.length} ${j.changes.length === 1 ? 'price' : 'prices'} changed` : 'Prices checked: no changes');
+      }, form);
+    } catch (err) {
+      form.querySelector('#form-error').textContent = err.message;
+      if (btn) { btn.disabled = false; btn.textContent = 'Refresh prices'; }
+    }
+  }
+
+  // Editing a product: how it's sold, its usual amount, its price at each store (per kg when it's
+  // bought by weight), keeping its prices up to date, and its aisle at every store location. back
+  // goes back to where it was opened from. draft is what was typed before going to the aisles.
+  function productEditor(p, { back = null, draft = null } = {}) {
+    const d = draft || {};
+    const v = (name, fallback) => (d[name] !== undefined ? d[name] : fallback);
+    const sold = v('sold_by', p.sold_by || 'pack');
+    const weighedNow = isWeighed(p);
+    // Prices as typed in: per kg for weighed things, per pack otherwise.
+    const priceShown = (s) => (sold === 'weight' ? perKgAt(p, s.id) : weighedNow ? (perKgAt(p, s.id) != null && sizeIn(p) ? Math.round((perKgAt(p, s.id) * sizeIn(p)) / 1000) : null) : itemCost(p, s.id));
+    const unitOptions = (mode, picked) => SOLD_UNITS[mode].map((u) => html`<option ${raw(picked === u ? 'selected' : '')}>${u}</option>`);
+    const usualUnit = v('unit', p.unit && SOLD_UNITS[sold].includes(p.unit) ? p.unit : sold === 'weight' ? 'kg' : sold === 'volume' ? 'L' : p.unit || '');
+    const usualSize = v('size', p.unit && SOLD_UNITS[sold].includes(p.unit) ? (p.size ?? '') : sold === 'weight' ? 1 : '');
+    const checker = autoStores();
+    const matched = checker.filter((s) => p.matches?.[s.id]?.url);
+    const stale = matched.filter((s) => freshness(p.checked?.[s.id]) === 'stale');
+    const stores = state.shop.stores;
+    const main = stores.slice(0, 3);
+    const more = stores.slice(3);
+    const spotsOf = (s) => state.shop.locations.filter((l) => l.store_id === s.id);
+    const aisleRows = (list) => list.filter((s) => spotsOf(s).length).map((s) => html`<div class="pe-store"><h4>${storeDot(s.id)}${s.name}</h4>
+      ${spotsOf(s).map((l) => html`<div class="pe-aisle"><span class="grow">${l.name} · <b>${shopSpot(p, l).label}</b></span>
+        <button type="button" class="mini" data-aisle="${l.id}">Change</button></div>`)}</div>`);
+
+    openForm({
+      title: null,
+      cls: 'item-pop',
+      body: html`<div class="pop-head"><div class="pop-title pe-title">${back ? html`<button type="button" class="pop-btn pe-back" data-back aria-label="Back">‹</button>` : ''}<h2>Edit product</h2></div>
+          <div class="pop-btns"><button type="button" class="pop-btn x" data-modal="cancel" aria-label="Close">✕</button></div></div>
+        ${p.setup ? html`<p class="setup-banner"><span class="grow">New product: choose how it's sold, then Save.</span></p>` : ''}
+        <div class="field"><label for="pe-name">Name</label><input id="pe-name" name="name" value="${v('name', p.name)}" required></div>
+        <div class="field"><span class="label">Sold by</span>
+          <div class="seg pe-sold" role="radiogroup" aria-label="Sold by">${Object.entries(SOLD_LABELS).map(([k, label]) => html`<label class="${k === sold ? 'on' : ''}">
+            <input type="radio" name="sold_by" value="${k}" ${raw(k === sold ? 'checked' : '')}>${label}</label>`)}</div>
+          <p class="muted small" id="pe-sold-hint"></p></div>
+        <div class="fields three">
+          <div class="field"><label for="pe-size" id="pe-size-label"></label><input id="pe-size" name="size" inputmode="decimal" value="${usualSize}" placeholder="Like 2 or 500"></div>
+          <div class="field"><label for="pe-unit">Unit</label><select id="pe-unit" name="unit">${sold === 'pack' ? html`<option value="">None</option>` : ''}${unitOptions(sold, usualUnit)}</select></div>
+          <div class="field pe-weight"><label for="pe-step">+/− step</label><select id="pe-step" name="step_g">${STEPS.map((g) => html`<option value="${g}" ${raw(Number(v('step_g', stepOf(p))) === g ? 'selected' : '')}>${gramsText(g)}</option>`)}</select></div>
+        </div>
+        <div class="field pe-weight"><label for="pe-each">About how much one weighs</label>
+          <span class="ip-each-in"><input id="pe-each" name="each_g" inputmode="numeric" value="${v('each_g', p.each_g ?? '')}" placeholder="Like 180"><span>g each</span></span>
+          <p class="muted small">For counting them on the list, like 6 bananas. Filled in from Woolworths when it says.</p></div>
+        <h3 class="form-section"><span id="pe-price-label">${sold === 'weight' ? 'Price per kg' : 'Price per pack'}</span><span class="muted small">Leave blank if unknown</span></h3>
+        <div class="fields three">${stores.map((s) => html`<div class="field price-field"><label for="pe-${s.id}">${storeDot(s.id)}${s.name}</label>
+          <input id="pe-${s.id}" name="price-${s.id}" inputmode="decimal" placeholder="$" value="${v(`price-${s.id}`, moneyInput(priceShown(s)))}">
+          <div class="price-meta">${p.prices[s.id] != null ? checkedTag(p.checked?.[s.id]) : ''}
+            ${p.was?.[s.id] ? html`<span class="price-special">Special · was ${money(p.was[s.id])}</span>` : ''}
+            ${lookupLink(s, p.name, sold === 'weight' ? '' : sizeLabel(p))}</div>
+          ${p.matches?.[s.id]?.url ? html`<div class="match-line muted small" title="${p.matches[s.id].name}">Price is for ${p.matches[s.id].name}${p.matches[s.id].size && !p.matches[s.id].name.includes(p.matches[s.id].size) ? ` ${p.matches[s.id].size}` : ''}</div>` : matchLine(p, s)}</div>`)}</div>
+        ${checker.length ? (matched.length ? html`<div class="auto-bubble ${stale.length ? 'stale' : 'fresh'}"><div class="grow">
+              <b>${stale.length ? `${stale.length} ${stale.length === 1 ? 'price is' : 'prices are'} from before Wednesday` : 'Prices are up to date'}</b>
+              <span class="muted small">Kept up to date from ${matched.map((s) => s.name).join(', ')}. <button type="button" class="linkish small" data-auto-find>Change matches</button></span></div>
+              <button type="button" class="mini primary" data-refresh>Refresh now</button></div>`
+          : html`<div class="auto-bubble"><div class="grow"><b>Prices aren't automatic yet</b>
+              <span class="muted small">Search ${checker.map((s) => s.name).join(', ')} for this product and pick the one you buy at each, and its prices are kept up to date.</span></div>
+              <button type="button" class="mini primary" data-auto-find>Search and match</button></div>`) : ''}
+        ${state.shop.locations.length ? html`<h3 class="form-section">Aisles</h3>
+          <div class="pe-aisles">${aisleRows(main)}</div>
+          ${more.some((s) => spotsOf(s).length) ? html`<details class="pe-more"><summary>More stores</summary>${aisleRows(more)}</details>` : ''}`
+          : html`<p class="muted small">Add the store locations you shop at (Change store) to set aisles.</p>`}`,
+      lead: html`<button type="button" class="danger" data-forget>${BIN_ICON} Delete product</button>`,
+      afterRender: (form) => {
+        const mode = () => form.querySelector('input[name=sold_by]:checked').value;
+        const keep = () => ({ ...Object.fromEntries(new FormData(form)), sold_by: mode() });
+        const again = (extra = {}) => productEditor(shopProduct(p.id) || p, { back, draft: { ...keep(), ...extra } });
+        const show = () => {
+          const m = mode();
+          form.querySelectorAll('.pe-sold label').forEach((l) => l.classList.toggle('on', l.querySelector('input').checked));
+          form.querySelectorAll('.pe-weight').forEach((el) => { el.hidden = m !== 'weight'; });
+          form.querySelector('#pe-size-label').textContent = m === 'weight' ? 'Usual amount' : m === 'volume' ? 'Bottle size' : 'Pack size';
+          form.querySelector('#pe-price-label').textContent = m === 'weight' ? 'Price per kg' : 'Price per pack';
+          form.querySelector('#pe-sold-hint').textContent = m === 'weight' ? 'Goes on the list as a weight (or a count), with − / + by the step. Prices are per kg.'
+            : m === 'volume' ? 'Goes on the list as bottles, with − / +. Prices are per bottle, compared per L.' : 'Goes on the list as packs, with − / +. Prices are per pack.';
+        };
+        // Switching how it's sold: the unit list changes, and typed prices become per kg or per pack.
+        let was = mode();
+        form.addEventListener('change', (ev) => {
+          if (ev.target.name !== 'sold_by') return;
+          const m = mode();
+          const unit = form.elements.unit;
+          const size = Number(form.elements.size.value) || null;
+          const grams = size && BASE[unit.value] && MEASURE_OF[unit.value] === 'weight' ? size * BASE[unit.value] : null;
+          for (const s of stores) {
+            const input = form.elements[`price-${s.id}`];
+            const c = parseMoney(input.value);
+            if (c == null || Number.isNaN(c)) continue;
+            if (m === 'weight' && was !== 'weight') input.value = grams ? moneyInput(Math.round((c * 1000) / grams)) : '';
+            if (m !== 'weight' && was === 'weight') input.value = grams ? moneyInput(Math.round((c * grams) / 1000)) : '';
+          }
+          const keepUnit = SOLD_UNITS[m].includes(unit.value) ? unit.value : m === 'weight' ? 'kg' : m === 'volume' ? 'L' : unit.value;
+          unit.innerHTML = html`${m === 'pack' ? html`<option value="">None</option>` : ''}${unitOptions(m, keepUnit)}`.s;
+          if (m === 'weight' && !grams) { form.elements.size.value = '1'; unit.value = 'kg'; }
+          was = m;
+          show();
         });
+        show();
+        // Prices typed in (rather than shown, or worked out by switching) count as checked today.
+        for (const s of stores) {
+          const input = form.elements[`price-${s.id}`];
+          if (input.value !== moneyInput(priceShown(s))) input.dataset.edited = '1';
+          input.addEventListener('input', () => { input.dataset.edited = '1'; });
+        }
+        form.onclick = async (ev) => {
+          const t = ev.target;
+          if (solveClick(form, ev)) return;
+          if (t.closest('[data-back]')) { back(); return; }
+          const a = t.closest('[data-aisle]');
+          if (a) { const loc = state.shop.locations.find((l) => l.id === Number(a.dataset.aisle)); const draftNow = keep(); spotPicker(p, loc, () => productEditor(shopProduct(p.id), { back, draft: draftNow })); return; }
+          if (t.closest('[data-auto-find]')) { const draftNow = keep(); findPrices(p, () => productEditor(shopProduct(p.id) || p, { back, draft: draftNow })); return; }
+          const f = t.closest('[data-find-store]');
+          if (f) { const draftNow = keep(); findPrices(p, () => productEditor(shopProduct(p.id) || p, { back, draft: draftNow }), { only: Number(f.dataset.findStore) }); return; }
+          if (t.closest('[data-refresh]')) { refreshProduct(p, form, () => again(Object.fromEntries(stores.map((s) => [`price-${s.id}`, undefined])))); return; }
+          if (t.closest('[data-forget]')) {
+            const ok = await askChoice({ title: 'Delete this product?', text: html`<p><b>${productLabel(p)}</b></p><p>It comes off every list, and its prices and aisles are forgotten.</p>`,
+              choices: [{ label: 'Keep it', value: 'no' }, { label: 'Delete', value: 'yes', danger: true }] });
+            if (ok !== 'yes') return;
+            try {
+              await api('DELETE', `/shop/products/${p.id}`);
+              closeForm();
+              await shopReload();
+              toast(`${p.name} deleted`);
+            } catch (err) { form.querySelector('#form-error').textContent = err.message; }
+          }
+        };
       },
       onSave: async (form) => {
-        const qty = item ? Number(val(form, 'qty')) : null;
-        if (item && (!Number.isInteger(qty) || qty < 1 || qty > 99)) throw new Error('How many should be a whole number from 1 to 99.');
+        const m = form.querySelector('input[name=sold_by]:checked').value;
         const size = val(form, 'size');
         if (size && Number.isNaN(Number(size))) throw new Error('The size should be a number, like 2 or 500.');
+        if (m === 'weight' && !(Number(size) > 0)) throw new Error('Give the usual amount, like 1 kg or 500 g.');
+        const each = val(form, 'each_g');
+        if (m === 'weight' && each && !(Number.isInteger(Number(each)) && Number(each) > 0)) throw new Error('What one weighs should be a whole number of g, like 180.');
+        // Prices left alone stay as they were checked, even when they're now said per kg or per pack.
         const prices = {};
-        for (const s of state.shop.stores) prices[s.id] = moneyVal(form, `price-${s.id}`, `The ${s.name} price`);
-        await api('PATCH', `/shop/products/${p.id}`, { name: val(form, 'name'), size: size === '' ? null : Number(size), unit: val(form, 'unit') || null, price_per: val(form, 'price_per') || 'each', prices, checked: [...checked] });
-        if (item && qty !== item.qty) await api('PATCH', `/shop/items/${item.id}`, { qty });
+        const converted = [];
+        const sameWay = m === 'weight' ? p.price_per === 'kg' : p.price_per === 'each';
+        for (const s of stores) {
+          const edited = form.elements[`price-${s.id}`].dataset.edited === '1';
+          if (!edited && sameWay) continue;
+          prices[s.id] = moneyVal(form, `price-${s.id}`, `The ${s.name} price`);
+          if (!edited) converted.push(s.id);
+        }
+        await api('PATCH', `/shop/products/${p.id}`, {
+          name: val(form, 'name'), size: size === '' ? null : Number(size), unit: val(form, 'unit') || null,
+          sold_by: m, price_per: m === 'weight' ? 'kg' : 'each', prices, converted,
+          ...(m === 'weight' ? { step_g: Number(val(form, 'step_g')) || null, each_g: each ? Number(each) : null } : {}),
+        });
         await loadShop(state.shop.list);
         if (back) setTimeout(back); // once this popup has closed
       },
@@ -4784,7 +5190,7 @@ sudo docker compose up -d --build</pre>`;
           if (ev.target.closest('[data-refresh-all]')) { updatePrices({ all: true }); return; }
           if (ev.target.closest('[data-undo]') && undo) { undo(); return; }
           const open = ev.target.closest('[data-open]');
-          if (open) { shopProductForm(shopProduct(Number(open.dataset.open)), { back: productList }); return; }
+          if (open) { productEditor(shopProduct(Number(open.dataset.open)), { back: productList }); return; }
           const del = ev.target.closest('[data-del]');
           if (del) {
             const p = shopProduct(Number(del.dataset.del));
@@ -4834,7 +5240,7 @@ sudo docker compose up -d --build</pre>`;
       afterRender: (form) => {
         form.onclick = (ev) => {
           const o = ev.target.closest('[data-open]');
-          if (o) shopProductForm(shopProduct(Number(o.dataset.open)), { back: similarList });
+          if (o) productEditor(shopProduct(Number(o.dataset.open)), { back: similarList });
         };
       },
     });
@@ -5090,6 +5496,8 @@ sudo docker compose up -d --build</pre>`;
     const money2 = (c) => moneyFmt.format((c || 0) / 100);
     const stores = autoStores().filter((s) => !only || s.id === only);
     let current = job;
+    // A store that sells it by the kg, picked while it's bought by the pack: offer to switch.
+    let byKg = null;
     const results = (j, s) => {
       const st = j.stores[s.id];
       if (!st || st.state !== 'done') return '';
@@ -5119,7 +5527,9 @@ sudo docker compose up -d --build</pre>`;
       const box = $modalForm.querySelector('#find-body');
       if (!box) return;
       current = j;
-      box.innerHTML = html`${stores.map((s) => html`<h3 class="form-section find-head">${autoProgress(j, s)}</h3>${results(j, s)}`)}`.s;
+      const offer = byKg && !isWeighed(shopProduct(p.id) || p) ? html`<div class="setup-banner kg-offer"><span class="grow">${storeName(byKg)} sells this by the kg. Switch to By weight?</span>
+        <button type="button" class="mini primary" data-by-kg>Switch</button><button type="button" class="mini" data-by-kg-no>No thanks</button></div>` : '';
+      box.innerHTML = html`${offer}${stores.map((s) => html`<h3 class="form-section find-head">${autoProgress(j, s)}</h3>${results(j, s)}`)}`.s;
       const help = $modalForm.querySelector('#find-help');
       if (help) help.textContent = jobRunning(j) ? 'Searching the stores. This usually takes a few seconds.' : 'Tap Use this on the one you buy at each store. Its price is saved now and kept up to date.';
     };
@@ -5147,11 +5557,47 @@ sudo docker compose up -d --build</pre>`;
           if (solveClick(form, ev)) return;
           if (ev.target.closest('[data-find-go]')) { again(); return; }
           if (ev.target.closest('[data-find-back]')) { back(); return; }
+          if (ev.target.closest('[data-by-kg-no]')) { byKg = null; draw(current); return; }
+          if (ev.target.closest('[data-by-kg]') && current) {
+            // By weight, priced per kg, 1 kg usually (or its weight if it has one); its matches are
+            // picked again so their prices are worked out per kg.
+            const now = shopProduct(p.id) || p;
+            const g = BASE[now.unit] && MEASURE_OF[now.unit] === 'weight' ? now.size * BASE[now.unit] : null;
+            const picks = {};
+            for (const s of stores) {
+              const url = now.matches?.[s.id]?.url;
+              const r = url && (current.results?.[s.id] || []).find((x) => x.url === url);
+              if (r) picks[s.id] = r.i;
+            }
+            // Other prices become per kg from its weight (not checked again), or go without one.
+            const prices = {};
+            const converted = [];
+            if (now.price_per !== 'kg') {
+              for (const s of state.shop.stores) {
+                if (picks[s.id] != null || now.prices[s.id] == null) continue;
+                const k = perKgAt(now, s.id);
+                prices[s.id] = k;
+                if (k != null) converted.push(s.id);
+              }
+            }
+            try {
+              await api('PATCH', `/shop/products/${p.id}`, { sold_by: 'weight', price_per: 'kg', size: g ? now.size : 1, unit: g ? now.unit : 'kg', prices, converted });
+              if (Object.keys(picks).length) await api('PUT', `/shop/products/${p.id}/matches`, { job: current.id, picks });
+              await loadShop(state.shop.list);
+              render();
+              byKg = null;
+              draw(current);
+              toast(`${p.name} is now bought by weight`);
+            } catch (err) { form.querySelector('#form-error').textContent = err.message; }
+            return;
+          }
           const m = ev.target.closest('[data-match], [data-unmatch]');
           if (!m || !current) return;
           try {
             const store = Number(m.dataset.match || m.dataset.unmatch);
             await api('PUT', `/shop/products/${p.id}/matches`, { job: current.id, picks: { [store]: m.dataset.match ? Number(m.dataset.i) : null } });
+            const r = m.dataset.match && (current.results?.[store] || []).find((x) => x.i === Number(m.dataset.i));
+            if (r && (r.sold === 'kg' || r.sold === 'each') && r.per_kg_cents) byKg = store;
             await loadShop(state.shop.list);
             render();
             draw(current);
@@ -5344,13 +5790,17 @@ sudo docker compose up -d --build</pre>`;
     'shop-qty': async (el) => {
       const it = state.shop.items.find((x) => x.id === Number(el.dataset.id));
       if (!it) return;
-      const qty = it.qty + Number(el.dataset.step);
+      const p = shopProduct(it.product_id);
+      // Weighed: by its step; counted or packs: one at a time.
+      const weighed = p && isWeighed(p) && it.grams != null;
+      const qty = weighed ? it.grams + Number(el.dataset.step) * stepOf(p) : it.qty + Number(el.dataset.step);
       if (qty < 1) {
-        const p = shopProduct(it.product_id);
         const ok = await askChoice({ title: 'Take this off the list?', text: html`<p><b>${p ? productLabel(p) : 'This item'}</b></p><p>It stays in Saved products for next time.</p>`,
           choices: [{ label: 'Keep it', value: 'no' }, { label: 'Take off', value: 'yes', danger: true }] });
         if (ok !== 'yes') return;
         await api('DELETE', `/shop/items/${it.id}`);
+      } else if (weighed) {
+        await api('PATCH', `/shop/items/${it.id}`, { grams: Math.min(100000, qty) });
       } else if (qty <= 99) {
         await api('PATCH', `/shop/items/${it.id}`, { qty });
       }
@@ -5391,8 +5841,7 @@ sudo docker compose up -d --build</pre>`;
     },
     'shop-item': (el) => {
       const it = state.shop.items.find((x) => x.id === Number(el.dataset.id));
-      const p = it && shopProduct(it.product_id);
-      if (p) shopProductForm(p, { item: it });
+      if (it) shopItemPopup(it.id);
     },
     'shop-remove': async (el) => {
       await api('DELETE', `/shop/items/${el.dataset.id}`);
@@ -5409,6 +5858,10 @@ sudo docker compose up -d --build</pre>`;
       await api('DELETE', `/shop/products/${p.id}`);
       await shopReload();
       productList();
+    },
+    'shop-setup': (el) => {
+      const p = shopProduct(Number(el.dataset.id));
+      if (p) productEditor(p);
     },
     'shop-spot': (el) => {
       const loc = shopLocation();

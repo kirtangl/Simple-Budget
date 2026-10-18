@@ -2042,3 +2042,83 @@ a.button-like { display: inline-block; padding: 7px 14px; border-radius: 8px; ba
 .helper-copy { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 6px; }
 .helper-copy .muted { width: 56px; }
 .helper-copy code { flex: 1; min-width: 0; padding: 4px 8px; border-radius: 6px; background: var(--bg); overflow-wrap: anywhere; }
+/* A product on the list (tap it), and Edit product. */
+dialog.item-pop { width: min(520px, calc(100vw - 24px)); }
+@media (max-width: 720px) { dialog.item-pop { width: 100vw; } }
+.pop-sub { margin: 2px 0 0; color: var(--muted); font-size: .82rem; }
+.setup-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; padding: 8px 10px; border-radius: 8px;
+  background: color-mix(in srgb, var(--due) 12%, var(--card)); border: 1px solid color-mix(in srgb, var(--due) 35%, var(--card)); font-size: .85rem; }
+.setup-banner .grow { flex: 1 1 200px; }
+.kg-offer { margin-top: 4px; }
+.setup-tag { min-height: 0; margin-left: 6px; padding: 0 8px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--due) 50%, var(--card));
+  background: color-mix(in srgb, var(--due) 12%, var(--card)); color: var(--due); font-size: .72rem; font-weight: 700; box-shadow: none; vertical-align: 1px; }
+.shop-size.swapped { color: var(--info); font-weight: 600; }
+.stepper.weighed .shop-qty { min-width: 3.6em; text-align: center; }
+.seg { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--inset); }
+.seg > button, .seg > label { min-height: 0; padding: 4px 12px; border: 0; border-radius: 6px; background: transparent; box-shadow: none;
+  color: var(--muted); font-size: .82rem; font-weight: 600; cursor: pointer; text-align: center; }
+.seg > .on { background: var(--brand); color: var(--on-brand); }
+.seg > label input { position: absolute; opacity: 0; pointer-events: none; }
+.seg > label:has(input:focus-visible) { outline: 2px solid var(--brand); outline-offset: 1px; }
+.pe-sold { display: flex; width: 100%; }
+.pe-sold > label { flex: 1; position: relative; padding: 8px 6px; }
+.ip-card { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--inset); }
+.ip-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
+.ip-kicker { font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.ip-amount { display: flex; align-items: center; gap: 12px; }
+.ip-step { width: 44px; height: 44px; min-height: 0; padding: 0; border-radius: 10px; font-size: 1.3rem; flex: none; }
+.ip-step.plus { border-color: var(--brand); color: var(--brand); background: color-mix(in srgb, var(--brand) 12%, var(--card)); }
+.ip-big { flex: 1; min-width: 0; text-align: center; }
+.ip-big b { display: block; font-size: 1.9rem; line-height: 1.1; }
+.ip-big span { display: block; color: var(--muted); font-size: .78rem; }
+.ip-picks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.ip-pick { flex: 1 1 0; min-width: 60px; min-height: 0; padding: 6px 4px; border-radius: 999px; font-size: .82rem; }
+.ip-pick.on { border-color: var(--brand); color: var(--brand); background: color-mix(in srgb, var(--brand) 14%, var(--card)); font-weight: 700; }
+.ip-pick.other { border-style: dashed; color: var(--muted); }
+.ip-each { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 10px; font-size: .85rem; }
+.ip-each-in { display: inline-flex; align-items: center; gap: 6px; }
+.ip-each-in input { width: 90px; }
+.ip-sizes { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.ip-size { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); font-size: .82rem; }
+.ip-size.on { border-color: color-mix(in srgb, var(--info) 50%, var(--card)); background: color-mix(in srgb, var(--info) 8%, var(--card)); }
+.ip-size .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ip-prices-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 10px; margin: 16px 0 8px; }
+.ip-checked { display: inline-flex; align-items: center; gap: 8px; }
+.checked-tag { font-size: .78rem; font-weight: 600; }
+.checked-tag.fresh { color: var(--paid); }
+.checked-tag.stale { color: var(--due); }
+.ip-prices { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ip-price { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.ip-price.best { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, var(--card)); }
+.ip-price .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ip-price .num { font-size: 1.05rem; white-space: nowrap; }
+.ip-best { font-size: .7rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--brand); }
+.ip-more { font-size: .78rem; color: var(--muted); white-space: nowrap; }
+.ip-none { margin: 6px 0 0; }
+.ip-note { margin-top: 14px; }
+.ip-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.pe-title { display: flex; align-items: center; gap: 8px; }
+.pe-title h2 { margin: 0; }
+.pe-back { width: 32px; padding: 0; font-size: 1.2rem; }
+.auto-bubble { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 12px; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--inset); }
+.auto-bubble .grow { flex: 1 1 220px; display: flex; flex-direction: column; gap: 2px; }
+.auto-bubble.fresh { border-color: color-mix(in srgb, var(--paid) 45%, var(--card)); background: color-mix(in srgb, var(--paid) 8%, var(--card)); }
+.auto-bubble.stale { border-color: color-mix(in srgb, var(--due) 45%, var(--card)); background: color-mix(in srgb, var(--due) 8%, var(--card)); }
+.pe-aisles, .pe-more { display: flex; flex-direction: column; gap: 10px; }
+.pe-store h4 { display: flex; align-items: center; margin: 0 0 4px; font-size: .88rem; }
+.pe-aisle { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); font-size: .88rem; }
+.pe-aisle:last-child { border-bottom: 0; }
+.pe-more { margin-top: 10px; }
+.pe-more summary { cursor: pointer; color: var(--link); font-size: .88rem; font-weight: 600; }
+/* Settings → Updates: a release's extra steps, and the server folder they use. */
+.upd-extra { margin-top: 14px; padding: 12px 14px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--due) 40%, var(--card));
+  background: color-mix(in srgb, var(--due) 7%, var(--card)); position: relative; }
+.upd-extra-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+.upd-extra p { margin: 4px 0; }
+.upd-extra-ver { margin-top: 8px; font-size: .78rem; color: var(--muted); }
+.upd-extra .upd-cmd { margin: 8px 0 4px; }
+.upd-folder-pref { flex-direction: column; align-items: stretch; gap: 8px; }
+.upd-folder-pref label { display: flex; flex-direction: column; }
+.upd-folder-in { display: flex; gap: 8px; }
+.upd-folder-in input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }

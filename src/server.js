@@ -105,7 +105,9 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null, check
       // Shown for a week at most, and only on the version it welcomes.
       if (!just || just.to !== VERSION || !(Date.now() - Date.parse(just.at) < 7 * 24 * 60 * 60 * 1000)) just = null;
       const backup = just && backups.list().find((b) => b.kind === 'update' && b.version === VERSION);
-      return { installed_at: getSetting(db, 'installed_at') || null, just_updated: just && { ...just, backup: backup ? backup.name : null } };
+      return { installed_at: getSetting(db, 'installed_at') || null, just_updated: just && { ...just, backup: backup ? backup.name : null },
+        // The app's folder on the server, for the commands a release's extra steps show.
+        server_folder: getSetting(db, 'server_folder') || null };
     },
   });
   const app = express();
@@ -203,6 +205,14 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null, check
     if ('interval_hours' in body) {
       if (!INTERVALS.includes(body.interval_hours)) return res.status(400).json({ error: `interval_hours should be one of ${INTERVALS.join(', ')}.` });
       setSetting(db, 'updates_interval_hours', String(body.interval_hours));
+    }
+    // Where the app's folder is on the server (like /opt/docker/simple-budget), or empty to forget it.
+    if ('server_folder' in body) {
+      const f = typeof body.server_folder === 'string' ? body.server_folder.trim() : null;
+      if (f === null || f.length > 300 || /[\n\r"'`$;&|<>]/.test(f) || (f && !/^(\/|~\/?|[A-Za-z]:[\\/])/.test(f))) {
+        return res.status(400).json({ error: 'The folder should be a full path on the server, like /opt/docker/simple-budget.' });
+      }
+      setSetting(db, 'server_folder', f);
     }
     if ('backups_keep' in body) {
       if (!KEEPS.includes(body.backups_keep)) return res.status(400).json({ error: `backups_keep should be one of ${KEEPS.join(', ')}.` });

@@ -411,6 +411,35 @@ const MIGRATIONS = [
     seen_at TEXT NOT NULL
   );
   `,
+  // 24: how a product is bought (by the pack, by weight or by volume), with the +/- step and what
+  // one weighs for weighed things, and a "set up" mark on products added by typing a new name. A
+  // list item's weight (for things bought by weight), a note for this shop, and the store whose
+  // other size it's swapped to. Besides its match, each store's search keeps the cheapest close
+  // match and the same product's other size (shop_options), which replaces the one cheaper similar.
+  `
+  ALTER TABLE shop_products ADD COLUMN sold_by TEXT NOT NULL DEFAULT 'pack';
+  ALTER TABLE shop_products ADD COLUMN step_g INTEGER;
+  ALTER TABLE shop_products ADD COLUMN each_g INTEGER;
+  ALTER TABLE shop_products ADD COLUMN setup INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE shop_items ADD COLUMN grams INTEGER;
+  ALTER TABLE shop_items ADD COLUMN note TEXT;
+  ALTER TABLE shop_items ADD COLUMN swap_store_id INTEGER REFERENCES shop_stores(id) ON DELETE SET NULL;
+  CREATE TABLE shop_options (
+    product_id INTEGER NOT NULL REFERENCES shop_products(id) ON DELETE CASCADE,
+    store_id INTEGER NOT NULL REFERENCES shop_stores(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    size TEXT,
+    url TEXT NOT NULL,
+    price_cents INTEGER NOT NULL,
+    was_cents INTEGER,
+    seen_at TEXT NOT NULL,
+    PRIMARY KEY (product_id, store_id, kind)
+  );
+  INSERT INTO shop_options (product_id, store_id, kind, name, size, url, price_cents, seen_at)
+    SELECT product_id, store_id, 'similar', name, size, url, price_cents, seen_at FROM shop_similar;
+  DROP TABLE shop_similar;
+  `,
 ];
 
 function openDatabase(file) {

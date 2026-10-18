@@ -289,6 +289,7 @@ async function withChecker(fn) {
     woolworths: [
       { name: 'Test Brand Rolled Oats 750g', size: '750g', price_cents: 280, was_cents: 350, special: true, url: 'https://shop.example/w/1' },
       { name: 'Fancy Rolled Oats', size: '750g', price_cents: 550, url: 'https://shop.example/w/2' },
+      { name: 'Test Brand Rolled Oats 1kg', size: '1kg', price_cents: 340, url: 'https://shop.example/w/3' },
     ],
     coles: [{ name: 'Test Brand Rolled Oats', size: '750g', price_cents: 300, url: 'https://shop.example/c/1' }],
     aldi: [
@@ -348,7 +349,7 @@ test('shopping: automatic price search, matching, the cheaper similar hint and u
   assert.equal(r.status, 201);
   const found = await until(call, r.body.id);
   assert.equal(found.stores[stores.Woolworths].state, 'done');
-  assert.equal(found.results[stores.Woolworths].length, 2);
+  assert.equal(found.results[stores.Woolworths].length, 3);
   assert.equal(found.results[stores.Aldi].length, 1);
 
   // Woolworths and Coles matched, Aldi left out: the Aldi oats are a cheaper similar.
@@ -360,6 +361,10 @@ test('shopping: automatic price search, matching, the cheaper similar hint and u
   assert.deepEqual(p.matches[stores.Aldi], { url: '', name: '', size: null, missing_at: null }); // none of them, remembered
   assert.equal(p.similar.name, 'Cheap Label Rolled Oats');
   assert.deepEqual([p.similar.store_id, p.similar.price_cents], [stores.Aldi, 199]);
+  // The same oats in the other size at Woolworths, and Woolworths' own closest other brand.
+  assert.deepEqual([p.options[stores.Woolworths].size.name, p.options[stores.Woolworths].size.price_cents], ['Test Brand Rolled Oats 1kg', 340]);
+  assert.equal(p.options[stores.Woolworths].similar.name, 'Fancy Rolled Oats');
+  assert.equal(p.options[stores.Coles], undefined);
   assert.equal((await call('PUT', `/shop/products/${id}/matches`, { job: found.id, picks: { [stores.Coles]: 7 } })).status, 400);
   assert.equal((await call('PUT', `/shop/products/${id}/matches`, { job: 'j999', picks: {} })).status, 404);
 
@@ -398,7 +403,15 @@ test('shopping: automatic price search, matching, the cheaper similar hint and u
   assert.equal(r.body.total, 2);
   await until(call, r.body.id, (j) => j.state === 'done' && j.changes);
 
-  // A new match at just Coles keeps the similar hint (only a search of every store replaces it).
+  // Refreshing one product searches again for it, keeping its other size up to date.
+  shelf.woolworths[2].price_cents = 360;
+  r = await call('POST', '/shop/checker/update', { product_ids: [id] });
+  assert.equal(r.body.total, 2);
+  await until(call, r.body.id, (j) => j.state === 'done' && j.changes);
+  p = (await call('GET', '/shop')).body.products.find((x) => x.id === id);
+  assert.equal(p.options[stores.Woolworths].size.price_cents, 360);
+
+  // A new match at just Coles keeps the similar hint (only that store's search is redone).
   shelf.coles.push(colesOats);
   r = await call('POST', '/shop/checker/find', { product_id: id, store_ids: [stores.Coles] });
   assert.deepEqual(Object.keys(r.body.stores), [String(stores.Coles)]);
@@ -409,7 +422,7 @@ test('shopping: automatic price search, matching, the cheaper similar hint and u
 
   // Kept in a backup.
   shop = (await call('GET', '/export')).body.shopping;
-  assert.equal(shop.similar.length, 1);
+  assert.equal(shop.options.filter((o) => o.kind === 'similar').length, 2); // Woolworths' and Aldi's closest
   assert.equal(shop.matches.length, 3);
   assert.ok(shop.stores.every((s) => 'checker' in s));
 })));
@@ -501,4 +514,70 @@ test('shopping: the Coles button downloads as a zip of the extension', () => wit
   assert.equal(z.readUInt32LE(14), zlib.crc32(data));
   const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
   assert.equal(manifest.version, require('../package.json').version);
+}));
+
+test('shopping: bought by weight, counted, swapped and noted', () => withServer({}, async (call) => {
+  const stores = await storesOf(call);
+  // Typed in new, it's bought by the pack until it's set up.
+  let item = (await call('POST', '/shop/items', { list: 'shared', name: 'Bananas' })).body;
+  const id = item.product_id;
+  let p = (await call('GET', '/shop')).body.products.find((x) => x.id === id);
+  assert.deepEqual([p.sold_by, p.setup, item.grams], ['pack', true, null]);
+  await call('PATCH', `/shop/products/${id}`, { prices: { [stores.Coles]: 400 } });
+  assert.equal((await call('GET', '/shop')).body.products.find((x) => x.id === id).setup, true); // prices alone don't set it up
+
+  // By weight needs a price per kg and a usual amount in g or kg.
+  assert.equal((await call('PATCH', `/shop/products/${id}`, { sold_by: 'weight' })).status, 400);
+  assert.equal((await call('PATCH', `/shop/products/${id}`, { sold_by: 'heaps' })).status, 400);
+  const checked = (await call('GET', '/shop')).body.products.find((x) => x.id === id).checked[stores.Coles];
+  const backup = (await call('GET', '/export')).body;
+  backup.shopping.prices = backup.shopping.prices.map((x) => ({ ...x, checked_at: '2026-01-01 00:00:00' }));
+  await call('POST', '/import', backup);
+  // 400 a bunch of 2 kg becomes $2.00 a kg: the same price, said another way, so not checked again.
+  let r = await call('PATCH', `/shop/products/${id}`, { sold_by: 'weight', price_per: 'kg', size: 2, unit: 'kg', step_g: 250, each_g: 180,
+    prices: { [stores.Coles]: 200 }, converted: [stores.Coles] });
+  assert.equal(r.status, 200);
+  assert.deepEqual([r.body.sold_by, r.body.setup, r.body.step_g, r.body.each_g, r.body.prices[stores.Coles]], ['weight', false, 250, 180, 200]);
+  assert.equal(r.body.checked[stores.Coles], '2026-01-01 00:00:00');
+  assert.ok(checked);
+  // What was on the list became a weight: its usual amount.
+  item = (await call('GET', '/shop')).body.items.find((x) => x.product_id === id);
+  assert.deepEqual([item.qty, item.grams], [1, 2000]);
+  // Added again: another usual amount.
+  item = (await call('POST', '/shop/items', { list: 'shared', product_id: id })).body;
+  assert.equal(item.grams, 4000);
+
+  // Counted instead, with a note and back to by weight.
+  r = await call('PATCH', `/shop/items/${item.id}`, { grams: null, qty: 6, note: '  a bit  green ' });
+  assert.deepEqual([r.body.grams, r.body.qty, r.body.note], [null, 6, 'a bit green']);
+  assert.equal((await call('PATCH', `/shop/items/${item.id}`, { grams: 0 })).status, 400);
+  assert.equal((await call('PATCH', `/shop/items/${item.id}`, { note: 'x'.repeat(201) })).status, 400);
+  r = await call('PATCH', `/shop/items/${item.id}`, { grams: 1500, note: '' });
+  assert.deepEqual([r.body.grams, r.body.note], [1500, null]);
+
+  // Swapped to another size at a store, for this shop only: ticked off and added again, it's not.
+  assert.equal((await call('PATCH', `/shop/items/${item.id}`, { swap_store_id: 9999 })).status, 400);
+  r = await call('PATCH', `/shop/items/${item.id}`, { swap_store_id: stores.Woolworths, note: 'only if ripe' });
+  assert.equal(r.body.swap_store_id, stores.Woolworths);
+  await call('PATCH', `/shop/items/${item.id}`, { done: true });
+  r = await call('POST', '/shop/items', { list: 'shared', product_id: id });
+  assert.deepEqual([r.body.swap_store_id, r.body.note, r.body.grams], [null, null, 2000]);
+
+  // Back to packs: the list counts it again.
+  await call('PATCH', `/shop/products/${id}`, { sold_by: 'pack', price_per: 'each' });
+  item = (await call('GET', '/shop')).body.items.find((x) => x.product_id === id);
+  assert.equal(item.grams, null);
+
+  // Kept in a backup, along with the list's weights and notes.
+  await call('PATCH', `/shop/items/${item.id}`, { note: 'the big bunch' });
+  const shop = (await call('GET', '/export')).body.shopping;
+  assert.equal(shop.products.find((x) => x.id === id).each_g, 180);
+  assert.equal(shop.items.find((x) => x.id === item.id).note, 'the big bunch');
+  // An older backup's cheaper similar product comes back as a close match.
+  const old = (await call('GET', '/export')).body;
+  delete old.shopping.options;
+  old.shopping.similar = [{ product_id: id, store_id: stores.Aldi, name: 'Test Bananas', size: '1kg', price_cents: 300, url: 'https://shop.example/a/b', seen_at: '2026-01-01 00:00:00' }];
+  await call('POST', '/import', old);
+  p = (await call('GET', '/shop')).body.products.find((x) => x.id === id);
+  assert.equal(p.options[stores.Aldi].similar.name, 'Test Bananas');
 }));

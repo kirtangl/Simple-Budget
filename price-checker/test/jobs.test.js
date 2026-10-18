@@ -84,6 +84,14 @@ test('checker: a refresh finds each matched product again, by its address or its
   assert.equal(by[3].found, false);
   assert.deepEqual([j.stores.south.done, j.stores.south.total], [2, 2]);
   assert.ok(sameUrl('https://a.example/x/', 'https://A.example/x?y=1'));
+  assert.equal(by[1].others, undefined);
+
+  // With search, it's searched for by name, and the other results come back with it.
+  const s = await finished(jobs, jobs.start({ type: 'refresh', items: [
+    { key: '1', store: 'north', url: 'https://shop.example/north/Test-Oats', name: 'Test Oats', q: 'test oats', search: true },
+  ] }).id, c);
+  assert.equal(s.results[0].found, true);
+  assert.equal(s.results[0].others.length, shelves.north.filter((r) => /oats/i.test(r.name)).length);
 });
 
 test('checker: one job at a time, and the next one waits its turn', async () => {

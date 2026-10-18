@@ -710,6 +710,12 @@ test('updates: preferences, versions behind, and the welcome after an update', a
       assert.equal((await call('PUT', '/updates/prefs', { token_ignored: true })).body.token_ignored, true);
       assert.equal((await call('PUT', '/updates/prefs', { token_ignored: false })).body.token_ignored, false);
       assert.equal((await call('PUT', '/updates/prefs', { token_ignored: 'yes' })).status, 400);
+      // The server folder, for the commands of a release's extra steps.
+      assert.equal(r.body.server_folder, null);
+      assert.equal((await call('PUT', '/updates/prefs', { server_folder: '/opt/docker/My Budget' })).body.server_folder, '/opt/docker/My Budget');
+      assert.equal((await call('PUT', '/updates/prefs', { server_folder: 'relative/path' })).status, 400);
+      assert.equal((await call('PUT', '/updates/prefs', { server_folder: '/opt/x"; rm -rf /' })).status, 400);
+      assert.equal((await call('PUT', '/updates/prefs', { server_folder: '' })).body.server_folder, null);
     });
     // With the updater, IMAGE_TAG decides and the switch is locked.
     process.env.UPDATER_URL = 'http://updater:8080';
