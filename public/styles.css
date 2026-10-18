@@ -1968,6 +1968,12 @@ button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
 .sp-foot { display: flex; flex-direction: column; gap: 2px; }
 #prod-foot { min-width: 0; }
 dialog.saved-pop .error:empty { display: none; }
+/* Phones: the popup fits the screen and only the product list scrolls (no scroll inside a scroll). */
+@media (max-width: 720px) {
+  dialog.saved-pop form { display: flex; flex-direction: column; overflow: hidden; }
+  dialog.saved-pop form > * { flex: none; }
+  dialog.saved-pop #prod-body { flex: 1 1 auto; min-height: 0; max-height: none; overscroll-behavior: contain; }
+}
 .sp-save { font-size: .8rem; font-weight: 600; color: var(--due); }
 .undo-bar { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; padding: 10px 12px;
   border-radius: 10px; background: var(--text); color: var(--card); }

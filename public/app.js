@@ -4452,7 +4452,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       const weighed = isWeighed(p) && it.grams != null;
       // Swapped for this shop, at whichever store it's swapped at.
       const swap = it.swap_store_id ? swappedAt(it, p, it.swap_store_id) : null;
-      const swapLabel = swap && (it.swap_kind === 'similar' ? `${storeProduct(it.swap_store_id, swap.name)}${swap.size && !swap.name.includes(swap.size) ? ` ${swap.size}` : ''}`
+      const swapLabel = swap && (it.swap_kind === 'similar' ? `${storeProduct(it.swap_store_id, swap.name)}${sizeAfter(swap.name, swap.size)}`
         : `${swap.size || 'other size'}${it.swap_store_id !== store ? ` at ${storeName(it.swap_store_id)}` : ''}`);
       const cheaper = best && best.store !== store ? best : null;
       const got = Boolean(it.done_at);
@@ -4465,7 +4465,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
             ${it.note ? html`<span class="note-mark" title="Note: ${it.note}" aria-label="Has a note">${raw(NOTE_ICON)}</span>` : ''}
             ${p.setup ? html`<button type="button" class="setup-tag" data-action="shop-setup" data-id="${p.id}">Set up</button>` : ''}</div>
           ${!got && p.similar && !swap ? html`<button type="button" class="similar-line" data-action="shop-item" data-id="${it.id}" title="A similar product costs less for the amount: tap to swap to it for this shop">
-            <span class="swap-mark" aria-hidden="true">⇆</span>${storeProduct(p.similar.store_id, p.similar.name)}${p.similar.size && !p.similar.name.includes(p.similar.size) ? ` ${p.similar.size}` : ''} <b>${money2(p.similar.price_cents)}</b></button>` : ''}
+            <span class="swap-mark" aria-hidden="true">⇆</span>${storeProduct(p.similar.store_id, p.similar.name)}${sizeAfter(p.similar.name, p.similar.size)} <b>${money2(p.similar.price_cents)}</b></button>` : ''}
         </div>
         <div class="si-who">${got ? html`${it.done_by_name ? html`<span class="who-init" style="--tag:${it.done_by_colour || 'var(--brand)'}" title="Checked off by ${it.done_by_name}">${it.done_by_name.slice(0, 1).toUpperCase()}</span>` : ''}
           ${at ? html`<span class="who-at">${storeDot(at)}${storeName(at)}</span>` : ''}`
@@ -4884,7 +4884,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     const simLine = ({ s, o, m }) => {
       const per = m ? perUnitText(o.price_cents, m[1], m[0]) : '';
       const on = it.swap_store_id === s.id && it.swap_kind === 'similar';
-      return html`<div class="ip-size ${on ? 'on' : ''}">${storeDot(s.id)}<span class="grow">${on ? 'Swapped to ' : ''}<b>${storeProduct(s.id, o.name)}</b>${o.size && !o.name.includes(o.size) ? ` ${o.size}` : ''}
+      return html`<div class="ip-size ${on ? 'on' : ''}">${storeDot(s.id)}<span class="grow">${on ? 'Swapped to ' : ''}<b>${storeProduct(s.id, o.name)}</b>${sizeAfter(o.name, o.size)}
           · ${money2(o.price_cents)}${per ? ` (${per})` : ''}${on ? ' for this shop' : ''} <a class="lookup" href="${o.url}" target="_blank" rel="noopener noreferrer">View ↗</a></span>
         ${on ? html`<button type="button" class="mini" data-swap="">Undo</button>` : html`<button type="button" class="mini primary" data-swap="${s.id}" data-kind="similar">Swap</button>`}</div>`;
     };
@@ -5007,6 +5007,16 @@ sudo docker compose up -d --build</pre>${s.extra}`;
   }
 
   // A store's size, like "1.5kg" or "2 L", as [weight or volume, g or mL].
+  // A store product's size after its name, unless the name already says it ("365g" and "365 g",
+  // or "1kg" and "1000 g", are the same).
+  function sizeAfter(name, size) {
+    if (!size) return '';
+    const squash = (t) => String(t || '').toLowerCase().replace(/\s+/g, '');
+    if (squash(name).includes(squash(size))) return '';
+    const a = measureText(size);
+    const b = measureText(name);
+    return a && b && a[0] === b[0] && a[1] === b[1] ? '' : ` ${size}`;
+  }
   function measureText(text) {
     const m = /(\d+(?:\.\d+)?)\s*(kg|g|ml|l)\b/i.exec(String(text || ''));
     if (!m) return null;
@@ -5108,7 +5118,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           <div class="price-meta">${p.prices[s.id] != null ? checkedTag(p.checked?.[s.id]) : ''}
             ${p.was?.[s.id] ? html`<span class="price-special">Special · was ${money(p.was[s.id])}</span>` : ''}
             ${lookupLink(s, p.name, sold === 'weight' ? '' : sizeLabel(p))}</div>
-          ${p.matches?.[s.id]?.url ? html`<div class="match-line muted small" title="${p.matches[s.id].name}">Price is for ${p.matches[s.id].name}${p.matches[s.id].size && !p.matches[s.id].name.includes(p.matches[s.id].size) ? ` ${p.matches[s.id].size}` : ''}</div>` : matchLine(p, s)}</div>`)}</div>
+          ${p.matches?.[s.id]?.url ? html`<div class="match-line muted small" title="${p.matches[s.id].name}">Price is for ${p.matches[s.id].name}${sizeAfter(p.matches[s.id].name, p.matches[s.id].size)}</div>` : matchLine(p, s)}</div>`)}</div>
         ${checker.length ? (matched.length ? html`<div class="auto-bubble ${stale.length ? 'stale' : 'fresh'}"><div class="grow">
               <b>${stale.length ? `${stale.length} ${stale.length === 1 ? 'price is' : 'prices are'} from before Wednesday` : 'Prices are up to date'}</b>
               <span class="muted small">Kept up to date from ${matched.map((s) => s.name).join(', ')}. <button type="button" class="linkish small" data-auto-find>Change matches</button></span></div>
@@ -5375,7 +5385,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         <ul class="list upd-list">${list.map(({ it, p }) => {
           const here = itemCost(p, store) ?? bestPrice(p, store)?.cents;
           return html`<li><div class="grow"><div class="title">${productLabel(p)}${here != null ? html` <span class="muted small">${money(here)}</span>` : ''}</div>
-            <div class="small">${storeDot(p.similar.store_id)}${storeProduct(p.similar.store_id, p.similar.name)}${p.similar.size && !p.similar.name.includes(p.similar.size) ? ` ${p.similar.size}` : ''} <b>${money(p.similar.price_cents)}</b>
+            <div class="small">${storeDot(p.similar.store_id)}${storeProduct(p.similar.store_id, p.similar.name)}${sizeAfter(p.similar.name, p.similar.size)} <b>${money(p.similar.price_cents)}</b>
               <a class="lookup" href="${p.similar.url}" target="_blank" rel="noopener noreferrer">View ↗</a></div></div>
             <button type="button" class="mini" data-open="${it.id}">Open</button></li>`;
         })}</ul>${list.length ? '' : html`<p class="empty">Nothing on the list has a cheaper similar product.</p>`}`,
