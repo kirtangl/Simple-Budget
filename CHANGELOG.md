@@ -6,6 +6,7 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 
 ### New
 - **Aisles in Edit product** are tidier. When a product is in the same place at every store location (like Dairy), it's one box saying so, with **Change**, and **Different at some stores? Set per location** to set them one by one. Otherwise each location is a row you tap to change, with **Not set** in orange, and **Set all the same** sets one aisle or category everywhere at once (adding the category to any location that hasn't got it).
+- **Find prices** (automatic price search) is redone. Each store is a tab across the top showing how it's going: a spinner while it searches, then **✓ Matched** or **Pick one**. Under it is that store's **likely matches**, sorted by price per kg (or L), each one line with its size, price per kg, **Special · was …** and **In store only**, a ≈ for a store's approximate weight, and ↗ to view it on the store's site. Things made from it, like pear juice or baby food, are tucked under **Show … other results**. **Not sold at …** is under the list, and **Next: …** steps to the next store.
 - **Manage stores** is redone: each store is a card you can fold away, showing its locations and how many items have aisles at each ("Aisles not set" in orange). A ⋯ menu on the store has Rename, Search link, Colour and Delete, and one on each location has Set aisles…, Rename and Delete location. **+ Add a … location** sits under each store, and **+ Add a store chain** at the bottom.
 
 ### Improved

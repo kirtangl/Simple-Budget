@@ -5651,73 +5651,175 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     });
   }
 
-  // Automatic price search for a product: searches the stores, then the one bought at each is
-  // picked with Use this. only is a store id, to find a new match at just that store.
+  // Automatic price search for a product: a tab for each store with how its search is going, and
+  // the one bought there is picked from its likely matches. only is a store id, to find a new
+  // match at just that store.
   function findPrices(p, back, { only = null, q = null, job = null } = {}) {
     const money2 = (c) => moneyFmt.format((c || 0) / 100);
     const stores = autoStores().filter((s) => !only || s.id === only);
     let current = job;
+    let words = q || job?.q || p.name;
+    // The store showing: the first one without a match, until another is picked.
+    const mineAt = (sid) => shopProduct(p.id)?.matches?.[sid];
+    let tab = (stores.find((s) => !mineAt(s.id)?.url) || stores[0])?.id;
+    const opened = new Set(); // stores showing their other results
     // A store that sells it by the kg, picked while it's bought by the pack: offer to switch.
     let byKg = null;
-    const results = (j, s) => {
-      const st = j.stores[s.id];
-      if (!st || st.state !== 'done') return '';
+
+    // Likely matches name what was searched for (its last word, like Pears in Packham Pears) and
+    // aren't something made from it, like pear juice or pear baby food.
+    const MADE = /\b(juice|nectar|cheese|yogh?urt|baby|toddler|pouch(?:es)?|puree|drinks?|cider|sauce|jam|spread|flavou?red|snacks?|bars?|chips|crisps|cereal|muesli|cakes?|muffins?|biscuits?|cookies?|lollies|soap|shampoo|candles?|dog|cat)\b/i;
+    const stem = (w) => w.toLowerCase().replace(/(?:es|s)$/, '');
+    const wordsOf = (t) => String(t || '').toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 2);
+    const split = (list, sid) => {
+      const asked = wordsOf(words).map(stem);
+      const head = asked[asked.length - 1];
+      const madeOf = (r) => { const m = MADE.exec(r.name); return m && !asked.includes(stem(m[1])) ? m[1].toLowerCase() : null; };
+      const likely = [];
+      const others = [];
+      for (const r of list) {
+        const named = !head || wordsOf(r.name).map(stem).includes(head);
+        (mineAt(sid)?.url === r.url || (named && !madeOf(r)) ? likely : others).push(r);
+      }
+      if (!likely.length) return { likely: others, others: [], kinds: [] };
+      const kinds = [...new Set(others.map((r) => madeOf(r)).filter(Boolean))];
+      return { likely, others, kinds };
+    };
+    // Its price per kg (or L), from the store's or worked out from its size.
+    const perUnit = (r) => {
+      if (r.per_kg_cents) return { cents: r.per_kg_cents, per: /\b(m?l|litre)\b/i.test(r.size || '') ? 'L' : 'kg' };
+      const m = measureText(r.size) || measureText(r.name);
+      return m && m[1] ? { cents: Math.round((r.price_cents * 1000) / m[1]), per: m[0] === 'weight' ? 'kg' : 'L' } : null;
+    };
+    const byUnit = (a, b) => (perUnit(a)?.cents ?? Infinity) - (perUnit(b)?.cents ?? Infinity) || (a.cost_cents ?? a.price_cents) - (b.cost_cents ?? b.price_cents);
+    // A store's "approx. 180g" as ≈ 180 g.
+    const approx = (t) => String(t || '').replace(/approx\.?\s*/i, '≈ ').replace(/(\d)(kg|g|ml|l)\b/i, '$1 $2');
+
+    const row = (s, r, on) => {
+      const cost = r.cost_cents ?? r.price_cents;
+      const unit = perUnit(r);
+      const loose = cost !== r.price_cents;
+      const size = r.sold === 'kg' || /^(each|per kg)$/i.test(r.size || '') ? '' : r.each_grams && !/approx/i.test(r.size || '') ? `≈ ${r.each_grams} g` : approx(r.size);
+      const bits = [
+        loose && r.sold === 'each' ? `${money2(r.price_cents)} each` : '',
+        size,
+        unit ? `${money2(unit.cents)}/${unit.per}` : r.unit_price || '',
+        r.available === false ? 'In store only' : '',
+      ].filter(Boolean).join(' · ');
+      const note = r.special ? html`${bits ? ' · ' : ''}<span class="fp-special">Special${r.was_cents ? ` · was ${money2(r.was_cents)}` : ''}</span>` : '';
+      const one = !loose && r.sold === 'each' && !r.per_kg_cents && BASE[p.unit] ? html`<div class="fp-sub">Price of one; the store doesn't say what one weighs.</div>` : '';
+      const per = loose ? (p.price_per !== 'each' ? (PER_LABELS[p.price_per] || '').toLowerCase() : `for ${sizeLabel(p)}`) : '';
+      return html`<li class="fp-row${on ? ' on' : ''}"><label class="fp-pick"><input type="radio" name="fp-${s.id}" data-match="${s.id}" data-i="${r.i}" ${raw(on ? 'checked' : '')}>
+          <span class="fp-text"><b class="fp-name">${r.name}</b><span class="fp-sub">${bits}${note}</span>${one}</span>
+          <span class="fp-price"><b class="num">${money2(cost)}</b>${per ? html`<span class="fp-per">${per}</span>` : ''}</span></label>
+        <a class="fp-view" href="${r.url}" target="_blank" rel="noopener noreferrer" aria-label="View ${r.name} at ${s.name}" title="View at ${s.name}">↗</a></li>`;
+    };
+
+    // Each store's tab: searching, matched, pick one, not sold, or what went wrong.
+    const tabState = (j, s) => {
+      const st = j?.stores?.[s.id];
+      const mine = mineAt(s.id);
+      if (!st || st.state === 'waiting' || st.state === 'working') return html`<span class="fp-state"><span class="auto-spin" aria-hidden="true"></span>Searching…</span>`;
+      if (st.state === 'needs_person') return html`<span class="fp-state warn-text">Waiting for you</span>`;
+      if (st.state !== 'done') return html`<span class="fp-state warn-text">${st.state === 'cancelled' ? 'Stopped' : st.state === 'try_later' ? 'Try later' : "Didn't work"}</span>`;
+      if (mine?.url) return html`<span class="fp-state good-text">✓ Matched</span>`;
+      if (mine) return html`<span class="fp-state muted">Not sold here</span>`;
+      if (!(j.results?.[s.id] || []).length) return html`<span class="fp-state muted">Nothing found</span>`;
+      return html`<span class="fp-state warn-text">Pick one</span>`;
+    };
+    const panel = (j, s) => {
+      const st = j?.stores?.[s.id];
+      if (!st || st.state === 'waiting' || st.state === 'working') return html`<div class="fp-wait"><span class="auto-spin" aria-hidden="true"></span>${st?.state === 'waiting' && j.waiting_for ? 'Waiting for another check to finish…' : `Searching ${s.name}…`}</div>`;
+      if (st.state !== 'done') return html`<div class="auto-stores">${autoProgress(j, s)}</div>`;
       const list = (j.results && j.results[s.id]) || [];
-      const mine = shopProduct(p.id)?.matches?.[s.id];
-      const none = mine && !mine.url ? html`<span class="muted small">None of these ✓ (no automatic price at ${s.name})</span>`
-        : html`<button type="button" class="mini" data-unmatch="${s.id}">None of these</button>`;
-      if (!list.length) return html`<p class="muted small">Nothing found at ${s.name}. Try different words above.</p>`;
-      return html`<ul class="list find-list">${list.slice(0, 12).map((r, i) => {
-        const on = mine && mine.url === r.url;
-        // Loose fruit and veg: priced by weight for this product, from the store's price per kg.
-        const cost = r.cost_cents ?? r.price_cents;
-        const loose = cost !== r.price_cents ? html`<div class="loose-line small">${money2(r.price_cents)} ${r.sold === 'kg' ? 'per kg' : 'each'}
-          ≈ ${money2(r.per_kg_cents)}/kg${r.each_grams ? ` (${r.each_grams} g each)` : ''} · <b>${money2(cost)}</b> ${p.price_per !== 'each' ? (PER_LABELS[p.price_per] || '').toLowerCase() : `for ${sizeLabel(p)}`}</div>`
-          : r.sold === 'each' && !r.per_kg_cents && BASE[p.unit] ? html`<div class="loose-line small">Sold each, and the store doesn't say what one weighs, so this is the price of one.</div>` : '';
-        return html`<li class="${on ? 'on' : ''}"><div class="grow"><div class="title">${r.name}</div>
-            ${loose}
-            <div class="muted small">${[r.size, r.unit_price].filter(Boolean).join(' · ')}
-              <a class="lookup" href="${r.url}" target="_blank" rel="noopener noreferrer">View ↗</a></div>
-            ${r.special ? html`<span class="sum-pill">Special${r.was_cents ? ` · was ${money2(r.was_cents)}` : ''}</span>` : ''}
-            ${r.available === false ? html`<span class="muted small"> In store only</span>` : ''}</div>
-          <b class="num find-price">${money2(cost)}</b>
-          ${on ? html`<span class="mini find-on">Matched ✓</span>` : html`<button type="button" class="mini primary" data-match="${s.id}" data-i="${r.i ?? i}">Use this</button>`}</li>`;
-      })}</ul><div class="find-none">${none}</div>`;
+      const mine = mineAt(s.id);
+      const none = mine && !mine.url ? html`<p class="fp-none muted small">Not sold at ${s.name} ✓ (no automatic price there)</p>`
+        : html`<p class="fp-none"><button type="button" class="linkish small" data-unmatch="${s.id}">Not sold at ${s.name}</button></p>`;
+      if (!list.length) return html`<p class="muted small">Nothing found at ${s.name}. Try different words above.</p>${none}`;
+      const { likely, others, kinds } = split(list, s.id);
+      const unitWord = likely.some((r) => perUnit(r)?.per === 'L') && !likely.some((r) => perUnit(r)?.per === 'kg') ? 'L' : 'kg';
+      const show = opened.has(s.id);
+      return html`<div class="fp-list-head"><span>Likely matches</span><span class="fp-sort">Sorted by price per ${unitWord}</span></div>
+        <ul class="fp-list">${likely.slice().sort(byUnit).map((r) => row(s, r, mine?.url === r.url))}</ul>
+        ${others.length ? html`<button type="button" class="fp-more" data-fp-more="${s.id}" aria-expanded="${show ? 'true' : 'false'}">${show ? 'Hide' : 'Show'} ${others.length} other ${others.length === 1 ? 'result' : 'results'}${kinds.length ? html` <span class="muted">${kinds.slice(0, 3).join(', ')}</span>` : ''}</button>
+          ${show ? html`<ul class="fp-list fp-others">${others.slice().sort(byUnit).map((r) => row(s, r, mine?.url === r.url))}</ul>` : ''}` : ''}
+        ${none}`;
     };
     const draw = (j) => {
+      current = j;
       const box = $modalForm.querySelector('#find-body');
       if (!box) return;
-      current = j;
+      const s = stores.find((x) => x.id === tab) || stores[0];
       const offer = byKg && !isWeighed(shopProduct(p.id) || p) ? html`<div class="setup-banner kg-offer"><span class="grow">${storeName(byKg)} sells this by the kg. Switch to By weight?</span>
         <button type="button" class="mini primary" data-by-kg>Switch</button><button type="button" class="mini" data-by-kg-no>No thanks</button></div>` : '';
-      box.innerHTML = html`${offer}${stores.map((s) => html`<h3 class="form-section find-head">${autoProgress(j, s)}</h3>${results(j, s)}`)}`.s;
-      const help = $modalForm.querySelector('#find-help');
-      if (help) help.textContent = jobRunning(j) ? 'Searching the stores. This usually takes a few seconds.' : 'Tap Use this on the one you buy at each store. Its price is saved now and kept up to date.';
+      const tabs = $modalForm.querySelector('#fp-tabs');
+      tabs.innerHTML = stores.map((x) => html`<button type="button" role="tab" class="fp-tab${x.id === s.id ? ' on' : ''}" aria-selected="${x.id === s.id ? 'true' : 'false'}" data-fp-tab="${x.id}">
+        <span class="fp-store">${storeDot(x.id)}${x.name}</span>${tabState(j, x)}</button>`.s).join('');
+      box.innerHTML = html`${offer}${s ? panel(j, s) : ''}`.s;
+      const matched = stores.filter((x) => mineAt(x.id)?.url).length;
+      $modalForm.querySelector('#fp-count').textContent = `${matched} of ${stores.length} ${stores.length === 1 ? 'store' : 'stores'} matched`;
+      const next = stores[stores.indexOf(s) + 1];
+      const go = $modalForm.querySelector('[data-fp-next]');
+      go.textContent = next ? `Next: ${next.name}` : 'Done';
+      go.dataset.fpNext = next ? String(next.id) : '';
     };
-    const start = async (form, words) => {
+    const start = async (form) => {
       form.querySelector('#form-error').textContent = '';
+      opened.clear();
       try {
-        const j = await api('POST', '/shop/checker/find', { product_id: p.id, store_ids: only ? [only] : undefined, q: words || undefined });
+        const j = await api('POST', '/shop/checker/find', { product_id: p.id, store_ids: only ? [only] : undefined, q: words !== p.name ? words : undefined });
         followJob(j, draw, form);
       } catch (err) { form.querySelector('#form-error').textContent = err.message; }
     };
     openForm({
-      title: only ? `Find a new match · ${storeName(only)}` : 'Automatic price search',
-      body: html`<p class="find-what"><b>${productLabel(p)}</b></p>
-        <div class="prod-tools"><label for="find-q" class="sr-only">Search the stores for</label>
-          <input id="find-q" type="search" value="${q || current?.q || p.name}" autocomplete="off">
-          <button type="button" class="mini" data-find-go>Search again</button></div>
-        <p class="muted small" id="find-help">Searching the stores. This usually takes a few seconds.</p>
+      title: null,
+      cls: 'find-pop',
+      body: html`${popHead(`${only ? 'Find a new match' : 'Find prices'} · ${productLabel(p)}`, {}, html`<p class="pop-sub">Pick the one you buy at ${only ? storeName(only) : 'each store'}. Its price is kept up to date.</p>`)}
+        <div class="fp-search"><label for="find-q" class="sr-only">Search the stores for</label>
+          <input id="find-q" type="search" value="${words}" autocomplete="off">
+          <button type="button" data-find-go>Search again</button></div>
+        <div class="fp-tabs" id="fp-tabs" role="tablist" style="--n: ${stores.length}"></div>
         <div id="find-body"></div>`,
-      lead: html`<button type="button" data-find-back>Back</button>`,
+      lead: html`<span class="fp-count" id="fp-count"></span><span class="spacer"></span><button type="button" data-find-back>Back</button><button type="button" class="primary" data-fp-next>Next</button>`,
       afterRender: (form) => {
         if (current) followJob(current, draw, form); else start(form);
-        const again = () => start(form, form.querySelector('#find-q').value.trim());
+        const again = () => { words = form.querySelector('#find-q').value.trim() || p.name; start(form); };
         form.querySelector('#find-q').onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); again(); } };
+        const pick = async (store, i) => {
+          try {
+            await api('PUT', `/shop/products/${p.id}/matches`, { job: current.id, picks: { [store]: i } });
+            const r = i != null && (current.results?.[store] || []).find((x) => x.i === i);
+            if (r && (r.sold === 'kg' || r.sold === 'each') && r.per_kg_cents) byKg = store;
+            await loadShop(state.shop.list);
+            render();
+            draw(current);
+          } catch (err) { form.querySelector('#form-error').textContent = err.message; }
+        };
+        form.onchange = (ev) => {
+          const m = ev.target.closest('[data-match]');
+          if (m && current) pick(Number(m.dataset.match), Number(m.dataset.i));
+        };
         form.onclick = async (ev) => {
           if (solveClick(form, ev)) return;
           if (ev.target.closest('[data-find-go]')) { again(); return; }
           if (ev.target.closest('[data-find-back]')) { back(); return; }
+          const t = ev.target.closest('[data-fp-tab]');
+          if (t) { tab = Number(t.dataset.fpTab); if (current) draw(current); return; }
+          const n = ev.target.closest('[data-fp-next]');
+          if (n) {
+            if (!n.dataset.fpNext) { back(); return; }
+            tab = Number(n.dataset.fpNext);
+            if (current) draw(current);
+            form.scrollTop = 0;
+            return;
+          }
+          const more = ev.target.closest('[data-fp-more]');
+          if (more) {
+            const sid = Number(more.dataset.fpMore);
+            if (opened.has(sid)) opened.delete(sid); else opened.add(sid);
+            if (current) draw(current);
+            return;
+          }
           if (ev.target.closest('[data-by-kg-no]')) { byKg = null; draw(current); return; }
           if (ev.target.closest('[data-by-kg]') && current) {
             // By weight, priced per kg, 1 kg usually (or its weight if it has one); its matches are
@@ -5752,17 +5854,8 @@ sudo docker compose up -d --build</pre>${s.extra}`;
             } catch (err) { form.querySelector('#form-error').textContent = err.message; }
             return;
           }
-          const m = ev.target.closest('[data-match], [data-unmatch]');
-          if (!m || !current) return;
-          try {
-            const store = Number(m.dataset.match || m.dataset.unmatch);
-            await api('PUT', `/shop/products/${p.id}/matches`, { job: current.id, picks: { [store]: m.dataset.match ? Number(m.dataset.i) : null } });
-            const r = m.dataset.match && (current.results?.[store] || []).find((x) => x.i === Number(m.dataset.i));
-            if (r && (r.sold === 'kg' || r.sold === 'each') && r.per_kg_cents) byKg = store;
-            await loadShop(state.shop.list);
-            render();
-            draw(current);
-          } catch (err) { form.querySelector('#form-error').textContent = err.message; }
+          const u = ev.target.closest('[data-unmatch]');
+          if (u && current) pick(Number(u.dataset.unmatch), null);
         };
       },
     });
