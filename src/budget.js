@@ -138,12 +138,12 @@ function occurrences(expense, start, end, anchor = start) {
   return dates;
 }
 
-// How each account's per-pay total is rounded before the buffer is added.
+// How each account's per-pay total (with its buffer) is rounded.
 const ROUNDING = { exact: 1, up5: 500, up10: 1000 };
 const DEFAULT_DEPOSIT_RULES = { rounding: 'up10', buffer_percent: 0 };
 
-// Round the account's whole per-pay total up (to the cent, $5 or $10),
-// then add the buffer percentage on top. 293 -> up5 -> 295; 301 -> up10 -> 310 -> +10% -> 341.
+// Add the buffer percentage to the account's whole per-pay total, then round that up (to the cent,
+// $5 or $10), so the deposit is always a round number. 293 -> up5 -> 295; 301 -> +10% -> 331.10 -> up10 -> 340.
 function roundUp(cents, rounding) {
   const step = (Object.hasOwn(ROUNDING, rounding) && ROUNDING[rounding]) || 1;
   // The small epsilon stops float noise like 29300.0000001 rounding up a whole step.
@@ -151,8 +151,8 @@ function roundUp(cents, rounding) {
 }
 
 function depositCents(averageCents, rules = DEFAULT_DEPOSIT_RULES) {
-  const rounded = roundUp(averageCents, rules.rounding);
-  return Math.round((rounded * (100 + (Number(rules.buffer_percent) || 0))) / 100);
+  const buffered = Math.round((averageCents * (100 + (Number(rules.buffer_percent) || 0))) / 100);
+  return roundUp(buffered, rules.rounding);
 }
 
 // An income counts in a cycle it overlaps, except that once it has ended it

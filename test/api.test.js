@@ -105,7 +105,7 @@ test('deposit settings are saved and used', () => withServer({}, async (call) =>
   assert.equal(r.body.rounding, 'up10');
   assert.equal(r.body.buffer_percent, 10);
   const { body: cycle } = await call('GET', '/cycle?offset=0');
-  assert.equal(cycle.accounts[0].deposit_cents, 34100);
+  assert.equal(cycle.accounts[0].deposit_cents, 34000);
   r = await call('PUT', '/settings', { buffer_percent: 25 });
   assert.equal(r.status, 400);
   r = await call('PUT', '/settings', { rounding: 'up7' });

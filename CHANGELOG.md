@@ -21,6 +21,7 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 - When no store is picked on the Shopping tab, a banner above the list says so, with **+ Add a store location** (or **Choose store**). Prices on the list, totals and aisles all need one.
 
 ### Fixed
+- Deposits are rounded **after** the buffer is added, so they're always a round number. For example, $301 with a 10% buffer and rounding up to $10 is now $340 (it was $341).
 - **Saved products** no longer shows an error ("undefined is not an object") when the list has ticked-off items.
 - A store product's size no longer shows twice when its name already says it, like "Tim Tam Value Pack 365g 365 g".
 

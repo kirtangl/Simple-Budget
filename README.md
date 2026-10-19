@@ -29,11 +29,11 @@ It works on phones and desktops (add it to your home screen for an app-like feel
 
 1. Each bill, saving and loan repayment is converted to a per-cycle amount: `amount × times per year ÷ cycles per year` (26 on a fortnightly budget, 52 weekly, 12 monthly). Income is averaged the same way. For example, a $300 monthly bill is $300 × 12 ÷ 26 = $138.46 a fortnight.
 2. The per-pay amounts for everything paid from the account are added up.
-3. The account's **total** is rounded up (not each bill), using the **Rounding** setting:
+3. The **Buffer** percentage (0 to 20%, default 0%) is added to that total. For example, $301 with a 10% buffer is $331.10.
+4. The account's **total** (with the buffer) is rounded up (not each bill), using the **Rounding** setting, so the deposit is always a round number:
    - **Exact**: $293 stays $293
    - **Round up to $5**: $293 becomes $295
-   - **Round up to $10** (the default): $293 becomes $300, and $301 becomes $310
-4. The **Buffer** percentage (0 to 20%, default 0%) is added on top of the rounded amount. For example, $310 with a 10% buffer is **$341**.
+   - **Round up to $10** (the default): $293 becomes $300, and $331.10 becomes **$340**
 
 Both settings are under **Settings → General**, or tap **change** next to the rounding note on the Overview.
 

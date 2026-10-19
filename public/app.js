@@ -470,7 +470,7 @@
                 <div class="figures">
                   <span class="figure" title="This ${cycleWord()}'s bills from this account that haven't come out yet (savings not included)"><span class="label">Still to come out</span> <b class="num">${money(r.remaining_cents)}</b></span>
                   <span class="figure" title="${c.cycle.is_current ? 'About what should be in the account today' : `About what should be in the account on ${fmtDate(c.held_on, true)}, once that deposit is in`} so every bill ${HELD_LABELS[state.data.settings.held_basis].toLowerCase()} can be paid, with the deposits still to come. Savings not included."><span class="label">Keep in account</span> <b class="num">${money(r.held_cents)}</b></span>
-                  ${r.deposit_cents !== r.rounded_cents ? html`<span class="figure muted">incl. ${state.data.settings.buffer_percent}% buffer</span>` : ''}
+                  ${state.data.settings.buffer_percent ? html`<span class="figure muted">incl. ${state.data.settings.buffer_percent}% buffer</span>` : ''}
                   ${saved.has(a.id) ? html`<span class="figure goal-saved" title="Saved so far in ${saved.get(a.id).goals.map((g) => g.name).join(', ')}"><span class="label">Goals</span> <b class="num">${money(saved.get(a.id).cents)} saved</b></span>` : ''}
                 </div>
                 ${r.spare_cents < 0 ? html`<div class="dep-warn">${r.savings_cents ? 'Bills + savings are' : 'Bills are'} ${money(need)}, ${money(-r.spare_cents)} more than this transfer</div>` : ''}
@@ -2818,8 +2818,8 @@
     openForm({
       title: 'Deposit rounding',
       body: html`
-        <p class="muted small">Each account's deposit is the per-cycle total of its bills, rounded up as a whole, then the buffer is added on top.
-          For example $301 rounded up to $10 is $310, and a 10% buffer makes it $341.</p>
+        <p class="muted small">Each account's deposit is the per-cycle total of its bills plus the buffer, then rounded up as a whole, so it's always a round number.
+          For example $301 with a 10% buffer is $331.10, and rounded up to $10 that's $340.</p>
         <div class="fields">
           <div class="field"><label for="m-rounding">Rounding</label><select id="m-rounding" name="rounding">
             ${Object.entries(ROUNDING_LABELS).map(([k, v]) => html`<option value="${k}" ${k === s.rounding ? raw('selected') : ''}>${v}</option>`)}</select></div>
@@ -3092,8 +3092,8 @@
       </div>
       <div class="card">
         <h2>Deposits</h2>
-        <p class="muted small">Each account's deposit is the per-cycle total of its bills, rounded up as a whole, then the buffer is added on top.
-          For example $301 rounded up to $10 is $310, and a 10% buffer makes it $341.</p>
+        <p class="muted small">Each account's deposit is the per-cycle total of its bills plus the buffer, then rounded up as a whole, so it's always a round number.
+          For example $301 with a 10% buffer is $331.10, and rounded up to $10 that's $340.</p>
         <form id="deposit-form">
           <div class="fields">
             <div class="field"><label for="rounding">Rounding</label><select id="rounding" name="rounding">
