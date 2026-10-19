@@ -2043,7 +2043,7 @@ input.ck-box::placeholder { color: var(--muted); font-weight: 400; }
 .ck-when.stale { color: var(--due); }
 .ck-when.stale i { background: var(--due); }
 .ck-btns { display: flex; gap: 6px; justify-content: flex-end; }
-.ck-btn { display: grid; place-items: center; width: 36px; height: 40px; min-height: 0; padding: 0; border-radius: 8px; box-shadow: none; color: var(--text); }
+.ck-btn { display: grid; place-items: center; width: 36px; height: 40px; min-height: 0; margin: 0; padding: 0; border-radius: 8px; box-shadow: none; color: var(--text); }
 .ck-btn:disabled { opacity: .4; }
 .ck-btn.hint { border-color: var(--info); color: var(--info); background: color-mix(in srgb, var(--info) 12%, var(--card)); }
 .ck-row.busy [data-ck-refresh] svg { animation: auto-spin .8s linear infinite; }

@@ -26,6 +26,7 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 ### Fixed
 - After picking prices in Find prices, Edit product shows them (with today's check date) straight away. It used to show the old prices, and pressing Save put them back, which also left them showing as checked yesterday and out of date.
 - "Checked today" and "yesterday" go by the calendar, not by 24 hours.
+- The **prices out of date** banner on the list counts prices you typed in as well as automatic ones. **Update** refreshes the automatic ones, and **Check …** opens Check prices showing just what's out of date.
 - Deposits are rounded **after** the buffer is added, so they're always a round number. For example, $301 with a 10% buffer and rounding up to $10 is now $340 (it was $341).
 - **Saved products** no longer shows an error ("undefined is not an object") when the list has ticked-off items.
 - A store product's size no longer shows twice when its name already says it, like "Tim Tam Value Pack 365g 365 g".

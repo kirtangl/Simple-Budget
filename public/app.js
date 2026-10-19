@@ -5651,33 +5651,38 @@ sudo docker compose up -d --build</pre>${s.extra}`;
 
   const autoStores = () => (state.shop.checker ? state.shop.stores.filter((s) => s.checker && state.shop.checker.stores.includes(s.checker)) : []);
   const dateText = (at) => (at ? new Date(`${at.replace(' ', 'T')}Z`).toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '');
-  // Products on the list with a matched price checked before this week's price day.
+  // Prices of what's on the list checked before this week's price day (the stores' Wednesday
+  // price change), typed or automatic: how many, for how many products, and the latest of them.
   function outOfDate() {
-    const since = state.shop.checker?.since;
-    const stores = autoStores();
+    const since = state.shop.price_day;
     const products = new Set();
+    const auto = new Set();
+    const typed = new Set();
     let prices = 0;
     let last = null;
-    if (!since || !stores.length) return { count: 0, prices, last };
+    if (!since) return { count: 0, auto: 0, typed: 0, prices, last };
     for (const it of state.shop.items) {
       const p = !it.done_at && shopProduct(it.product_id);
       if (!p) continue;
-      for (const s of stores) {
-        const at = p.matches?.[s.id]?.url ? p.checked?.[s.id] : since;
-        if (at && at >= since) continue;
+      for (const s of state.shop.stores) {
+        const at = p.checked?.[s.id];
+        if (p.prices[s.id] == null || (at && at >= since)) continue;
         products.add(p.id);
+        (priceIsAuto(p, s.id) ? auto : typed).add(p.id);
         prices += 1;
         if (at && (!last || at > last)) last = at;
       }
     }
-    return { count: products.size, prices, last };
+    return { count: products.size, auto: auto.size, typed: typed.size, prices, last };
   }
+  // Automatic ones are updated from the stores; typed ones are looked at in Check prices.
   function autoBanner() {
-    const { count, prices, last } = outOfDate();
+    const { count, auto, typed, prices, last } = outOfDate();
     if (!count) return '';
     return html`<div class="card auto-banner" role="status"><div class="grow"><b>${prices} ${prices === 1 ? 'price' : 'prices'} out of date</b>
       <span class="muted small">${last ? `Last checked ${dateText(last)}. ` : ''}Stores change their prices on Wednesday mornings.</span></div>
-      <button type="button" class="mini primary" data-action="shop-update">Update ${count} ${count === 1 ? 'product' : 'products'}</button></div>`;
+      ${typed ? html`<button type="button" class="mini ${auto ? '' : 'primary'}" data-action="shop-check-due">Check ${typed} ${typed === 1 ? 'product' : 'products'}</button>` : ''}
+      ${auto ? html`<button type="button" class="mini primary" data-action="shop-update">Update ${auto} ${auto === 1 ? 'product' : 'products'}</button>` : ''}</div>`;
   }
 
   // How a store is going in a check, as a line: a tick, a count, "waiting for you" with Solve, or try later.
@@ -6322,6 +6327,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     },
     'shop-products': () => { state.productQuery = ''; state.productEdit = false; productList(); },
     'shop-check': () => { state.checkQuery = ''; priceCheck(); },
+    'shop-check-due': () => { state.checkQuery = ''; state.checkDue = true; priceCheck(); },
     'shop-similar': () => similarList(),
     'shop-update': () => updatePrices(),
     'shop-helper': () => helperPopup(),
