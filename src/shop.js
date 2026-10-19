@@ -212,6 +212,7 @@ function createShop(db, { checker = null } = {}) {
     const spots = all('SELECT * FROM shop_spots');
     const matches = all('SELECT * FROM shop_matches');
     const options = all('SELECT * FROM shop_options');
+    const notSold = all('SELECT * FROM shop_not_sold');
     return all('SELECT * FROM shop_products ORDER BY name COLLATE NOCASE, size').map((p) => {
       const mine = prices.filter((x) => x.product_id === p.id);
       const opts = {};
@@ -227,6 +228,7 @@ function createShop(db, { checker = null } = {}) {
         matches: Object.fromEntries(matches.filter((x) => x.product_id === p.id)
           .map((x) => [x.store_id, { url: x.url, name: x.name, size: x.size, missing_at: x.missing_at }])),
         options: opts,
+        not_sold: Object.fromEntries(notSold.filter((x) => x.product_id === p.id).map((x) => [x.store_id, x.at])),
         spots: Object.fromEntries(spots.filter((x) => x.product_id === p.id)
           .map((x) => [x.location_id, { aisle: x.aisle, section_id: x.section_id, missing: Boolean(x.missing) }])),
       };
@@ -408,14 +410,22 @@ function createShop(db, { checker = null } = {}) {
     return Number(db.prepare('INSERT INTO shop_products (name, setup) VALUES (?, 1)').run(name).lastInsertRowid);
   };
   const productView = (id) => productsView().find((p) => p.id === id);
+  // Not sold at a store: no price there, and remembered with when it was found.
+  const markNotSold = (pid, sid) => {
+    db.prepare('DELETE FROM shop_prices WHERE product_id = ? AND store_id = ?').run(pid, sid);
+    db.prepare(`INSERT INTO shop_not_sold (product_id, store_id, at) VALUES (?, ?, datetime('now'))
+      ON CONFLICT (product_id, store_id) DO UPDATE SET at = excluded.at`).run(pid, sid);
+  };
   const sameProduct = (name, size, unit, id) => one(`SELECT id FROM shop_products WHERE name = ? AND coalesce(size, 0) = ? AND coalesce(unit, '') = ? AND id <> ?`,
     name, size ?? 0, unit ?? '', id);
   const sizeText = (size, unit) => (size ? ` (${size} ${unit})` : unit ? ` (${unit})` : '');
 
   // { name?, size?, unit?, price_per?, sold_by?, step_g?, each_g?, prices?: { [store id]: cents | null },
-  // checked?: [store ids], converted?: [store ids] }. A changed price counts as checked today, and
+  // checked?: [store ids], converted?: [store ids], not_sold?: [store ids], unmatch?: [store ids] }. A changed price counts as checked today, and
   // so does one in checked: looked at and still right. A converted one is the same price said
-  // another way (per kg instead of per pack), so it keeps when it was checked. Saying how it's sold sets the product up. Something bought by weight
+  // another way (per kg instead of per pack), so it keeps when it was checked. not_sold marks it as
+  // not sold at those stores (in place of a price), and a price there clears that. unmatch stops a
+  // store's price being automatic, when it's typed over. Saying how it's sold sets the product up. Something bought by weight
   // is priced per kg (or 100 g), and its size is the usual amount.
   router.patch('/products/:id', (req, res) => {
     const id = Number(req.params.id);
@@ -439,6 +449,9 @@ function createShop(db, { checker = null } = {}) {
     });
     const checked = new Set(Array.isArray(b.checked) ? b.checked.map(Number) : []);
     const converted = new Set(Array.isArray(b.converted) ? b.converted.map(Number) : []);
+    const storeIds = (v) => (Array.isArray(v) ? v.map(Number).filter((s) => exists('shop_stores', s)) : []);
+    const notSold = storeIds(b.not_sold);
+    const unmatch = storeIds(b.unmatch);
     transaction(db, () => {
       db.prepare('UPDATE shop_products SET name = ?, size = ?, unit = ?, price_per = ?, sold_by = ?, step_g = ?, each_g = ?, setup = ? WHERE id = ?')
         .run(name, size, unit, per, soldBy, step, each, 'sold_by' in b ? 0 : before.setup, id);
@@ -449,7 +462,9 @@ function createShop(db, { checker = null } = {}) {
       } else if (soldBy !== before.sold_by) {
         db.prepare('UPDATE shop_items SET grams = NULL WHERE product_id = ?').run(id);
       }
+      for (const s of unmatch) db.prepare('DELETE FROM shop_matches WHERE product_id = ? AND store_id = ?').run(id, s);
       for (const [s, cents] of set) {
+        db.prepare('DELETE FROM shop_not_sold WHERE product_id = ? AND store_id = ?').run(id, s);
         if (cents === null) { db.prepare('DELETE FROM shop_prices WHERE product_id = ? AND store_id = ?').run(id, s); continue; }
         if (converted.has(s) && cents > 0) {
           const old = one('SELECT price_cents FROM shop_prices WHERE product_id = ? AND store_id = ?', id, s);
@@ -468,6 +483,7 @@ function createShop(db, { checker = null } = {}) {
       for (const s of checked) {
         if (!set.some(([x]) => x === s)) db.prepare("UPDATE shop_prices SET checked_at = datetime('now') WHERE product_id = ? AND store_id = ?").run(id, s);
       }
+      for (const s of notSold) markNotSold(id, s);
     });
     res.json(productView(id));
   });
@@ -814,6 +830,7 @@ function createShop(db, { checker = null } = {}) {
     db.prepare(`INSERT INTO shop_prices (product_id, store_id, price_cents, was_cents, checked_at) VALUES (?, ?, ?, ?, datetime('now'))
       ON CONFLICT (product_id, store_id) DO UPDATE SET price_cents = excluded.price_cents, was_cents = excluded.was_cents, checked_at = excluded.checked_at`)
       .run(pid, sid, cents, normal);
+    db.prepare('DELETE FROM shop_not_sold WHERE product_id = ? AND store_id = ?').run(pid, sid);
   };
 
   router.get('/checker/jobs/:id', async (req, res) => {
@@ -877,6 +894,7 @@ function createShop(db, { checker = null } = {}) {
         if (index === null) {
           db.prepare(`INSERT INTO shop_matches (product_id, store_id, url, name, size, missing_at) VALUES (?, ?, '', '', NULL, NULL)
             ON CONFLICT (product_id, store_id) DO UPDATE SET url = '', name = '', size = NULL, missing_at = NULL`).run(id, Number(sid));
+          markNotSold(id, Number(sid));
           continue;
         }
         const r = (results[key] || [])[int(index, 0, 1000, 'The pick')];
@@ -990,12 +1008,17 @@ function createHelper(db) {
         db.prepare(`INSERT INTO shop_prices (product_id, store_id, price_cents, was_cents, checked_at) VALUES (?, ?, ?, ?, datetime('now'))
           ON CONFLICT (product_id, store_id) DO UPDATE SET price_cents = excluded.price_cents, was_cents = excluded.was_cents, checked_at = excluded.checked_at`)
           .run(id, s.id, cents, was);
+        db.prepare('DELETE FROM shop_not_sold WHERE product_id = ? AND store_id = ?').run(id, s.id);
         if (!before || before.price_cents !== cents) changes.push({ product_id: id, old_cents: before ? before.price_cents : null, new_cents: cents });
       }
       for (const id of ids(b.none)) {
         if (!product(id)) continue;
         db.prepare(`INSERT INTO shop_matches (product_id, store_id, url, name, size, missing_at) VALUES (?, ?, '', '', NULL, NULL)
           ON CONFLICT (product_id, store_id) DO UPDATE SET url = '', name = '', size = NULL, missing_at = NULL`).run(id, s.id);
+        // Not sold at this store, in place of its price.
+        db.prepare('DELETE FROM shop_prices WHERE product_id = ? AND store_id = ?').run(id, s.id);
+        db.prepare(`INSERT INTO shop_not_sold (product_id, store_id, at) VALUES (?, ?, datetime('now'))
+          ON CONFLICT (product_id, store_id) DO UPDATE SET at = excluded.at`).run(id, s.id);
       }
       for (const id of ids(b.missing)) {
         db.prepare("UPDATE shop_matches SET missing_at = datetime('now') WHERE product_id = ? AND store_id = ? AND url <> ''").run(id, s.id);
@@ -1018,6 +1041,7 @@ const SHOP_TABLES = {
   matches: ['shop_matches', ['product_id', 'store_id', 'url', 'name', 'size', 'missing_at']],
   options: ['shop_options', ['product_id', 'store_id', 'kind', 'name', 'size', 'url', 'price_cents', 'was_cents', 'seen_at']],
   spots: ['shop_spots', ['product_id', 'location_id', 'aisle', 'section_id', 'missing']],
+  not_sold: ['shop_not_sold', ['product_id', 'store_id', 'at']],
   items: ['shop_items', ['id', 'product_id', 'owner_id', 'qty', 'grams', 'note', 'swap_store_id', 'swap_kind', 'added_at', 'done_at', 'done_by', 'done_store_id']],
 };
 

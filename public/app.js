@@ -200,7 +200,8 @@
   // button for the left of the bottom row, like Back.
   function openForm({ title, body, onSave, onDelete, saveLabel = 'Save', afterRender, noActions = false, cls = '', lead = null, focus = true }) {
     $modal.className = cls;
-    $modalForm.onclick = null; // a popup's own click handler (afterRender) goes with it
+    $modalForm.onclick = null; // a popup's own click and input handlers (afterRender) go with it
+    $modalForm.oninput = null;
     $modalForm.innerHTML = html`
       ${title == null ? '' : popHead(title, {})}
       ${body}
@@ -4297,10 +4298,13 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     return m.missing_at ? html`<div class="match-line warn small">Couldn't find at ${s.name} <button type="button" class="linkish small" data-find-store="${s.id}">Find new match</button></div>`
       : html`<div class="match-line muted small" title="${m.name}">Auto: ${m.name}</div>`;
   };
-  // A price that hasn't been checked for four weeks is old: prices are worth checking again.
-  const STALE_DAYS = 28;
-  const daysSince = (at) => (at ? Math.floor((Date.now() - Date.parse(`${at.replace(' ', 'T')}Z`)) / 86400000) : null);
-  const priceOld = (p, store) => p.prices[store] != null && (daysSince(p.checked?.[store]) ?? STALE_DAYS) >= STALE_DAYS;
+  // Days since a time the server wrote (in UTC), by the calendar here: 0 today, 1 yesterday.
+  const daysSince = (at) => {
+    if (!at) return null;
+    const d = new Date(`${at.replace(' ', 'T')}Z`);
+    const now = new Date();
+    return Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000);
+  };
   function checkedText(at) {
     const d = daysSince(at);
     if (d === null) return 'Not checked yet';
@@ -4309,6 +4313,16 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     if (d < 14) return `Checked ${d} days ago`;
     if (d < 60) return `Checked ${Math.floor(d / 7)} weeks ago`;
     return `Checked ${Math.floor(d / 30)} months ago`;
+  }
+
+  // A day as short as it can be said: Today, Thu 15 within the week, or 5 Oct.
+  function shortDay(at) {
+    if (!at) return '';
+    const d = new Date(`${at.replace(' ', 'T')}Z`);
+    const days = daysSince(at);
+    if (days <= 0) return 'Today';
+    if (days > 0 && days < 7) return d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric' });
+    return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
   }
 
   // Where a product is at a location, as a group to list it under: { key, label, order }.
@@ -4484,6 +4498,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           <span class="shop-qty" aria-label="${weighed ? gramsText(it.grams) : it.qty} of ${p.name}">${weighed ? gramsText(it.grams) : it.qty}</span>
           <button type="button" data-action="shop-qty" data-id="${it.id}" data-step="1" aria-label="${weighed ? `${gramsText(stepOf(p))} more` : 'One more'} ${p.name}">+</button></span>`}</div>
         <div class="si-total num">${cost != null ? money2(cost) : got ? '—'
+          : store != null && p.not_sold?.[store] ? html`<span class="muted small">Not sold here</span>`
           : html`<button type="button" class="linkish small" data-action="shop-item" data-id="${it.id}">+ price</button>`}
           ${!got && cheaper ? html`<span class="cheaper-at" title="Save ${money(price - cheaper.cents)}">${storeDot(cheaper.store)}${money2(cheaper.cents)} at ${storeName(cheaper.store)}</span>` : ''}</div>
       </li>`;
@@ -5082,6 +5097,8 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     const usualUnit = v('unit', p.unit && SOLD_UNITS[sold].includes(p.unit) ? p.unit : sold === 'weight' ? 'kg' : sold === 'volume' ? 'L' : p.unit || '');
     const usualSize = v('size', p.unit && SOLD_UNITS[sold].includes(p.unit) ? (p.size ?? '') : sold === 'weight' ? 1 : '');
     const checker = autoStores();
+    // Not sold at a store: saved in place of its price, and cleared by typing one.
+    const notSold = (s) => v(`notsold-${s.id}`, p.not_sold?.[s.id] ? '1' : '') === '1';
     const matched = checker.filter((s) => p.matches?.[s.id]?.url);
     const stale = matched.filter((s) => freshness(p.checked?.[s.id]) === 'stale');
     const stores = state.shop.stores;
@@ -5123,11 +5140,14 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           <p class="muted small">For counting them on the list, like 6 bananas. Filled in from Woolworths when it says.</p></div>
         <h3 class="form-section"><span id="pe-price-label">${sold === 'weight' ? 'Price per kg' : 'Price per pack'}</span><span class="muted small">Leave blank if unknown</span></h3>
         <div class="fields three">${stores.map((s) => html`<div class="field price-field"><label for="pe-${s.id}">${storeDot(s.id)}${s.name}</label>
-          <input id="pe-${s.id}" name="price-${s.id}" inputmode="decimal" placeholder="$" value="${v(`price-${s.id}`, moneyInput(priceShown(s)))}">
-          <div class="price-meta">${p.prices[s.id] != null ? checkedTag(p.checked?.[s.id]) : ''}
+          <input id="pe-${s.id}" name="price-${s.id}" inputmode="decimal" class="${notSold(s) ? 'not-sold' : ''}" placeholder="${notSold(s) ? '⊘ Not sold' : '$'}" value="${v(`price-${s.id}`, moneyInput(priceShown(s)))}">
+          <input type="hidden" name="notsold-${s.id}" value="${notSold(s) ? '1' : ''}">
+          <div class="price-meta">${p.prices[s.id] != null ? checkedTag(p.checked?.[s.id])
+            : notSold(s) ? html`<span class="checked-tag">Not sold${p.not_sold?.[s.id] ? ` · ${shortDay(p.not_sold[s.id])}` : ''}</span><button type="button" class="linkish small" data-sold="${s.id}">Undo</button>`
+            : html`<button type="button" class="linkish small" data-not-sold="${s.id}">Not sold here</button>`}
             ${p.was?.[s.id] ? html`<span class="price-special">Special · was ${money(p.was[s.id])}</span>` : ''}
             ${lookupLink(s, p.name, sold === 'weight' ? '' : sizeLabel(p))}</div>
-          ${p.matches?.[s.id]?.url ? html`<div class="match-line muted small" title="${p.matches[s.id].name}">Price is for ${p.matches[s.id].name}${sizeAfter(p.matches[s.id].name, p.matches[s.id].size)}</div>` : matchLine(p, s)}</div>`)}</div>
+          ${p.matches?.[s.id]?.url ? html`<div class="match-line muted small" title="${p.matches[s.id].name}">Price is for ${p.matches[s.id].name}${sizeAfter(p.matches[s.id].name, p.matches[s.id].size)}</div>` : notSold(s) ? '' : matchLine(p, s)}</div>`)}</div>
         ${checker.length ? (matched.length ? html`<div class="auto-bubble ${stale.length ? 'stale' : 'fresh'}"><div class="grow">
               <b>${stale.length ? `${stale.length} ${stale.length === 1 ? 'price is' : 'prices are'} from before Wednesday` : 'Prices are up to date'}</b>
               <span class="muted small">Kept up to date from ${matched.map((s) => s.name).join(', ')}. <button type="button" class="linkish small" data-auto-find>Change matches</button></span></div>
@@ -5141,6 +5161,17 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         const mode = () => form.querySelector('input[name=sold_by]:checked').value;
         const keep = () => ({ ...Object.fromEntries(new FormData(form)), sold_by: mode() });
         const again = (extra = {}) => productEditor(shopProduct(p.id) || p, { back, draft: { ...keep(), ...extra } });
+        // Back from Find prices: its prices (and how it's sold, if that was switched to by weight)
+        // as just saved, with the rest of what was typed kept.
+        const fromFind = () => {
+          const draftNow = keep();
+          return () => {
+            const now = shopProduct(p.id) || p;
+            const draft = Object.fromEntries(Object.entries(draftNow).filter(([k]) => !/^(price|notsold)-/.test(k)));
+            if (now.sold_by !== p.sold_by || now.price_per !== p.price_per) for (const k of ['sold_by', 'size', 'unit']) delete draft[k];
+            productEditor(now, { back, draft });
+          };
+        };
         const show = () => {
           const m = mode();
           form.querySelectorAll('.pe-sold label').forEach((l) => l.classList.toggle('on', l.querySelector('input').checked));
@@ -5196,7 +5227,14 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         for (const s of stores) {
           const input = form.elements[`price-${s.id}`];
           if (input.value !== moneyInput(priceShown(s))) input.dataset.edited = '1';
-          input.addEventListener('input', () => { input.dataset.edited = '1'; });
+          input.addEventListener('input', () => {
+            input.dataset.edited = '1';
+            if (input.value.trim() && input.classList.contains('not-sold')) {
+              input.classList.remove('not-sold');
+              input.placeholder = '$';
+              form.elements[`notsold-${s.id}`].value = '';
+            }
+          });
         }
         form.onclick = async (ev) => {
           const t = ev.target;
@@ -5210,9 +5248,15 @@ sudo docker compose up -d --build</pre>${s.extra}`;
             return;
           }
           if (t.closest('[data-aisle-split]')) { (state.aisleSplit ||= new Set()).add(p.id); again(); return; }
-          if (t.closest('[data-auto-find]')) { const draftNow = keep(); findPrices(p, () => productEditor(shopProduct(p.id) || p, { back, draft: draftNow })); return; }
+          const ns = t.closest('[data-not-sold], [data-sold]');
+          if (ns) {
+            const sid = ns.dataset.notSold || ns.dataset.sold;
+            again(ns.dataset.notSold ? { [`notsold-${sid}`]: '1', [`price-${sid}`]: '' } : { [`notsold-${sid}`]: '' });
+            return;
+          }
+          if (t.closest('[data-auto-find]')) { findPrices(p, fromFind()); return; }
           const f = t.closest('[data-find-store]');
-          if (f) { const draftNow = keep(); findPrices(p, () => productEditor(shopProduct(p.id) || p, { back, draft: draftNow }), { only: Number(f.dataset.findStore) }); return; }
+          if (f) { findPrices(p, fromFind(), { only: Number(f.dataset.findStore) }); return; }
           if (t.closest('[data-refresh]')) { refreshProduct(p, form, () => again(Object.fromEntries(stores.map((s) => [`price-${s.id}`, undefined])))); return; }
           if (t.closest('[data-forget]')) {
             const ok = await askChoice({ title: 'Delete this product?', text: html`<p><b>${productLabel(p)}</b></p><p>It comes off every list, and its prices and aisles are forgotten.</p>`,
@@ -5238,15 +5282,19 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         const prices = {};
         const converted = [];
         const sameWay = m === 'weight' ? p.price_per === 'kg' : p.price_per === 'each';
+        const notSoldNow = [];
         for (const s of stores) {
           const edited = form.elements[`price-${s.id}`].dataset.edited === '1';
+          const ns = form.elements[`notsold-${s.id}`].value === '1' && !val(form, `price-${s.id}`);
+          if (ns) { if (!p.not_sold?.[s.id]) notSoldNow.push(s.id); continue; }
+          if (p.not_sold?.[s.id] && !val(form, `price-${s.id}`)) { prices[s.id] = null; continue; }
           if (!edited && sameWay) continue;
           prices[s.id] = moneyVal(form, `price-${s.id}`, `The ${s.name} price`);
           if (!edited) converted.push(s.id);
         }
         await api('PATCH', `/shop/products/${p.id}`, {
           name: val(form, 'name'), size: size === '' ? null : Number(size), unit: val(form, 'unit') || null,
-          sold_by: m, price_per: m === 'weight' ? 'kg' : 'each', prices, converted,
+          sold_by: m, price_per: m === 'weight' ? 'kg' : 'each', prices, converted, not_sold: notSoldNow,
           ...(m === 'weight' ? { step_g: Number(val(form, 'step_g')) || null, each_g: each ? Number(each) : null } : {}),
         });
         await loadShop(state.shop.list);
@@ -5407,78 +5455,189 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     });
   }
 
-  // Checking prices: every saved product with a box for its price at each store (what's on the
-  // list first), and Auto to search the stores' websites for it. Typing a price saves it as
-  // checked today; a price older than four weeks is marked.
+  // Checking prices: what's on the list, with its price at each store (automatic ones dashed, with
+  // a pencil to type over them; typed ones solid; striped where it's not sold) and when each was
+  // checked (green since the stores' Wednesday price change, orange before). Each row can refresh
+  // its automatic prices or search the stores for it. Saved products checks everything else.
+  const REFRESH_ICON = raw('<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg>');
+  const LENS_ICON = raw('<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/></svg>');
   function priceCheck() {
     const stores = state.shop.stores;
     if (!stores.length) return;
+    const money2 = (c) => moneyFmt.format((c || 0) / 100);
     const auto = autoStores();
-    const onList = new Set(state.shop.items.filter((it) => !it.done_at).map((it) => it.product_id));
-    const due = (p) => stores.some((s) => p.prices[s.id] == null || priceOld(p, s.id));
-    const all = [...state.shop.products].sort((a, b) => Number(onList.has(b.id)) - Number(onList.has(a.id)) || a.name.localeCompare(b.name));
+    const onList = new Map();
+    for (const it of state.shop.items) if (!it.done_at) onList.set(it.product_id, it);
+    const items = () => state.shop.products.filter((p) => onList.has(p.id)).sort((a, b) => a.name.localeCompare(b.name));
+    const typing = new Set(); // "product:store" boxes opened for typing over an automatic price or Not sold
+    const typed = new Map(); // what's been typed, kept while the rows are drawn again
+    const busy = new Set(); // products being refreshed
+    const key = (p, s) => `${p.id}:${s.id}`;
+    const isAuto = (p, s) => priceIsAuto(p, s.id) && !typing.has(key(p, s));
+    const fresh = (p, s) => freshness(p.checked?.[s.id]) === 'fresh';
+    const stale = (p) => stores.some((s) => p.prices[s.id] != null && !fresh(p, s));
+    // Typed prices at a store with automatic prices: worth matching so they're kept up to date.
+    const typedAt = (p) => auto.some((s) => p.prices[s.id] != null && !priceIsAuto(p, s.id));
+    const hasAuto = (p) => auto.some((s) => priceIsAuto(p, s.id));
     const shown = () => {
       const q = (state.checkQuery || '').trim().toLowerCase();
-      return all.filter((p) => (!state.checkDue || due(p)) && (!q || productLabel(p).toLowerCase().includes(q)));
+      return items().filter((p) => (!state.checkDue || stale(p)) && (!q || productLabel(p).toLowerCase().includes(q)));
     };
-    const coles = stores.find((s) => s.checker === 'coles');
-    const cols = `minmax(0, 1fr) repeat(${stores.length}, 86px)${auto.length ? ' 64px' : ''}`;
-    const rows = () => shown().map((p) => html`<li class="cp-row" data-row="${p.id}">
-        <div class="cp-name"><span class="sp-name">${p.name}</span><span class="sp-meta">${sizeLabel(p)}${onList.has(p.id) ? html`${sizeLabel(p) ? ' · ' : ''}<span class="check-on">on the list</span>` : ''}</span></div>
-        ${stores.map((s) => html`<label class="cp-price"><span class="cp-store">${storeDot(s.id)}${s.name}</span>
-          <input name="cp-${p.id}-${s.id}" inputmode="decimal" placeholder="$" value="${moneyInput(p.prices[s.id])}" class="${priceOld(p, s.id) ? 'old' : ''}"
-            title="${p.prices[s.id] != null ? `${checkedText(p.checked?.[s.id])}${priceIsAuto(p, s.id) ? ' · automatic' : ''}` : 'No price yet'}" aria-label="${productLabel(p)} at ${s.name}${PER[p.price_per] ? ` ${pricePerText(p)}` : ''}"></label>`)}
-        ${auto.length ? html`<button type="button" class="mini" data-auto="${p.id}" title="Automatic price search">Auto</button>` : ''}</li>`);
+    const cheapest = (p) => {
+      const set = stores.map((s) => p.prices[s.id]).filter((c) => c != null);
+      return set.length > 1 ? Math.min(...set) : null;
+    };
+    const onListText = (p) => { const it = onList.get(p.id); return isWeighed(p) && it.grams != null ? gramsText(it.grams) : `×${it.qty}`; };
+
+    const cell = (p, s) => {
+      const k = key(p, s);
+      const c = p.prices[s.id];
+      const cheap = c != null && c === cheapest(p) ? ' cheap' : '';
+      const label = html`<span class="ck-store">${storeDot(s.id)}${s.name}</span>`;
+      const when = c != null ? html`<span class="ck-when ${fresh(p, s) ? 'fresh' : 'stale'}"><i aria-hidden="true"></i>${shortDay(p.checked?.[s.id]) || 'Not checked'}</span>`
+        : html`<span class="ck-when">not set</span>`;
+      if (p.not_sold?.[s.id] && c == null && !typing.has(k)) {
+        return html`<div class="ck-cell">${label}<button type="button" class="ck-box ck-none" data-ck-type="${k}" title="Not sold at ${s.name}. Tap to type a price">⊘ Not sold</button>
+          <span class="ck-when">Searched ${shortDay(p.not_sold[s.id])}</span></div>`;
+      }
+      if (isAuto(p, s)) {
+        return html`<div class="ck-cell">${label}<button type="button" class="ck-box ck-auto${cheap}" data-ck-type="${k}" title="Kept up to date from ${s.name}. Tap to type over it"
+          aria-label="${p.name} at ${s.name}, ${money2(c)} automatic. Type over it"><span class="num">${money2(c)}</span>${PENCIL_ICON}</button>${when}</div>`;
+      }
+      const value = typed.has(k) ? typed.get(k) : c != null ? money2(c) : '';
+      return html`<div class="ck-cell">${label}<input class="ck-box ck-typed${cheap}" name="ck-${k}" inputmode="decimal" placeholder="$" value="${value}"
+        aria-label="${productLabel(p)} at ${s.name}${PER[p.price_per] ? ` ${pricePerText(p)}` : ''}">${when}</div>`;
+    };
+    const rows = () => shown().map((p) => html`<li class="ck-row${busy.has(p.id) ? ' busy' : ''}">
+        <div class="ck-name"><b>${p.name}</b><span class="ck-meta">${sizeLabel(p) || 'pack'} · <span class="check-on">on list ${onListText(p)}</span></span></div>
+        ${stores.map((s) => cell(p, s))}
+        ${auto.length ? html`<div class="ck-btns"><button type="button" class="ck-btn" data-ck-refresh="${p.id}" ${raw(hasAuto(p) && !busy.size ? '' : 'disabled')} title="Refresh automatic prices" aria-label="Refresh ${p.name}'s automatic prices">${REFRESH_ICON}</button>
+          <button type="button" class="ck-btn${typedAt(p) ? ' hint' : ''}" data-ck-find="${p.id}" title="${typedAt(p) ? 'Has typed prices: find it at the stores to keep them up to date' : 'Find store matches'}" aria-label="Find ${p.name} at the stores">${LENS_ICON}</button></div>` : ''}</li>`);
+    const summary = () => {
+      let set = 0;
+      let ok = 0;
+      for (const p of items()) for (const s of stores) if (p.prices[s.id] != null) { set += 1; if (fresh(p, s)) ok += 1; }
+      return html`<div class="ck-sum"><b>${ok} of ${set} ${set === 1 ? 'price' : 'prices'} checked since Wed 9am</b>
+        ${set - ok ? html`<span class="warn-text">${set - ok} out of date</span>` : set ? html`<span class="good-text">All up to date</span>` : ''}</div>`;
+    };
+    const tools = () => {
+      const n = shown().length;
+      const due = items().filter(stale).length;
+      return html`<label for="ck-q" class="sr-only">Search</label>
+        <input id="ck-q" type="search" placeholder="Search" value="${state.checkQuery || ''}" autocomplete="off">
+        <button type="button" class="best-toggle ck-due" role="switch" aria-checked="${state.checkDue ? 'true' : 'false'}" data-check-due><span class="switch" aria-hidden="true"></span>Out of date only<span class="muted">· ${due}</span></button>
+        ${auto.length ? html`<button type="button" class="ck-all" data-ck-refresh-all ${raw(n && shown().some(hasAuto) && !busy.size ? '' : 'disabled')}>${REFRESH_ICON} Refresh ${n === 1 ? 'this one' : html`<span class="ck-these">these </span>${n}`}</button>` : ''}`;
+    };
+    const legend = html`<details class="ck-legend" ${raw(window.matchMedia('(min-width: 721px)').matches ? 'open' : '')}><summary>What the boxes mean</summary><div class="ck-key">
+      <div><h4>Prices</h4>
+        <p><span class="ck-swatch ck-auto"></span>Auto: updates itself</p>
+        <p><span class="ck-swatch ck-typed"></span>Typed by you</p>
+        <p><span class="ck-swatch ck-typed">$</span>Not set yet</p>
+        <p><span class="ck-swatch ck-none"></span>Not sold there</p>
+        <p><span class="ck-swatch plain cheap">$</span>Cheapest</p></div>
+      <div><h4>Last checked</h4>
+        <p><span class="ck-when fresh"><i aria-hidden="true"></i></span>Since Wed 9am</p>
+        <p><span class="ck-when stale"><i aria-hidden="true"></i></span>Out of date</p></div>
+      ${auto.length ? html`<div><h4>Buttons</h4>
+        <p><span class="ck-swatch plain">${REFRESH_ICON}</span>Refresh auto prices</p>
+        <p><span class="ck-swatch plain">${LENS_ICON}</span>Find store matches</p>
+        <p><span class="ck-swatch plain hint">${LENS_ICON}</span>Has typed prices: match to keep them up to date</p></div>` : ''}</div></details>`;
+    const cols = `minmax(110px, 1.2fr) repeat(${stores.length}, minmax(72px, 1fr))${auto.length ? ' 78px' : ''}`;
+    const count = items().length;
     openForm({
-      title: 'Check prices',
-      cls: 'wide-pop',
-      body: html`<div class="prod-tools sp-tools">
-          <label for="cp-q" class="sr-only">Search</label>
-          <input id="cp-q" type="search" placeholder="Search" value="${state.checkQuery || ''}" autocomplete="off">
-          <button type="button" class="mini ${state.checkDue ? 'primary' : ''}" data-check-due aria-pressed="${state.checkDue ? 'true' : 'false'}">Needs checking</button>
-        </div>
-        <p class="muted small">Type a price to save it as checked today. Orange ones are older than four weeks.${auto.length ? ' Auto searches the stores\' websites for that product.' : ''}
-          ${coles ? html` Or let the <button type="button" class="linkish small" data-action="shop-helper">Coles button</button> fill in Coles.` : ''}</p>
-        <div class="cp-head" style="grid-template-columns:${cols}" aria-hidden="true"><span>Product</span>${stores.map((s) => html`<span>${s.name}</span>`)}${auto.length ? html`<span></span>` : ''}</div>
-        <ul class="cp-list" style="--cp-cols:${cols}">${rows()}</ul>
-        <p class="empty" id="cp-none" ${raw(shown().length ? 'hidden' : '')}>Nothing to check.</p>`,
+      title: null,
+      cls: 'wide-pop check-pop',
+      body: html`${popHead('Check prices', {}, html`<p class="pop-sub">The ${count} ${count === 1 ? 'item' : 'items'} on your list. Specials change Wednesday 9am.</p>`)}
+        <div class="ck-tools" id="ck-tools">${tools()}</div>
+        <div class="ck-progress" id="ck-progress" hidden></div>
+        ${legend}
+        <div class="ck-head" style="grid-template-columns:${cols}" aria-hidden="true"><span>Product</span>${stores.map((s) => html`<span>${storeDot(s.id)}${s.name}</span>`)}${auto.length ? html`<span></span>` : ''}</div>
+        <ul class="ck-list" style="--ck-cols:${cols}">${rows()}</ul>
+        <p class="empty" id="ck-none" ${raw(shown().length ? 'hidden' : '')}>${count ? 'Nothing matches.' : 'Nothing on your list yet.'}</p>
+        <button type="button" class="ck-more" data-ck-saved>Check all ${state.shop.products.length} saved products ›</button>`,
+      lead: html`<div id="ck-sum">${summary()}</div>`,
       afterRender: (form) => {
-        const list = form.querySelector('.cp-list');
-        const redraw = () => {
+        const list = form.querySelector('.ck-list');
+        const redraw = (focus) => {
           list.innerHTML = rows().map((r) => r.s).join('');
-          form.querySelector('#cp-none').hidden = list.children.length > 0;
+          form.querySelector('#ck-none').hidden = list.children.length > 0;
+          form.querySelector('#ck-sum').innerHTML = summary().s;
+          const q = form.querySelector('#ck-q');
+          const at = document.activeElement === q ? q.selectionStart : null;
+          form.querySelector('#ck-tools').innerHTML = tools().s;
+          if (at != null) { const nq = form.querySelector('#ck-q'); nq.focus(); nq.setSelectionRange(at, at); }
+          if (focus) form.elements[`ck-${focus}`]?.focus();
         };
-        form.querySelector('#cp-q').oninput = (ev) => { state.checkQuery = ev.target.value; redraw(); };
+        form.oninput = (ev) => {
+          if (ev.target.id === 'ck-q') { state.checkQuery = ev.target.value; redraw(); return; }
+          if (ev.target.name?.startsWith('ck-')) typed.set(ev.target.name.slice(3), ev.target.value);
+        };
+        // Refreshes products' automatic prices, saving what's typed first.
+        const refresh = async (ids) => {
+          try { await saveTyped(); } catch (err) { form.querySelector('#form-error').textContent = err.message; return; }
+          form.querySelector('#form-error').textContent = '';
+          try {
+            const job = await api('POST', '/shop/checker/update', { product_ids: ids });
+            if (!job.id) { toast('Nothing automatic to refresh'); return; }
+            ids.forEach((id) => busy.add(id));
+            redraw();
+            const box = form.querySelector('#ck-progress');
+            box.hidden = false;
+            followJob(job, (j) => {
+              box.innerHTML = stores.filter((s) => j.stores[s.id]).map((s) => autoProgress(j, s).s).join('');
+              if (jobRunning(j)) return;
+              busy.clear();
+              loadShop(state.shop.list).then(() => { render(); box.hidden = true; redraw(); toast(j.changes?.length ? `${j.changes.length} ${j.changes.length === 1 ? 'price' : 'prices'} changed` : 'Prices checked'); });
+            }, form);
+          } catch (err) { form.querySelector('#form-error').textContent = err.message; }
+        };
         form.onclick = async (ev) => {
-          if (ev.target.closest('[data-check-due]')) { await saveTyped(form); state.checkDue = !state.checkDue; priceCheck(); return; }
-          const a = ev.target.closest('[data-auto]');
-          if (a) {
-            try { await saveTyped(form); } catch (err) { form.querySelector('#form-error').textContent = err.message; return; }
-            const p = shopProduct(Number(a.dataset.auto));
+          if (solveClick(form, ev)) return;
+          const t = ev.target;
+          if (t.closest('[data-check-due]')) { state.checkDue = !state.checkDue; redraw(); return; }
+          const box = t.closest('[data-ck-type]');
+          if (box) { typing.add(box.dataset.ckType); redraw(box.dataset.ckType); return; }
+          const r = t.closest('[data-ck-refresh]');
+          if (r) { refresh([Number(r.dataset.ckRefresh)]); return; }
+          if (t.closest('[data-ck-refresh-all]')) { refresh(shown().filter(hasAuto).map((p) => p.id)); return; }
+          const f = t.closest('[data-ck-find]');
+          const saved = t.closest('[data-ck-saved]');
+          if (f || saved) {
+            try { await saveTyped(); } catch (err) { form.querySelector('#form-error').textContent = err.message; return; }
+            if (saved) { productList(); return; }
+            const p = shopProduct(Number(f.dataset.ckFind));
             if (p) findPrices(p, priceCheck);
           }
         };
       },
-      onSave: async (form) => {
-        const saved = await saveTyped(form);
+      onSave: async () => {
+        const saved = await saveTyped();
         if (saved) toast(`Saved ${saved} ${saved === 1 ? 'price' : 'prices'}`);
       },
     });
-    // Saves the prices typed so far, so nothing's lost going to Auto. Returns how many changed.
-    async function saveTyped(form) {
+    // Saves the prices typed so far, so nothing's lost going elsewhere. Typing over an automatic
+    // price makes it a typed one. Returns how many changed.
+    async function saveTyped() {
       let saved = 0;
-      for (const p of all) {
+      for (const p of items()) {
         const prices = {};
+        const unmatch = [];
         for (const s of stores) {
-          if (!form.elements[`cp-${p.id}-${s.id}`]) continue;
-          const cents = moneyVal(form, `cp-${p.id}-${s.id}`, `The ${s.name} price of ${p.name}`);
-          if (cents !== (p.prices[s.id] ?? null)) prices[s.id] = cents;
+          const k = key(p, s);
+          if (!typed.has(k)) continue;
+          const c = parseMoney(typed.get(k).trim());
+          if (Number.isNaN(c) || (c != null && c < 0)) throw new Error(`The ${s.name} price of ${p.name} must be a dollar amount, like 4.50`);
+          if (c === (p.prices[s.id] ?? null)) continue;
+          prices[s.id] = c;
+          if (priceIsAuto(p, s.id)) unmatch.push(s.id);
         }
         if (!Object.keys(prices).length) continue;
-        await api('PATCH', `/shop/products/${p.id}`, { prices, checked: [] });
+        await api('PATCH', `/shop/products/${p.id}`, { prices, checked: [], unmatch });
         saved += Object.keys(prices).length;
       }
-      if (saved) await loadShop(state.shop.list);
+      typed.clear();
+      typing.clear();
+      if (saved) { await loadShop(state.shop.list); render(); }
       return saved;
     }
   }

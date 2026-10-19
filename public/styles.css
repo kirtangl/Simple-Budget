@@ -1988,6 +1988,8 @@ dialog.saved-pop .error:empty { display: none; }
 .sec-list input { flex: 1; min-width: 0; }
 .sec-list input.sec-pos { flex: none; width: 72px; }
 /* Prices: when each was checked, and Look up on the store's website. */
+input.not-sold { background: repeating-linear-gradient(135deg, transparent 0 5px, color-mix(in srgb, var(--muted) 18%, transparent) 5px 10px); }
+input.not-sold::placeholder { color: var(--muted); font-weight: 600; }
 .price-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin-top: 3px; font-size: .78rem; }
 .price-age { color: var(--muted); }
 .price-age.old { color: var(--due); font-weight: 600; }
@@ -1997,23 +1999,72 @@ a.lookup:hover { text-decoration: underline; }
 /* Check prices: a row per product with a box for each store's price, and Auto. */
 dialog.wide-pop { width: min(760px, calc(100vw - 24px)); }
 @media (max-width: 720px) { dialog.wide-pop { width: 100vw; } }
-.cp-head { display: grid; gap: 8px; padding: 8px 0 2px; font-size: .7rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
-.cp-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cp-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
-.cp-row { display: grid; grid-template-columns: var(--cp-cols); gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
-.cp-name { display: flex; flex-direction: column; min-width: 0; }
-.cp-price { display: block; margin: 0; }
-.cp-price input { width: 100%; min-width: 0; }
-.cp-row [data-auto] { justify-content: center; }
-.cp-price input.old { border-color: var(--due); }
-.cp-store { display: none; }
+/* Check prices: the list's items with a box for each store's price. */
+@media (min-width: 721px) { dialog.check-pop { width: min(860px, calc(100vw - 24px)); } }
+.ck-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.ck-tools input { flex: 1 1 200px; min-width: 0; }
+.ck-tools .best-toggle { padding: 8px 14px 8px 10px; border-radius: var(--radius); }
+.ck-all { display: inline-flex; align-items: center; gap: 6px; }
+.ck-progress { display: flex; flex-direction: column; gap: 4px; margin: -4px 0 12px; }
+.ck-legend { margin-bottom: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--inset); }
+.ck-legend summary { cursor: pointer; font-size: .85rem; font-weight: 600; color: var(--muted); }
+.ck-legend[open] summary { margin-bottom: 8px; }
+.ck-key { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 20px; }
+.ck-key h4 { margin: 0 0 6px; font-size: .7rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.ck-key p { display: flex; align-items: center; gap: 8px; margin: 0 0 5px; font-size: .8rem; }
+.ck-swatch { display: inline-grid; place-items: center; flex: none; width: 28px; height: 18px; border-radius: 5px; font-size: .75rem; font-weight: 700; color: var(--muted); }
+.ck-swatch.plain { border: 0; background: none; height: auto; }
+.ck-swatch.hint { border: 1px solid var(--info); color: var(--info); background: color-mix(in srgb, var(--info) 12%, transparent); height: 22px; width: 24px; }
+.ck-head { display: grid; gap: 8px; padding: 8px 0 6px; border-bottom: 1px solid var(--line); font-size: .7rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.ck-head span { display: flex; align-items: center; gap: 5px; overflow: hidden; white-space: nowrap; }
+.ck-head .store-dot { width: 7px; height: 7px; margin: 0; }
+.ck-list { margin: 0; padding: 0; list-style: none; }
+.ck-row { display: grid; grid-template-columns: var(--ck-cols); gap: 8px; align-items: start; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.ck-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding-top: 8px; }
+.ck-name b { overflow-wrap: anywhere; }
+.ck-meta { font-size: .75rem; color: var(--muted); }
+.ck-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ck-store { display: none; }
+.ck-box { display: flex; align-items: center; justify-content: space-between; gap: 4px; width: 100%; min-width: 0; height: 40px; min-height: 0; margin: 0; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--text); font: inherit; font-weight: 700; box-shadow: none; text-align: left; }
+input.ck-box { display: block; }
+input.ck-box::placeholder { color: var(--muted); font-weight: 400; }
+.ck-box.ck-auto, .ck-swatch.ck-auto { border: 1px dashed color-mix(in srgb, var(--muted) 60%, var(--line)); background: transparent; color: var(--muted); cursor: pointer; }
+.ck-box.ck-auto svg { flex: none; opacity: .8; }
+.ck-box.ck-auto:hover { border-color: var(--brand); }
+.ck-swatch.ck-typed { border: 1px solid color-mix(in srgb, var(--muted) 60%, var(--line)); background: var(--card); }
+.ck-box.ck-none, .ck-swatch.ck-none { justify-content: center; border: 1px solid var(--line); color: var(--muted); font-weight: 600; font-size: .8rem; cursor: pointer;
+  background: repeating-linear-gradient(135deg, transparent 0 5px, color-mix(in srgb, var(--muted) 18%, transparent) 5px 10px); }
+.ck-box.cheap, .ck-swatch.cheap { color: var(--brand); }
+.ck-when { display: flex; align-items: center; gap: 5px; min-height: 14px; font-size: .7rem; color: var(--muted); white-space: nowrap; overflow: hidden; }
+.ck-when i { flex: none; width: 6px; height: 6px; border-radius: 50%; }
+.ck-when.fresh { color: var(--paid); }
+.ck-when.fresh i { background: var(--paid); }
+.ck-when.stale { color: var(--due); }
+.ck-when.stale i { background: var(--due); }
+.ck-btns { display: flex; gap: 6px; justify-content: flex-end; }
+.ck-btn { display: grid; place-items: center; width: 36px; height: 40px; min-height: 0; padding: 0; border-radius: 8px; box-shadow: none; color: var(--text); }
+.ck-btn:disabled { opacity: .4; }
+.ck-btn.hint { border-color: var(--info); color: var(--info); background: color-mix(in srgb, var(--info) 12%, var(--card)); }
+.ck-row.busy [data-ck-refresh] svg { animation: auto-spin .8s linear infinite; }
+.ck-more { display: block; width: 100%; margin: 14px 0 4px; padding: 14px; border: 1px dashed var(--line); border-radius: var(--radius); background: transparent; box-shadow: none; font-weight: 600; }
+.ck-sum { display: flex; flex-direction: column; gap: 2px; font-size: .85rem; }
+.ck-sum .warn-text, .ck-sum .good-text { font-size: .78rem; }
+.check-pop .dialog-actions { align-items: center; }
+@media (min-width: 721px) { .ck-legend summary { display: none; } }
 @media (max-width: 720px) {
-  .cp-head { display: none; }
-  .cp-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .cp-name { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
-  .cp-store { display: flex; align-items: center; margin-bottom: 2px; font-size: .72rem; color: var(--muted); overflow: hidden; white-space: nowrap; }
-  .cp-name { grid-column: 1 / 3; grid-row: 1; }
-  .cp-row [data-auto] { grid-column: 3; grid-row: 1; justify-self: end; }
+  .ck-key { grid-template-columns: 1fr; }
+  .ck-tools input { flex-basis: 100%; }
+  .ck-tools .best-toggle, .ck-all { flex: 1 1 0; justify-content: center; white-space: nowrap; padding-left: 8px; padding-right: 8px; font-size: .85rem; }
+  .ck-these { display: none; }
+  .check-pop #ck-sum { flex: 1 1 100%; }
+  .check-pop .dialog-actions > .spacer { display: none; }
+  .ck-head { display: none; }
+  .ck-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .ck-name { grid-column: 1; grid-row: 1; padding-top: 2px; }
+  .ck-btns { grid-column: 2; grid-row: 1; }
+  .ck-store { display: flex; align-items: center; gap: 5px; font-size: .72rem; color: var(--muted); overflow: hidden; white-space: nowrap; }
+  .ck-store .store-dot { width: 7px; height: 7px; margin: 0; }
 }
 .check-on { font-size: .72rem; font-weight: 600; color: var(--brand); white-space: nowrap; }
 .spot-btn.on .store-dot { box-shadow: 0 0 0 2px var(--on-brand); }

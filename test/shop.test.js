@@ -393,6 +393,8 @@ test('shopping: automatic price search, matching, the cheaper similar hint and u
   assert.deepEqual([p.prices[stores.Woolworths], p.was[stores.Woolworths], p.prices[stores.Coles]], [280, 350, 300]);
   assert.equal(p.matches[stores.Coles].url, 'https://shop.example/c/1');
   assert.deepEqual(p.matches[stores.Aldi], { url: '', name: '', size: null, missing_at: null }); // none of them, remembered
+  assert.ok(p.not_sold[stores.Aldi]); // and saved as not sold there
+  assert.equal(p.prices[stores.Aldi], undefined);
   assert.equal(p.similar.name, 'Cheap Label Rolled Oats');
   assert.deepEqual([p.similar.store_id, p.similar.price_cents], [stores.Aldi, 199]);
   // The same oats in the other size at Woolworths, and Woolworths' own closest other brand.
@@ -618,4 +620,31 @@ test('shopping: bought by weight, counted, swapped and noted', () => withServer(
   await call('POST', '/import', old);
   p = (await call('GET', '/shop')).body.products.find((x) => x.id === id);
   assert.equal(p.options[stores.Aldi].similar.name, 'Test Bananas');
+}));
+
+test('shopping: not sold at a store, in place of its price, and typing over an automatic price', () => withServer({}, async (call) => {
+  const stores = await storesOf(call);
+  const id = (await call('POST', '/shop/items', { list: 'shared', name: 'Paper towels' })).body.product_id;
+  let p;
+  await call('PATCH', `/shop/products/${id}`, { prices: { [stores.Coles]: 400, [stores.Aldi]: 350 } });
+  // Not sold at Aldi: its price goes, and when it was found is kept.
+  p = (await call('PATCH', `/shop/products/${id}`, { not_sold: [stores.Aldi] })).body;
+  assert.equal(p.prices[stores.Aldi], undefined);
+  assert.match(p.not_sold[stores.Aldi], /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/);
+  assert.equal(p.prices[stores.Coles], 400);
+  // It's backed up and restored.
+  const { body: backup } = await call('GET', '/export');
+  assert.equal(backup.shopping.not_sold.length, 1);
+  // A price there clears it, and so does clearing the price.
+  p = (await call('PATCH', `/shop/products/${id}`, { prices: { [stores.Aldi]: 360 } })).body;
+  assert.deepEqual([p.prices[stores.Aldi], p.not_sold[stores.Aldi]], [360, undefined]);
+  await call('PATCH', `/shop/products/${id}`, { not_sold: [stores.Woolworths] });
+  p = (await call('PATCH', `/shop/products/${id}`, { prices: { [stores.Woolworths]: null } })).body;
+  assert.deepEqual(p.not_sold, {});
+  // unmatch stops a store's price being automatic (typed over in Check prices).
+  p = (await call('PATCH', `/shop/products/${id}`, { prices: { [stores.Coles]: 410 }, unmatch: [stores.Coles] })).body;
+  assert.deepEqual([p.prices[stores.Coles], p.matches[stores.Coles]], [410, undefined]);
+  await call('POST', '/import', backup);
+  p = (await call('GET', '/shop')).body.products.find((x) => x.id === id);
+  assert.ok(p.not_sold[stores.Aldi]);
 }));
