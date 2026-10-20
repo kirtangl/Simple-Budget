@@ -304,9 +304,12 @@ function buildCycle({ anchor, payAnchor = anchor, index, today, expenses, accoun
     const cycleBills = bills.filter((b) => b.account_id === a.id && b.kind !== 'saving');
     const billsTotal = cycleBills.reduce((sum, b) => sum + b.amount_cents, 0);
     const paid = cycleBills.filter((b) => b.status === 'paid').reduce((sum, b) => sum + b.amount_cents, 0);
-    const rounded = roundUp(average, rules.rounding);
-    const deposit = depositCents(average, rules);
-    return { account_id: a.id, average_cents: Math.round(average), rounded_cents: rounded, deposit_cents: deposit,
+    // Each account can have its own rounding and buffer; empty means the household's.
+    const ownRules = { rounding: Object.hasOwn(ROUNDING, a.rounding ?? '') ? a.rounding : rules.rounding,
+      buffer_percent: a.buffer_percent ?? rules.buffer_percent };
+    const rounded = roundUp(average, ownRules.rounding);
+    const deposit = depositCents(average, ownRules);
+    return { account_id: a.id, rules: ownRules, average_cents: Math.round(average), rounded_cents: rounded, deposit_cents: deposit,
       bills_cents: billsTotal, savings_cents: Math.round(saved), paid_cents: paid, remaining_cents: billsTotal - paid,
       spare_cents: deposit - billsTotal - Math.round(saved) };
   });

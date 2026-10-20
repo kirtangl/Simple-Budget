@@ -100,7 +100,8 @@ const tooMany = (name) => `That's more ${ROW_WORDS[name] || name} than Simple Bu
 const RESOURCES = {
   accounts: {
     fields: { name: T.text, nickname: T.text, institution: T.text, type: T.text, owner: T.text,
-      bsb: T.bsb, account_number: T.accountNumber, color: T.colour, sort_order: T.int },
+      bsb: T.bsb, account_number: T.accountNumber, color: T.colour, sort_order: T.int,
+      rounding: T.enumOf(...Object.keys(budget.ROUNDING)), buffer_percent: T.range(0, 20) },
     required: ['name'],
     order: 'sort_order, name COLLATE NOCASE',
     unique: { label: 'An account' },

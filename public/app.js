@@ -105,13 +105,6 @@
   const inDeposit = (e) => Boolean(e.in_deposit);
   const depositFor = (accountId) => (state.data.deposits && state.data.deposits[accountId]) || 0;
 
-  function depositNote() {
-    const s = state.data.settings;
-    const parts = [s.rounding === 'exact' ? 'not rounded' : s.rounding === 'up5' ? 'rounded up to $5' : 'rounded up to $10'];
-    if (s.buffer_percent) parts.push(`plus ${s.buffer_percent}% buffer`);
-    return parts.join(', ');
-  }
-
   // ---------- API ----------
 
   async function api(method, path, body) {
@@ -479,13 +472,13 @@
       <span class="hc-foot">Anything above this is spare. Savings not included. Click for more.</span>
     </span>`;
   };
-  // The buffer and rounding beside each transfer, e.g. "(+10% ↑$10)".
-  function bufferTag() {
-    const s = state.data.settings;
-    if (!s.buffer_percent) return '';
-    const up = { up5: '↑$5', up10: '↑$10' }[s.rounding];
-    return html` <span class="buf-tag" tabindex="0">(+${s.buffer_percent}%${up ? ` ${up}` : ''})<span class="hover-card" role="tooltip">
-      <span class="hc-title">Buffer</span><span class="hc-note">This transfer has a ${s.buffer_percent}% buffer on top of the account's bills and savings${up ? `, then it's rounded up to the next ${up.slice(1)}` : ''}. Change it in Settings → General → Deposits.</span></span></span>`;
+  // An account's buffer beside its transfer, as a small "+10%" with the details on hover.
+  function bufferTag(r) {
+    const { rounding, buffer_percent: pct } = r.rules || {};
+    if (!pct) return '';
+    const up = { up5: '$5', up10: '$10' }[rounding];
+    return html` <span class="buf-tag" tabindex="0">+${pct}%<span class="hover-card" role="tooltip">
+      <span class="hc-title">Buffer</span><span class="hc-note">This transfer has a ${pct}% buffer on top of the account's bills and savings${up ? `, then it's rounded up to the next ${up}` : ''}. Change it by editing the account.</span></span></span>`;
   }
   function keepDetails(id) {
     const c = state.cycleData;
@@ -533,7 +526,7 @@
             <li class="acct-line deposit dep2 clickable" data-action="account-details" data-id="${a.id}" style="--acct:${colorFor(a, i)}"><div class="grow">
               <div class="dep-head">
                 <div class="grow"><div class="dep-name"><span class="sq" aria-hidden="true"></span><button class="acct-btn" data-action="account-details" data-id="${a.id}" data-tip="${bankTip(a) || 'No bank details yet'}">${a.name}</button></div>
-                  <div class="dep-per"><b class="num">${money(r.deposit_cents)}</b> per ${cycleWord()}${bufferTag()}</div></div>
+                  <div class="dep-per"><b class="num">${money(r.deposit_cents)}</b> per pay${bufferTag(r)}</div></div>
                 <button type="button" class="dep-keep ${tight ? 'tight' : ''}" data-action="keep-details" data-id="${a.id}" aria-label="Keep ${money(r.held_cents)} in account: show the breakdown">
                   <b class="num">${money(r.held_cents)}</b><span class="kl">Keep in account</span>${keepCard(c, r)}</button>
               </div>
@@ -632,10 +625,10 @@
 
         <div class="stack">
         <section class="card">
-          <div class="card-head"><div><h2>Deposits ${thisCycle()} <button type="button" class="help-q" aria-label="What the colours mean">?<span class="hover-card key-card" role="tooltip"><span class="hc-title">What the colours mean</span>
+          <div class="card-head dep-card-head"><div><h2>Deposits ${thisCycle()} <button type="button" class="help-q" aria-label="What the colours mean">?<span class="hover-card key-card" role="tooltip"><span class="hc-title">What the colours mean</span>
             ${DEPOSIT_KEY.map(([cls, text]) => html`<span class="hc-key"><i class="${cls}"></i>${text}</span>`)}
-            <span class="hc-note">Keep in account turns <b class="due-text">amber</b> when it's more than the transfer.</span></span></button></h2><div class="muted head-sub">${cap(depositNote())} · <button class="linkish" data-action="edit-deposit-rules">Change</button></div></div>
-            <div class="dep-sum"><b class="num dep-total">${money(t.deposits_cents)}</b><div class="muted">each ${cycleWord()} · ${used.length} account${used.length === 1 ? '' : 's'}</div></div></div>
+            <span class="hc-note">Keep in account turns <b class="due-text">amber</b> when it's more than the transfer.</span></span></button></h2></div>
+            <div class="dep-sum"><b class="num dep-total">${money(t.deposits_cents)}</b><div class="muted">each pay · ${used.length} account${used.length === 1 ? '' : 's'}</div></div></div>
           ${rows.length ? html`<ul class="list">${used.map(({ a, r, i }) => depositRow(a, r, i))}
             ${state.showUnused ? unused.map(({ a, r, i }) => depositRow(a, r, i)) : ''}</ul>
             ${unused.length ? html`<button class="linkish small" data-action="toggle-unused" aria-expanded="${state.showUnused ? 'true' : 'false'}">${state.showUnused ? 'Hide' : 'Show'} ${unused.length} unused account${unused.length === 1 ? '' : 's'}</button>` : ''}`
@@ -2896,28 +2889,6 @@
       </section>`;
   }
 
-  // Popup version of the Settings → General deposit rules, opened from the Overview.
-  function depositRulesForm() {
-    const s = state.data.settings;
-    openForm({
-      title: 'Deposit rounding',
-      body: html`
-        <p class="muted small">Each account's deposit is the per-cycle total of its bills plus the buffer, then rounded up as a whole, so it's always a round number.
-          For example $301 with a 10% buffer is $331.10, and rounded up to $10 that's $340.</p>
-        <div class="fields">
-          <div class="field"><label for="m-rounding">Rounding</label><select id="m-rounding" name="rounding">
-            ${Object.entries(ROUNDING_LABELS).map(([k, v]) => html`<option value="${k}" ${k === s.rounding ? raw('selected') : ''}>${v}</option>`)}</select></div>
-          <div class="field"><label for="m-buffer">Buffer (%)</label><input id="m-buffer" name="buffer_percent" type="number" inputmode="numeric" min="0" max="20" step="1" value="${s.buffer_percent}">
-            <div class="hint">0 to 20.</div></div>
-        </div>`,
-      onSave: async (form) => {
-        const f = form.elements;
-        await api('PUT', '/settings', { rounding: f.rounding.value, buffer_percent: Number(f.buffer_percent.value || 0) });
-        await reload();
-      },
-    });
-  }
-
   function settingsIncome() {
     const today = state.data.settings.today;
     const now = state.data.incomes.filter((i) => (!i.end_date || i.end_date >= today) && (!i.start_date || i.start_date <= today));
@@ -3002,6 +2973,7 @@
 
   function accountForm(a = {}) {
     const i = a.id ? state.data.accounts.indexOf(a) : state.data.accounts.length;
+    const s = state.data.settings;
     openForm({
       title: a.id ? 'Edit account' : 'Add account',
       body: html`
@@ -3016,9 +2988,18 @@
           <div class="field"><label for="a-acc">Account number</label><input id="a-acc" name="account_number" inputmode="numeric" data-input="account-number" maxlength="30" autocomplete="off" value="${a.account_number || ''}">
             <div class="hint">Numbers only.</div></div>
           <div class="field"><label for="a-color">Colour</label><input id="a-color" type="color" name="color" value="${colorFor(a, i)}"></div>
+          <div class="field full form-sub"><b>Deposit</b><div class="hint">This account's deposit is the per-${cycleWord()} total of its bills and savings plus the buffer, then rounded up,
+            so it's a round number. For example $301 with a 10% buffer is $331.10, and rounded up to $10 that's $340.</div></div>
+          <div class="field"><label for="a-rounding">Rounding</label><select id="a-rounding" name="rounding">
+            ${Object.entries(ROUNDING_LABELS).map(([k, v]) => html`<option value="${k}" ${k === (a.rounding ?? s.rounding) ? raw('selected') : ''}>${v}</option>`)}</select></div>
+          <div class="field"><label for="a-buffer">Buffer (%)</label><input id="a-buffer" name="buffer_percent" type="number" inputmode="numeric" min="0" max="20" step="1" value="${a.buffer_percent ?? s.buffer_percent}">
+            <div class="hint">0 to 20. Extra on top, for prices that go up.</div></div>
         </div>`,
       onSave: async (form) => {
         const body = Object.fromEntries(['name', 'nickname', 'institution', 'type', 'owner', 'bsb', 'account_number', 'color'].map((k) => [k, val(form, k)]));
+        const pct = Number(form.elements.buffer_percent.value || 0);
+        if (!Number.isInteger(pct) || pct < 0 || pct > 20) throw new Error('The buffer needs to be a whole number from 0 to 20.');
+        Object.assign(body, { rounding: form.elements.rounding.value, buffer_percent: pct });
         if (!body.name) throw new Error('Please give the account a name.');
         if (body.bsb && !/^\d{3}-\d{3}$/.test(body.bsb)) throw new Error('The BSB needs 6 digits, like 062-000.');
         if (body.account_number && !/^\d{1,20}$/.test(body.account_number)) throw new Error('The account number can only have numbers, up to 20 digits.');
@@ -3173,20 +3154,6 @@
         </form>
         <p class="hint">${s.pay_frequency === 'monthly' ? `Each cycle starts on the ${ordinal(Number(s.pay_anchor_date.slice(8)))} of the month.`
           : `Currently each cycle starts on a ${weekdayFor(0, true)}.`} Usually this is a pay day. Weekly and fortnightly bills are counted from it.</p>
-      </div>
-      <div class="card">
-        <h2>Deposits</h2>
-        <p class="muted small">Each account's deposit is the per-cycle total of its bills plus the buffer, then rounded up as a whole, so it's always a round number.
-          For example $301 with a 10% buffer is $331.10, and rounded up to $10 that's $340.</p>
-        <form id="deposit-form">
-          <div class="fields">
-            <div class="field"><label for="rounding">Rounding</label><select id="rounding" name="rounding">
-              ${Object.entries(ROUNDING_LABELS).map(([k, v]) => html`<option value="${k}" ${k === s.rounding ? raw('selected') : ''}>${v}</option>`)}</select></div>
-            <div class="field"><label for="buffer">Buffer (%)</label><input id="buffer" name="buffer_percent" type="number" inputmode="numeric" min="0" max="20" step="1" value="${s.buffer_percent}">
-              <div class="hint">0 to 20. Adds extra on top of every account's deposit.</div></div>
-          </div>
-          <button class="primary" type="submit">Save</button>
-        </form>
       </div>
       <div class="card">
         <h2>Backup and restore</h2>
@@ -4048,7 +4015,6 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     'bill-details': async (el) => billDetails(Number(el.dataset.id), el.dataset),
     'toggle-incomes': () => { state.showIncomes = !state.showIncomes; render(); },
     'toggle-unused': () => { state.showUnused = !state.showUnused; render(); },
-    'edit-deposit-rules': () => depositRulesForm(),
     'edit-income': (el) => incomeForm(findById(state.data.incomes, el)),
     'new-account': () => accountForm(),
     'edit-account': (el) => accountForm(findById(state.data.accounts, el)),
@@ -4290,17 +4256,13 @@ sudo docker compose up -d --build</pre>${s.extra}`;
   });
 
   document.addEventListener('submit', async (ev) => {
-    if (ev.target.id !== 'cycle-form' && ev.target.id !== 'deposit-form') return;
+    if (ev.target.id !== 'cycle-form') return;
     ev.preventDefault();
     const f = ev.target.elements;
     try {
-      if (ev.target.id === 'cycle-form') {
-        await api('PUT', '/settings', { pay_anchor_date: f.pay_anchor_date.value, pay_frequency: f.pay_frequency.value,
-          pay_custom_days: f.pay_frequency.value === 'custom' ? Number(f.pay_custom_days.value) : null });
-        state.offset = 0;
-      } else {
-        await api('PUT', '/settings', { rounding: f.rounding.value, buffer_percent: Number(f.buffer_percent.value || 0) });
-      }
+      await api('PUT', '/settings', { pay_anchor_date: f.pay_anchor_date.value, pay_frequency: f.pay_frequency.value,
+        pay_custom_days: f.pay_frequency.value === 'custom' ? Number(f.pay_custom_days.value) : null });
+      state.offset = 0;
       await reload();
       toast('Settings saved');
       render();

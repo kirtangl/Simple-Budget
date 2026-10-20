@@ -2392,3 +2392,13 @@ li.deposit.dep2 + li.deposit.dep2 { margin-top: 0; border-top: 1px solid var(--l
 .buf-tag { position: relative; color: var(--muted); cursor: help; }
 .buf-tag .hover-card { left: 0; right: auto; width: 260px; }
 li.deposit.dep2:hover, li.deposit.dep2:focus-within { position: relative; z-index: 6; }
+.form-sub { margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--line); }
+.dep-card-head { align-items: flex-start; }
+.dep-card-head h2 { white-space: nowrap; }
+@media (max-width: 720px) {
+  .dep-card-head h2 { font-size: 15px; }
+  .dep-sum .dep-total { font-size: 1.25rem; }
+  .dep-keep > b { font-size: 1.3rem; }
+  .dep-per b { font-size: 14px; }
+}
+@media (max-width: 380px) { .dep-card-head h2 { white-space: normal; } }

@@ -411,3 +411,15 @@ test('what to keep in an account, its lowest day and the big bills ahead', () =>
   assert.equal(before.low_after, 'Rates');
   assert.deepEqual(before.ahead.map((b) => [b.name, b.date]), [['Rates', '2026-11-01']]);
 });
+
+test('an account can have its own deposit rounding and buffer', () => {
+  const pc = budget.payCycle('fortnightly');
+  const bill = { id: 1, name: 'Rent', active: 1, account_id: 1, frequency: 'fortnightly', amount_cents: 30100, day_offset: 3 };
+  const other = { ...bill, id: 2, account_id: 2 };
+  const accounts = [{ id: 1 }, { id: 2, rounding: 'exact', buffer_percent: 10 }];
+  const c = budget.buildCycle({ anchor: '2026-10-19', index: 0, today: '2026-10-20', expenses: [bill, other], accounts, incomes: [], payCycle: pc,
+    rules: { rounding: 'up10', buffer_percent: 0 } });
+  assert.equal(c.accounts[0].deposit_cents, 31000); // the household's: $301 up to $310
+  assert.equal(c.accounts[1].deposit_cents, 33110); // its own: $301 + 10%, not rounded
+  assert.deepEqual(c.accounts[1].rules, { rounding: 'exact', buffer_percent: 10 });
+});
