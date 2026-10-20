@@ -5432,7 +5432,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     });
   }
 
-  // Copies what's left on the list as plain text, one item per line in aisle order, to paste
+  // Copies what's left on the list as plain text, under a heading for each aisle, to paste
   // somewhere that works away from home (the app is only on the home network for now).
   const COPY_ICON = raw('<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg>');
   function copyList() {
@@ -5446,7 +5446,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     };
     const byName = (x, y) => shopProduct(x.product_id).name.localeCompare(shopProduct(y.product_id).name);
     const groups = loc ? groupBy(items, loc, (it) => shopProduct(it.product_id)) : [{ rows: items }];
-    copyText(groups.flatMap((g) => [...g.rows].sort(byName).map(line)).join('\n'), 'List');
+    copyText(groups.map((g) => [...(g.label ? [g.label.toUpperCase()] : []), ...[...g.rows].sort(byName).map(line)].join('\n')).join('\n\n'), 'List');
   }
 
 
