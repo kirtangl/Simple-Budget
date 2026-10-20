@@ -627,8 +627,9 @@
         <section class="card">
           <div class="card-head dep-card-head"><div><h2>Deposits ${thisCycle()} <button type="button" class="help-q" aria-label="What the colours mean">?<span class="hover-card key-card" role="tooltip"><span class="hc-title">What the colours mean</span>
             ${DEPOSIT_KEY.map(([cls, text]) => html`<span class="hc-key"><i class="${cls}"></i>${text}</span>`)}
-            <span class="hc-note">Keep in account turns <b class="due-text">amber</b> when it's more than the transfer.</span></span></button></h2></div>
-            <div class="dep-sum"><b class="num dep-total">${money(t.deposits_cents)}</b><div class="muted">each pay · ${used.length} account${used.length === 1 ? '' : 's'}</div></div></div>
+            <span class="hc-note">Keep in account turns <b class="due-text">amber</b> when it's more than the transfer.</span></span></button></h2>
+            <div class="muted head-sub">${used.length} account${used.length === 1 ? '' : 's'}</div></div>
+            <div class="dep-sum"><div class="dep-total-line"><svg class="dep-in" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><b class="num dep-total">${money(t.deposits_cents)}</b></div><div class="muted">goes in each pay</div></div></div>
           ${rows.length ? html`<ul class="list">${used.map(({ a, r, i }) => depositRow(a, r, i))}
             ${state.showUnused ? unused.map(({ a, r, i }) => depositRow(a, r, i)) : ''}</ul>
             ${unused.length ? html`<button class="linkish small" data-action="toggle-unused" aria-expanded="${state.showUnused ? 'true' : 'false'}">${state.showUnused ? 'Hide' : 'Show'} ${unused.length} unused account${unused.length === 1 ? '' : 's'}</button>` : ''}`
