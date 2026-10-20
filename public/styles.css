@@ -1999,14 +1999,8 @@ a.lookup:hover { text-decoration: underline; }
 /* Check prices: a row per product with a box for each store's price, and Auto. */
 dialog.wide-pop { width: min(760px, calc(100vw - 24px)); }
 @media (max-width: 720px) { dialog.wide-pop { width: 100vw; } }
-/* Copy the list: the text to paste, and how to make it a checklist in Reminders or Notes. */
-.cl-text { width: 100%; min-height: 160px; resize: vertical; font: inherit; font-size: .9rem; line-height: 1.5; }
-.cl-check { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; font-weight: 400; }
-.cl-check input { margin: 0; }
-.cl-btns { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
-.cl-steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 20px; }
-.cl-steps ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: .9rem; }
-@media (max-width: 720px) { .cl-steps { grid-template-columns: 1fr; } }
+/* Copy the list: an icon button beside Check prices. */
+button.mini.icon-only { justify-content: center; align-self: stretch; padding: 0 10px; }
 /* Check prices: the list's items with a box for each store's price. */
 @media (min-width: 721px) { dialog.check-pop { width: min(860px, calc(100vw - 24px)); } }
 .ck-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
