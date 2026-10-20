@@ -76,7 +76,9 @@ test('deposit rounding and buffer follow the household rules', () => {
   assert.equal(d(293, 'up5'), 295);
   assert.equal(d(293, 'up10'), 300);
   assert.equal(d(301, 'up10'), 310);
-  assert.equal(d(301, 'up10', 10), 341);
+  assert.equal(d(301, 'up10', 10), 340); // 301 + 10% = 331.10, then up to the next $10
+  assert.equal(d(293, 'up5', 5), 310); // 307.65 -> 310
+  assert.equal(d(301, 'exact', 10), 331.1);
   assert.equal(d(300, 'up10'), 300); // already round: no extra step
   assert.equal(d(292.31, 'exact'), 292.31);
 });
@@ -89,7 +91,7 @@ test('rounding applies to the account total, not each bill', () => {
   const result = budget.buildCycle({ anchor: ANCHOR, index: 0, today: ANCHOR, expenses: twoBills,
     accounts: [{ id: 1, name: 'Direct' }], incomes: [], rules: { rounding: 'up10', buffer_percent: 10 } });
   assert.equal(result.accounts[0].rounded_cents, 31000); // 301 -> 310, not 160 + 150
-  assert.equal(result.accounts[0].deposit_cents, 34100);
+  assert.equal(result.accounts[0].deposit_cents, 34000); // 301 + 10% = 331.10 -> 340
 });
 
 test('pay cycles can be weekly, monthly or a custom number of days', () => {

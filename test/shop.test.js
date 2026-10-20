@@ -239,6 +239,40 @@ test('shopping: kept in a backup and restored', () => withServer({}, async (call
   assert.equal((await call('GET', '/shop')).body.products.length, 1);
 }));
 
+test('shopping: one aisle or category at every location, and when each was last used', () => withServer({}, async (call) => {
+  const stores = await storesOf(call);
+  const vincent = (await call('POST', '/shop/locations', { store_id: stores.Woolworths, name: 'Vincent' })).body;
+  const town = (await call('POST', '/shop/locations', { store_id: stores.Coles, name: 'Town' })).body;
+  let shop;
+  // Town has no Fruit category; Change all adds it there, in the same place.
+  const fruit = (await call('POST', '/shop/sections', { location_id: vincent.id, name: 'Fruit', position: 0.5 })).body;
+  const id = (await call('POST', '/shop/items', { name: 'Bananas' })).body.product_id;
+  await call('PUT', `/shop/products/${id}/spot`, { location_id: town.id, missing: true });
+  let p = (await call('PUT', `/shop/products/${id}/spots`, { section: 'fruit' })).body;
+  shop = (await call('GET', '/shop')).body;
+  const townFruit = shop.sections.find((s) => s.location_id === town.id && s.name === 'Fruit');
+  assert.equal(townFruit.position, 0.5);
+  assert.deepEqual(p.spots[vincent.id], { aisle: null, section_id: fruit.id, missing: false });
+  assert.deepEqual(p.spots[town.id], { aisle: null, section_id: townFruit.id, missing: false });
+  // An aisle everywhere, then unsorted everywhere.
+  p = (await call('PUT', `/shop/products/${id}/spots`, { aisle: 3 })).body;
+  assert.deepEqual([p.spots[vincent.id].aisle, p.spots[town.id].aisle], [3, 3]);
+  p = (await call('PUT', `/shop/products/${id}/spots`, {})).body;
+  assert.deepEqual(p.spots, {});
+  assert.equal((await call('PUT', `/shop/products/${id}/spots`, { section: 'Nowhere' })).status, 400);
+  assert.equal((await call('PUT', `/shop/products/${id}/spots`, { aisle: 21 })).status, 400);
+  assert.equal((await call('PUT', '/shop/products/999/spots', { aisle: 1 })).status, 404);
+
+  // Picking a location to shop at is remembered for the household.
+  assert.equal(shop.locations.find((l) => l.id === vincent.id).used_at, null);
+  assert.equal((await call('POST', `/shop/locations/${vincent.id}/use`)).status, 200);
+  assert.equal((await call('POST', '/shop/locations/999/use')).status, 404);
+  shop = (await call('GET', '/shop')).body;
+  assert.match(shop.locations.find((l) => l.id === vincent.id).used_at, /^\d{4}-\d\d-\d\d /);
+  const backup = (await call('GET', '/export')).body;
+  assert.ok(backup.shopping.locations.find((l) => l.id === vincent.id).used_at);
+}));
+
 test('shopping: store search links and when prices were checked', () => withServer({}, async (call) => {
   // The chains come with their search links; a store added later has none unless it's a chain.
   let shop = (await call('GET', '/shop')).body;
@@ -359,6 +393,8 @@ test('shopping: automatic price search, matching, the cheaper similar hint and u
   assert.deepEqual([p.prices[stores.Woolworths], p.was[stores.Woolworths], p.prices[stores.Coles]], [280, 350, 300]);
   assert.equal(p.matches[stores.Coles].url, 'https://shop.example/c/1');
   assert.deepEqual(p.matches[stores.Aldi], { url: '', name: '', size: null, missing_at: null }); // none of them, remembered
+  assert.ok(p.not_sold[stores.Aldi]); // and saved as not sold there
+  assert.equal(p.prices[stores.Aldi], undefined);
   assert.equal(p.similar.name, 'Cheap Label Rolled Oats');
   assert.deepEqual([p.similar.store_id, p.similar.price_cents], [stores.Aldi, 199]);
   // The same oats in the other size at Woolworths, and Woolworths' own closest other brand.
@@ -584,4 +620,31 @@ test('shopping: bought by weight, counted, swapped and noted', () => withServer(
   await call('POST', '/import', old);
   p = (await call('GET', '/shop')).body.products.find((x) => x.id === id);
   assert.equal(p.options[stores.Aldi].similar.name, 'Test Bananas');
+}));
+
+test('shopping: not sold at a store, in place of its price, and typing over an automatic price', () => withServer({}, async (call) => {
+  const stores = await storesOf(call);
+  const id = (await call('POST', '/shop/items', { list: 'shared', name: 'Paper towels' })).body.product_id;
+  let p;
+  await call('PATCH', `/shop/products/${id}`, { prices: { [stores.Coles]: 400, [stores.Aldi]: 350 } });
+  // Not sold at Aldi: its price goes, and when it was found is kept.
+  p = (await call('PATCH', `/shop/products/${id}`, { not_sold: [stores.Aldi] })).body;
+  assert.equal(p.prices[stores.Aldi], undefined);
+  assert.match(p.not_sold[stores.Aldi], /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/);
+  assert.equal(p.prices[stores.Coles], 400);
+  // It's backed up and restored.
+  const { body: backup } = await call('GET', '/export');
+  assert.equal(backup.shopping.not_sold.length, 1);
+  // A price there clears it, and so does clearing the price.
+  p = (await call('PATCH', `/shop/products/${id}`, { prices: { [stores.Aldi]: 360 } })).body;
+  assert.deepEqual([p.prices[stores.Aldi], p.not_sold[stores.Aldi]], [360, undefined]);
+  await call('PATCH', `/shop/products/${id}`, { not_sold: [stores.Woolworths] });
+  p = (await call('PATCH', `/shop/products/${id}`, { prices: { [stores.Woolworths]: null } })).body;
+  assert.deepEqual(p.not_sold, {});
+  // unmatch stops a store's price being automatic (typed over in Check prices).
+  p = (await call('PATCH', `/shop/products/${id}`, { prices: { [stores.Coles]: 410 }, unmatch: [stores.Coles] })).body;
+  assert.deepEqual([p.prices[stores.Coles], p.matches[stores.Coles]], [410, undefined]);
+  await call('POST', '/import', backup);
+  p = (await call('GET', '/shop')).body.products.find((x) => x.id === id);
+  assert.ok(p.not_sold[stores.Aldi]);
 }));

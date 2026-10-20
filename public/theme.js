@@ -34,6 +34,22 @@
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="24" height="24" rx="5.5" fill="' + bg + '"/>' +
       '<circle cx="12" cy="12" r="6.5" fill="none" stroke="' + fg + '" stroke-width="3.6" pathLength="100" stroke-dasharray="44 6 25 6 13 6" transform="rotate(-90 12 12)"/></svg>';
     link.href = 'data:image/svg+xml,' + encodeURIComponent(svg);
+    // The home-screen icon and bar colour too, so adding the app to a phone uses this theme's colours.
+    var six = function (c) {
+      if (/^#[0-9a-f]{3}$/i.test(c)) return c[1] + c[1] + c[2] + c[2] + c[3] + c[3];
+      return /^#[0-9a-f]{6}$/i.test(c) ? c.slice(1) : null;
+    };
+    if (!six(bg) || !six(fg)) return;
+    var dark = false;
+    try { dark = localStorage.getItem('dark-icon') === '1'; } catch (e) { /* the usual icon */ }
+    // The dark icon: near black, with the ring in the colour the usual icon's background has.
+    var q = dark ? 'bg=111418&fg=' + six(bg) : 'bg=' + six(bg) + '&fg=' + six(fg);
+    var touch = document.getElementById('touch-icon');
+    if (touch) touch.href = 'app-icon.png?size=180&' + q;
+    var manifest = document.getElementById('manifest');
+    if (manifest) manifest.href = 'manifest.webmanifest?' + q;
+    var bar = document.getElementById('theme-color');
+    if (bar) bar.content = bg;
   };
   window.addEventListener('load', window.updateFavicon);
   if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', window.updateFavicon);

@@ -11,6 +11,7 @@ const { createChecker } = require('./checker');
 const { createUpdates, UpdateError, compareVersions, parseVersion } = require('./updates');
 const { createBackups, BackupError } = require('./backups');
 const { createConfig, ConfigError, splitHosts } = require('./config');
+const { iconRoutes } = require('./icon');
 const { version: PACKAGE_VERSION } = require('../package.json');
 
 // A release image is stamped with its release's version (APP_VERSION, set when
@@ -312,6 +313,7 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null, check
   app.use('/api', auth.require, createApi(db));
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
 
+  iconRoutes(app);
   app.use(express.static(path.join(__dirname, '..', 'public'), { index: 'index.html' }));
 
   app.use((err, req, res, next) => {

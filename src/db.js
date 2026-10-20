@@ -445,6 +445,20 @@ const MIGRATIONS = [
   ALTER TABLE shop_items ADD COLUMN swap_kind TEXT;
   UPDATE shop_items SET swap_kind = 'size' WHERE swap_store_id IS NOT NULL;
   `,
+  // 26: when each store location was last picked to shop at, shown in the store picker.
+  `
+  ALTER TABLE shop_locations ADD COLUMN used_at TEXT;
+  `,
+  // 27: a store that doesn't sell a product ("Not sold at Coles"), saved in place of its price
+  // there, and when that was found.
+  `
+  CREATE TABLE shop_not_sold (
+    product_id INTEGER NOT NULL REFERENCES shop_products(id) ON DELETE CASCADE,
+    store_id INTEGER NOT NULL REFERENCES shop_stores(id) ON DELETE CASCADE,
+    at TEXT NOT NULL,
+    PRIMARY KEY (product_id, store_id)
+  );
+  `,
 ];
 
 function openDatabase(file) {

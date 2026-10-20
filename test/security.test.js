@@ -277,3 +277,23 @@ test('passwords are stored with stronger hashing, and older ones are upgraded at
   logout();
   assert.equal((await call('POST', '/login', { password: 'household-pw' })).status, 200, 'still logs in after the upgrade');
 }));
+
+test('the home-screen icon and manifest need no login and only take hex colours', async () => {
+  const db = openDatabase(':memory:');
+  const server = createApp({ db }).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const png = await fetch(`${base}/app-icon.png?size=180&bg=0f766e&fg=ffffff`);
+    assert.equal(png.status, 200);
+    assert.equal(png.headers.get('content-type'), 'image/png');
+    const buf = Buffer.from(await png.arrayBuffer());
+    assert.equal(buf.subarray(1, 4).toString(), 'PNG');
+    assert.deepEqual([buf.readUInt32BE(16), buf.readUInt32BE(20)], [180, 180]);
+    assert.equal((await fetch(`${base}/app-icon.png?size=64`)).status, 404);
+    const m = await (await fetch(`${base}/manifest.webmanifest?bg=123abc&fg=<script>`)).json();
+    assert.equal(m.theme_color, '#123abc');
+    assert.deepEqual(m.icons.map((i) => i.sizes), ['192x192', '512x512']);
+    assert.match(m.icons[0].src, /^app-icon\.png\?size=192&bg=123abc&fg=effffc$/);
+  } finally { server.close(); }
+});

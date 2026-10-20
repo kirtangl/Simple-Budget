@@ -2,6 +2,37 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v0.9.11 (18 October 2026)
+
+### New
+- **Aisles in Edit product** are tidier. When a product is in the same place at every store location (like Dairy), it's one box saying so, with **Change**, and **Different at some stores? Set per location** to set them one by one. Otherwise each location is a row you tap to change, with **Not set** in orange, and **Set all the same** sets one aisle or category everywhere at once (adding the category to any location that hasn't got it).
+- A **copy** button (the two-squares icon beside Check prices) copies what's left on the list as plain text, under a heading for each aisle in order, one item per line (like "Rolled oats 750 g ×2"), to paste into Notes or a message for the shop while the app can't be reached away from home.
+- **Check prices** is redone, for what's on your list. Each item has a box for every store: automatic prices are dashed with a ✎ to type over them, prices you typed are solid, and **Not sold** is striped. The cheapest is coloured, and under each box is when it was checked, in green since the stores' Wednesday price change or orange before it. Each row has ↻ to refresh its automatic prices and 🔍 to find it at the stores (highlighted when it has typed prices that could be kept up to date instead). At the top are a search, **Out of date only** and **Refresh these**, with a key to what the boxes mean, and the bottom says how many prices are up to date. **Check all … saved products** opens Saved products for everything else.
+- **Not sold**: picking **Not sold at …** in Find prices (or **Not sold here** under a price in Edit product) saves that in place of a price. Edit product and Check prices show it, and on the list that store says "Not sold here" instead of + price.
+- **Find prices** (automatic price search) is redone. Each store is a tab across the top showing how it's going: a spinner while it searches, then **✓ Matched** or **Pick one**. Under it is that store's **likely matches**, sorted by price per kg (or L), each one line with its size, price per kg, **Special · was …** and **In store only**, a ≈ for a store's approximate weight, and ↗ to view it on the store's site. Things made from it, like pear juice or baby food, are tucked under **Show … other results**. **Not sold at …** is under the list, and **Next: …** steps to the next store.
+- **Manage stores** is redone: each store is a card you can fold away, showing its locations and how many items have aisles at each ("Aisles not set" in orange). A ⋯ menu on the store has Rename, Search link, Colour and Delete, and one on each location has Set aisles…, Rename and Delete location. **+ Add a … location** sits under each store, and **+ Add a store chain** at the bottom.
+
+### Improved
+- **Where are you shopping?** shows each store's locations as tiles, with which one was used last and when each was last used (shared by the household). Tapping one picks it and closes; **Shop at …** keeps the one you're at. Adding, renaming and deleting moved to **Manage stores**.
+- **Saved products** shows the list total beside **Close** and has smaller ×1 buttons, and the store picker, Manage stores and the item popup no longer leave an empty strip under their buttons.
+- The **Sold by** buttons sit evenly in their box.
+- **Add to Home Screen** gives a sharp icon in your theme's colours (it was blurry and always teal). The icon is picked when you add it, so to change its colour later, pick the theme, remove the home-screen app and add it again.
+- **Dark home-screen icon** under Settings → Appearance gives a near-black icon with the ring in your theme's colour, to sit with an iPhone's dark icons (web apps can't give iOS a separate dark icon, so this is the one icon in every mode). It's saved on that device.
+- On a phone, **Saved products** fits the screen and only the product list scrolls, so nothing is cut off at the bottom.
+- On a phone, **Manage stores** and **Shop at …** in the store picker are full width, one under the other.
+- Deleting a whole store now says plainly that it removes every one of its locations and the aisles set at them, not just one location.
+- On a phone, the totals under the shopping list no longer leave gaps. Each total is on its own line with its amount on the right, and on a wider screen, like a tablet, Total shop, Spent so far and Still to buy share one line with Total after savings under them.
+- When no store is picked on the Shopping tab, a banner above the list says so, with **+ Add a store location** (or **Choose store**). Prices on the list, totals and aisles all need one.
+
+### Fixed
+- After picking prices in Find prices, Edit product shows them (with today's check date) straight away. It used to show the old prices, and pressing Save put them back, which also left them showing as checked yesterday and out of date.
+- "Checked today" and "yesterday" go by the calendar, not by 24 hours.
+- Deposits are rounded **after** the buffer is added, so they're always a round number. For example, $301 with a 10% buffer and rounding up to $10 is now $340 (it was $341).
+- **Saved products** no longer shows an error ("undefined is not an object") when the list has ticked-off items.
+- A store product's size no longer shows twice when its name already says it, like "Tim Tam Value Pack 365g 365 g".
+
+For whoever runs the server: nothing to do beyond **Update now**.
+
 ## v0.9.10 (18 October 2026)
 
 ### New
