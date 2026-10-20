@@ -4534,6 +4534,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         ${similarCount ? html`<button type="button" class="similar-chip" data-action="shop-similar">${similarCount} cheaper similar</button>` : ''}
         <span class="spacer"></span>
         ${groups.length ? html`<button type="button" class="linkish small" data-action="shop-fold-all" data-open="${anyShut ? '1' : ''}">${anyShut ? 'Expand all' : 'Collapse all'}</button>` : ''}
+        <button type="button" class="mini" data-action="shop-copy">Copy list</button>
         <button type="button" class="mini" data-action="shop-check">Check prices</button>
         ${loc ? html`<button type="button" class="mini" data-action="shop-sections" data-id="${loc.id}">${raw(LIST_ICON)} Edit categories</button>` : ''}
       </div>
@@ -5431,6 +5432,56 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     });
   }
 
+  // The list as plain text, one item per line in aisle order, to paste into Reminders or Notes
+  // and tick off away from home (the app is only on the home network). On a secure (https) address
+  // the phone's share menu can send it straight there too.
+  function copyList() {
+    const loc = shopLocation();
+    const items = state.shop.items.filter((it) => !it.done_at && shopProduct(it.product_id));
+    const line = (it) => {
+      const p = shopProduct(it.product_id);
+      const amount = isWeighed(p) && it.grams != null ? gramsText(it.grams) : `${sizeLabel(p) ? `${sizeLabel(p)} ` : ''}${it.qty > 1 ? `×${it.qty}` : ''}`;
+      return `${p.name} ${amount}`.trim();
+    };
+    const text = (headings) => {
+      const groups = loc ? groupBy(items, loc, (it) => shopProduct(it.product_id))
+        : [{ label: '', rows: items }];
+      const byName = (a, b) => shopProduct(a.product_id).name.localeCompare(shopProduct(b.product_id).name);
+      return groups.map((g) => [...(headings && g.label ? [g.label.toUpperCase()] : []), ...[...g.rows].sort(byName).map(line)].join('\n')).join(headings ? '\n\n' : '\n');
+    };
+    const canShare = Boolean(window.isSecureContext && navigator.share);
+    openForm({
+      title: null,
+      body: html`${popHead('Copy the list', {}, html`<p class="pop-sub">${items.length} ${items.length === 1 ? 'item' : 'items'} to tick off in Reminders or Notes while you're out${loc ? `, in ${storeName(loc.store_id)} ${loc.name}'s aisle order` : ''}.</p>`)}
+        <textarea id="cl-text" class="cl-text" readonly rows="8" aria-label="The list as text">${text(false)}</textarea>
+        <label class="cl-check"><input type="checkbox" id="cl-heads"> Aisle headings (for Notes)</label>
+        <div class="cl-btns">${canShare ? html`<button type="button" class="primary" data-cl-share>Share…</button>` : ''}
+          <button type="button" class="${canShare ? '' : 'primary'}" data-cl-copy>Copy list</button></div>
+        <div class="cl-steps">
+          <div><h3 class="form-section">Reminders</h3><ol>
+            <li>Open <b>Reminders</b> and pick a list (or make one called Shopping; share it to see each other's ticks).</li>
+            <li>Tap <b>New Reminder</b>, then tap in it and <b>Paste</b>.</li>
+            <li>Each line becomes its own reminder to tick off.</li></ol></div>
+          <div><h3 class="form-section">Notes</h3><ol>
+            <li>Open <b>Notes</b> and make a new note.</li>
+            <li>Tap in it and <b>Paste</b>.</li>
+            <li>Tap and hold, choose <b>Select All</b>, then tap the checklist button (the ticked circle). Every line gets a checkbox.</li></ol>
+            <p class="muted small">With aisle headings, tap each heading's checkbox off again (select the line and tap the checklist button).</p></div>
+        </div>
+        <p class="muted small">Ticks there don't come back here, so back home, tick off what you got on the list here too.</p>`,
+      afterRender: (form) => {
+        const box = form.querySelector('#cl-text');
+        form.querySelector('#cl-heads').onchange = (ev) => { box.value = text(ev.target.checked); };
+        form.onclick = async (ev) => {
+          if (ev.target.closest('[data-cl-copy]')) { copyText(box.value, 'List'); return; }
+          if (ev.target.closest('[data-cl-share]')) {
+            try { await navigator.share({ title: 'Shopping list', text: box.value }); } catch { /* closed without sharing */ }
+          }
+        };
+      },
+    });
+  }
+
   // What's on the list with a cheaper similar product somewhere (a hint, not counted in totals).
   function similarList() {
     const loc = shopLocation();
@@ -6323,6 +6374,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     'shop-products': () => { state.productQuery = ''; state.productEdit = false; productList(); },
     'shop-check': () => { state.checkQuery = ''; priceCheck(); },
     'shop-similar': () => similarList(),
+    'shop-copy': () => copyList(),
     'shop-update': () => updatePrices(),
     'shop-helper': () => helperPopup(),
     'shop-change': () => shopChange(),
