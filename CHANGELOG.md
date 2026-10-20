@@ -5,11 +5,11 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 ## v0.9.12 (20 October 2026)
 
 ### New
-- **Due dots on Budget → Expenses.** Each bill has a dot by its schedule: green when it comes out this pay, blue next pay, and faint grey when it isn't due for a while. Hover over a dot to see which.
-- **Keep in account breakdown.** Hover over an account's Keep in account figure on the Overview (or tap it) to see what it's made of: this pay's bills still to come, what's held for bills further ahead, the day the account is tightest, and the big bills coming up with their dates. Anything in the account above Keep is spare.
+- **Due dots on Budget → Expenses.** Each bill has a dot by its schedule: green when it comes out this pay, blue next pay, and faint grey when it isn't due for a while. Savings spread over the year get a grey dot too. Hover over a dot to see which.
+- **Keep in account breakdown.** Hover over an account's Keep in account figure on the Overview to see a card of what it's made of (tap it for the full popup): this pay's bills still to come, what's held for bills further ahead, the day the account is tightest, and the big bills coming up with their dates. Anything in the account above Keep is spare.
 
 ### Improved
-- **Deposits this pay** is redone. Each account shows its transfer per pay on the left and **Keep in account** in large type on the right. Under that, a bar shows where the transfer goes: bills that have come out (orange), bills still to come (brown), savings (green) and anything extra (blue). Under the bar are how much in bills is left, the savings (now always shown, even $0), and whether the transfer is **Extra**, **Even** or **Over**. When it's over, a red mark shows where the transfer runs out. The **?** beside the heading explains the colours.
+- **Deposits this pay** is redone. Each account shows its transfer per pay on the left and **Keep in account** in large type on the right. Under that, a bar shows where the transfer goes: bills that have come out (orange), bills still to come (brown), savings (green) and anything extra (blue). Under the bar are how much in bills is left, the savings (now always shown, even $0), and whether the transfer is **Extra**, **Even** or **Over**. When it's over, a red mark shows where the transfer runs out. The **?** beside the heading explains the colours, and a buffer shows beside each transfer, like "(+10% ↑$10)", with a hover saying what it means. The bars are the same thin height as the rest of the page.
 - **Keep in account turns amber** when it's more than that account's transfer, so none of this pay's deposit is spare.
 - **Keep in account always looks 12 months ahead.** The "Should hold looks ahead" setting is gone, since the year-end options missed bills just after the year ended. An old choice of calendar or financial year is ignored.
 

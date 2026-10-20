@@ -448,7 +448,8 @@
     <div class="sec-tabs ov-tabs" role="tablist" aria-label="Overview"><a role="tab" href="#/overview" aria-selected="${active === 'pay' ? 'true' : 'false'}" tabindex="${active === 'pay' ? '0' : '-1'}">This ${cycleWord()}</a>
       <a role="tab" href="#/overview/analytics" aria-selected="${active === 'analytics' ? 'true' : 'false'}" tabindex="${active === 'analytics' ? '0' : '-1'}">Analytics</a></div>`;
 
-  const DEPOSIT_KEY = 'Orange: bills that have come out\nBrown: bills still to come out\nGreen: savings (they stay in the account)\nBlue: extra, more than the bills and savings\nRed: over, the transfer doesn\'t cover them\n\nKeep in account turns amber when it\'s more than the transfer.';
+  const DEPOSIT_KEY = [['out', 'Bills that have come out'], ['left', 'Bills still to come out'], ['sav', 'Savings (they stay in the account)'],
+    ['extra', 'Extra: more than the bills and savings'], ['over', "Over: the transfer doesn't cover them"]];
   const dayText = (d) => fmtDate(d, d.slice(0, 4) !== state.data.settings.today.slice(0, 4));
   // What "Keep in account" is made of, as plain lines (the hover, and the popup on a tap).
   function keepParts(c, r) {
@@ -464,15 +465,28 @@
       low: r.held_cents && r.low_on ? `Tightest on ${dayText(r.low_on)}, after ${r.low_after}: the account gets down to $0 if it holds exactly this.` : '',
     };
   }
-  const keepTip = (c, r) => {
+  // A styled card shown on hover (on a computer); tapping still opens the full popup.
+  const keepCard = (c, r) => {
     const k = keepParts(c, r);
-    return [`What should be in the account ${k.when}, so every bill in the next 12 months can be paid with the deposits still to come.`, '',
-      ...k.lines.map(([label, cents]) => `${label}: ${money(cents)}`),
-      ...(k.tight ? ['', `More than this ${cycleWord()}'s ${money(r.deposit_cents)} transfer, so none of it is spare.`] : []),
-      ...(k.low ? ['', k.low] : []),
-      ...(r.ahead.length ? ['', 'Big bills ahead:', ...r.ahead.slice(0, 5).map((b) => `${b.name} ${money(b.amount_cents)} · ${dayText(b.date)}`)] : []),
-      '', 'Anything above this is spare. Savings not included.'].join('\n');
+    return html`<span class="hover-card keep-card" role="tooltip">
+      <span class="hc-title">Keep in account · ${k.when}</span>
+      ${k.lines.map(([label, cents]) => html`<span class="hc-row"><span>${label}</span><b class="num">${money(cents)}</b></span>`)}
+      ${k.tight ? html`<span class="hc-warn">More than this ${cycleWord()}'s ${money(r.deposit_cents)} transfer, so none of it is spare.</span>` : ''}
+      ${k.low ? html`<span class="hc-note">${k.low}</span>` : ''}
+      ${r.ahead.length ? html`<span class="hc-sub">Big bills ahead</span>
+        ${r.ahead.slice(0, 5).map((b) => html`<span class="hc-row"><span>${b.name} <span class="muted">· ${dayText(b.date)}</span></span><b class="num">${money(b.amount_cents)}</b></span>`)}
+        ${r.ahead.length > 5 ? html`<span class="hc-note">and ${r.ahead.length - 5} more</span>` : ''}` : ''}
+      <span class="hc-foot">Anything above this is spare. Savings not included. Click for more.</span>
+    </span>`;
   };
+  // The buffer and rounding beside each transfer, e.g. "(+10% ↑$10)".
+  function bufferTag() {
+    const s = state.data.settings;
+    if (!s.buffer_percent) return '';
+    const up = { up5: '↑$5', up10: '↑$10' }[s.rounding];
+    return html` <span class="buf-tag" tabindex="0">(+${s.buffer_percent}%${up ? ` ${up}` : ''})<span class="hover-card" role="tooltip">
+      <span class="hc-title">Buffer</span><span class="hc-note">This transfer has a ${s.buffer_percent}% buffer on top of the account's bills and savings${up ? `, then it's rounded up to the next ${up.slice(1)}` : ''}. Change it in Settings → General → Deposits.</span></span></span>`;
+  }
   function keepDetails(id) {
     const c = state.cycleData;
     const r = c && c.accounts.find((x) => x.account_id === id);
@@ -519,9 +533,9 @@
             <li class="acct-line deposit dep2 clickable" data-action="account-details" data-id="${a.id}" style="--acct:${colorFor(a, i)}"><div class="grow">
               <div class="dep-head">
                 <div class="grow"><div class="dep-name"><span class="sq" aria-hidden="true"></span><button class="acct-btn" data-action="account-details" data-id="${a.id}" data-tip="${bankTip(a) || 'No bank details yet'}">${a.name}</button></div>
-                  <div class="dep-per"><b class="num">${money(r.deposit_cents)}</b> per ${cycleWord()}</div></div>
-                <button type="button" class="dep-keep ${tight ? 'tight' : ''}" data-action="keep-details" data-id="${a.id}" title="${keepTip(c, r)}">
-                  <b class="num">${money(r.held_cents)}</b><span>Keep in account</span></button>
+                  <div class="dep-per"><b class="num">${money(r.deposit_cents)}</b> per ${cycleWord()}${bufferTag()}</div></div>
+                <button type="button" class="dep-keep ${tight ? 'tight' : ''}" data-action="keep-details" data-id="${a.id}" aria-label="Keep ${money(r.held_cents)} in account: show the breakdown">
+                  <b class="num">${money(r.held_cents)}</b><span class="kl">Keep in account</span>${keepCard(c, r)}</button>
               </div>
               <div class="dep-seg" role="img" aria-label="${money(r.paid_cents)} of bills out, ${money(r.remaining_cents)} to come, ${money(r.savings_cents)} savings, ${over ? `${money(-r.spare_cents)} over` : `${money(r.spare_cents)} extra`}">
                 ${seg(r.paid_cents, 'out', `${money(r.paid_cents)} in bills has come out`)}${seg(r.remaining_cents, 'left', `${money(r.remaining_cents)} in bills still to come out`)}${seg(r.savings_cents, 'sav', `${money(r.savings_cents)} to savings`)}${seg(r.spare_cents, 'extra', `${money(r.spare_cents)} extra`)}
@@ -532,8 +546,7 @@
                 <span class="${r.savings_cents ? 'good-text' : 'muted'}" title="Savings from this account ${thisCycle()}. They stay in the account."><b class="num">${r.savings_cents ? '+' : ''}${money(r.savings_cents)}</b> Savings</span>
                 <span class="${over ? 'neg' : r.spare_cents ? 'info-text' : 'muted'}" title="${over ? `${r.savings_cents ? 'Bills + savings are' : 'Bills are'} ${money(need)}, ${money(-r.spare_cents)} more than this transfer` : r.spare_cents ? `${money(r.spare_cents)} more than this ${cycleWord()}'s bills and savings` : `Exactly this ${cycleWord()}'s bills and savings`}"><b class="num">${over ? '−' : r.spare_cents ? '+' : ''}${money(Math.abs(r.spare_cents))}</b> ${over ? 'Over' : r.spare_cents ? 'Extra' : 'Even'}</span>
               </div>
-              ${state.data.settings.buffer_percent || saved.has(a.id) ? html`<div class="figures">
-                ${state.data.settings.buffer_percent ? html`<span class="figure muted">incl. ${state.data.settings.buffer_percent}% buffer</span>` : ''}
+              ${saved.has(a.id) ? html`<div class="figures">
                 ${saved.has(a.id) ? html`<span class="figure goal-saved" title="Saved so far in ${saved.get(a.id).goals.map((g) => g.name).join(', ')}"><span class="label">Goals</span> <b class="num">${money(saved.get(a.id).cents)} saved</b></span>` : ''}
               </div>` : ''}
             </div></li>`;
@@ -619,7 +632,9 @@
 
         <div class="stack">
         <section class="card">
-          <div class="card-head"><div><h2>Deposits ${thisCycle()} <button type="button" class="help-q" data-tip="${DEPOSIT_KEY}" aria-label="What the colours mean">?</button></h2><div class="muted head-sub">${cap(depositNote())} · <button class="linkish" data-action="edit-deposit-rules">Change</button></div></div>
+          <div class="card-head"><div><h2>Deposits ${thisCycle()} <button type="button" class="help-q" aria-label="What the colours mean">?<span class="hover-card key-card" role="tooltip"><span class="hc-title">What the colours mean</span>
+            ${DEPOSIT_KEY.map(([cls, text]) => html`<span class="hc-key"><i class="${cls}"></i>${text}</span>`)}
+            <span class="hc-note">Keep in account turns <b class="due-text">amber</b> when it's more than the transfer.</span></span></button></h2><div class="muted head-sub">${cap(depositNote())} · <button class="linkish" data-action="edit-deposit-rules">Change</button></div></div>
             <div class="dep-sum"><b class="num dep-total">${money(t.deposits_cents)}</b><div class="muted">each ${cycleWord()} · ${used.length} account${used.length === 1 ? '' : 's'}</div></div></div>
           ${rows.length ? html`<ul class="list">${used.map(({ a, r, i }) => depositRow(a, r, i))}
             ${state.showUnused ? unused.map(({ a, r, i }) => depositRow(a, r, i)) : ''}</ul>
@@ -1368,7 +1383,8 @@
   };
   // A dot by the schedule: green when the bill comes out this pay, blue next pay, faint grey after that.
   function dueDot(e) {
-    if (!e.active || !e.next_date || isSplit(e)) return html`<i class="due-dot none" aria-hidden="true"></i>`;
+    if (isSplit(e) && e.active) return html`<i class="due-dot later" title="Put aside each ${cycleWord()}" role="img" aria-label="Put aside each ${cycleWord()}"></i>`;
+    if (!e.active || !e.next_date) return html`<i class="due-dot none" aria-hidden="true"></i>`;
     const st = state.data.settings;
     const [cls, tip] = e.next_date <= st.cycle_end ? ['now', `Due ${thisCycle()}`] : e.next_date <= st.next_cycle_end ? ['next', `Due next ${cycleWord()}`] : ['later', 'Not due for a while'];
     return html`<i class="due-dot ${cls}" title="${tip}" role="img" aria-label="${tip}"></i>`;

@@ -2313,11 +2313,6 @@ button.sm-add-chain:hover { color: var(--brand); border-color: var(--brand); }
   border: 1px solid var(--line); border-radius: 50%; background: none; color: var(--muted); font-size: 11px; font-weight: 700;
   min-height: 0; line-height: 1; cursor: help; position: relative;
 }
-.help-q[data-tip]:hover::after, .help-q[data-tip]:focus-visible::after {
-  content: attr(data-tip); position: absolute; left: 0; top: 100%; margin-top: 6px; z-index: 5; width: max-content; max-width: 280px;
-  white-space: pre-wrap; text-align: left; font-weight: 500; font-size: .8rem; line-height: 1.4; padding: 8px 10px; border-radius: 8px;
-  background: var(--text); color: var(--bg); pointer-events: none;
-}
 .dep-sum { text-align: right; font-size: 12px; }
 .dep-sum .dep-total { font-size: 1.35rem; }
 li.deposit.dep2 { padding: 12px 0; }
@@ -2332,11 +2327,10 @@ li.deposit.dep2 + li.deposit.dep2 { margin-top: 0; border-top: 1px solid var(--l
   display: flex; flex-direction: column; align-items: flex-end; margin: 0; padding: 0; border: 0; background: none;
   color: var(--text); cursor: pointer; text-align: right;
 }
-.dep-keep b { font-size: 1.45rem; line-height: 1.1; }
-.dep-keep span { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
-.dep-keep.tight b, .dep-keep.tight span { color: var(--due); }
+.dep-keep > b { font-size: 1.45rem; line-height: 1.1; }
+.dep-keep.tight > b { color: var(--due); }
 .dep-seg {
-  position: relative; display: flex; gap: 2px; height: 6px; margin: 10px 0 6px; border-radius: 999px; overflow: hidden;
+  position: relative; display: flex; gap: 2px; height: 4px; margin: 10px 0 6px; border-radius: 999px; overflow: hidden;
   background: var(--line);
 }
 .dep-seg > span { display: block; height: 100%; }
@@ -2365,3 +2359,36 @@ li.deposit.dep2 + li.deposit.dep2 { margin-top: 0; border-top: 1px solid var(--l
 .due-dot.later { background: color-mix(in srgb, var(--muted) 35%, transparent); }
 .due-dot.none { background: none; }
 .dep-sum .muted { white-space: nowrap; }
+
+/* Hover cards: a small styled card on hover or keyboard focus (devices with a mouse). */
+.hover-card {
+  display: none; position: absolute; top: calc(100% + 8px); right: 0; z-index: 20; width: 300px; max-width: calc(100vw - 32px);
+  flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--card); color: var(--text); box-shadow: 0 8px 24px rgb(0 0 0 / 25%);
+  text-align: left; font-size: 13px; font-weight: 400; line-height: 1.4; letter-spacing: 0; text-transform: none; white-space: normal; cursor: default;
+}
+@media (hover: hover) {
+  :hover > .hover-card, :focus-visible > .hover-card { display: flex; }
+}
+.hover-card .hc-title { font-weight: 700; font-size: 13px; color: var(--text); }
+.hover-card .hc-row { display: flex; justify-content: space-between; gap: 12px; }
+.hover-card .hc-row b { color: var(--text); font-size: 13px; }
+.hover-card .hc-sub { margin-top: 4px; font-weight: 600; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.hover-card .hc-warn { color: var(--due); }
+.hover-card .hc-note { color: var(--muted); }
+.hover-card .hc-foot { margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.hover-card .hc-key { display: flex; align-items: center; gap: 8px; }
+.hover-card .hc-key i { width: 14px; height: 6px; border-radius: 999px; flex: none; }
+.hc-key .out { background: var(--firm); }
+.hc-key .left { background: color-mix(in srgb, var(--firm) 40%, var(--card)); }
+.hc-key .sav { background: var(--paid); }
+.hc-key .extra { background: var(--info); }
+.hc-key .over { background: var(--danger); }
+.due-text { color: var(--due); }
+.help-q .hover-card { left: 0; right: auto; text-transform: none; }
+.dep-keep { position: relative; }
+.dep-keep .kl { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.dep-keep.tight .kl { color: var(--due); }
+.buf-tag { position: relative; color: var(--muted); cursor: help; }
+.buf-tag .hover-card { left: 0; right: auto; width: 260px; }
+li.deposit.dep2:hover, li.deposit.dep2:focus-within { position: relative; z-index: 6; }
