@@ -202,11 +202,10 @@ test('what an account should hold today', () => {
   const rent = { id: 3, active: 1, account_id: 2, frequency: 'fortnightly', amount_cents: 10000, day_offset: 7 };
   [, acct] = budget.heldEstimates([rent], [{ id: 1 }, { id: 2 }], opts);
   assert.equal(acct.held_cents, 10000); // 13 Jan comes out before the 20 Jan deposit
-  // Looking only to the end of the financial year skips bills after 30 June.
-  const july = { ...bill, start_month: 7 };
-  [acct] = budget.heldEstimates([july], [{ id: 1 }], { ...opts, basis: 'financial' });
+  // Bills more than 12 months away aren't counted.
+  const later = { ...bill, start_date: '2027-03-01' };
+  [acct] = budget.heldEstimates([later], [{ id: 1 }], opts);
   assert.equal(acct.held_cents, 0);
-  assert.equal(budget.lookAheadEnd('2026-08-01', 'financial'), '2027-06-30');
 });
 
 test("deposits for a bill that hasn't started yet don't count towards what's held before it starts", () => {
@@ -393,4 +392,22 @@ test('the balance before a statement follows the repayments down to it', () => {
   const past = t.points.filter((p) => p.month < '2026-10');
   for (let i = 1; i < past.length; i++) assert.ok(past[i].balance_cents < past[i - 1].balance_cents);
   assert.ok(Math.abs(past.at(-1).balance_cents - min.balance_cents) < 50000); // meets the statement, no sudden drop
+});
+
+test('what to keep in an account, its lowest day and the big bills ahead', () => {
+  const pc = budget.payCycle('fortnightly');
+  const anchor = '2026-10-16';
+  const bills = [
+    { id: 1, active: 1, account_id: 1, name: 'Groceries', frequency: 'fortnightly', amount_cents: 25000, day_offset: 2 },
+    { id: 2, active: 1, account_id: 1, name: 'Rates', frequency: 'yearly', amount_cents: 200000, day_of_month: 1, start_month: 11 },
+  ];
+  const held = (today) => budget.heldEstimates(bills, [{ id: 1 }], { today, anchor, payCycle: pc })[0];
+  // The payday after the rates: this fortnight's $250 plus one pay's share of the rates ($2,000 / 26).
+  assert.equal(held('2026-11-13').held_cents, 32692);
+  // Half way through the year, half the rates.
+  assert.equal(held('2027-05-01').held_cents, 125000);
+  const before = held('2026-10-17');
+  assert.equal(before.low_on, '2026-11-01');
+  assert.equal(before.low_after, 'Rates');
+  assert.deepEqual(before.ahead.map((b) => [b.name, b.date]), [['Rates', '2026-11-01']]);
 });

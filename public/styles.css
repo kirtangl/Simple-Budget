@@ -2306,3 +2306,62 @@ button.sm-add-chain:hover { color: var(--brand); border-color: var(--brand); }
 /* Appearance: the dark home-screen icon tick box under the themes. */
 .dark-icon { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .dark-icon p { margin: 4px 0 0 26px; }
+
+/* Deposits: name and transfer on the left, Keep in account on the right, a bar of where the transfer goes. */
+.help-q {
+  display: inline-grid; place-items: center; width: 18px; height: 18px; margin: 0 0 0 4px; padding: 0; vertical-align: 2px;
+  border: 1px solid var(--line); border-radius: 50%; background: none; color: var(--muted); font-size: 11px; font-weight: 700;
+  min-height: 0; line-height: 1; cursor: help; position: relative;
+}
+.help-q[data-tip]:hover::after, .help-q[data-tip]:focus-visible::after {
+  content: attr(data-tip); position: absolute; left: 0; top: 100%; margin-top: 6px; z-index: 5; width: max-content; max-width: 280px;
+  white-space: pre-wrap; text-align: left; font-weight: 500; font-size: .8rem; line-height: 1.4; padding: 8px 10px; border-radius: 8px;
+  background: var(--text); color: var(--bg); pointer-events: none;
+}
+.dep-sum { text-align: right; font-size: 12px; }
+.dep-sum .dep-total { font-size: 1.35rem; }
+li.deposit.dep2 { padding: 12px 0; }
+li.deposit.dep2 + li.deposit.dep2 { margin-top: 0; border-top: 1px solid var(--line); }
+.list > li.acct-line.deposit.dep2::after { display: none; }
+.dep-head { display: flex; align-items: flex-start; gap: 10px; }
+.dep-name { display: flex; align-items: center; gap: 8px; }
+.dep-name .sq { width: 10px; height: 10px; border-radius: 3px; background: var(--acct); flex: none; }
+.dep-per { margin-top: 2px; font-size: 13px; color: var(--muted); }
+.dep-per b { color: var(--text); font-size: 15px; }
+.dep-keep {
+  display: flex; flex-direction: column; align-items: flex-end; margin: 0; padding: 0; border: 0; background: none;
+  color: var(--text); cursor: pointer; text-align: right;
+}
+.dep-keep b { font-size: 1.45rem; line-height: 1.1; }
+.dep-keep span { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.dep-keep.tight b, .dep-keep.tight span { color: var(--due); }
+.dep-seg {
+  position: relative; display: flex; gap: 2px; height: 6px; margin: 10px 0 6px; border-radius: 999px; overflow: hidden;
+  background: var(--line);
+}
+.dep-seg > span { display: block; height: 100%; }
+.dep-seg .out { background: var(--firm); }
+.dep-seg .left { background: color-mix(in srgb, var(--firm) 40%, var(--card)); }
+.dep-seg .sav { background: var(--paid); }
+.dep-seg .extra { background: var(--info); }
+.dep-seg .dep-end { position: absolute; top: 0; bottom: 0; width: 3px; margin-left: -3px; background: var(--danger); }
+.dep-line { display: flex; justify-content: space-between; gap: 4px 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.dep-line .left-amt { color: var(--firm); }
+.dep-line .good-text b, .dep-line .info-text b, .dep-line .neg b { color: inherit; }
+.dep-line b { color: var(--text); }
+
+/* Keep in account popup */
+.keep-big b { font-size: 2rem; }
+.keep-big.tight { color: var(--due); }
+.keep-list > li { display: flex; gap: 10px; padding: 8px 0; }
+.keep-h { font-size: 14px; margin: 14px 0 0; }
+.keep-warn { color: var(--due); font-size: 14px; }
+.dep-line .muted b { color: inherit; }
+
+/* Expenses: when each bill next comes out. */
+.due-dot { display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; vertical-align: 1px; flex: none; }
+.due-dot.now { background: var(--paid); }
+.due-dot.next { background: var(--info); }
+.due-dot.later { background: color-mix(in srgb, var(--muted) 35%, transparent); }
+.due-dot.none { background: none; }
+.dep-sum .muted { white-space: nowrap; }
