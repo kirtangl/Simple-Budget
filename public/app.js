@@ -443,6 +443,8 @@
 
   const DEPOSIT_KEY = [['out', 'Bills that have come out'], ['left', 'Bills still to come out'], ['sav', 'Savings (they stay in the account)'],
     ['extra', 'Extra: more than the bills and savings'], ['over', "Over: the transfer doesn't cover them"]];
+  // Keep in account shows rounded up to the whole dollar; its popup shows the exact amount.
+  const keepUp = (cents) => Math.ceil((cents || 0) / 100) * 100;
   const dayText = (d) => fmtDate(d, d.slice(0, 4) !== state.data.settings.today.slice(0, 4));
   // What "Keep in account" is made of, as plain lines (the hover, and the popup on a tap).
   function keepParts(c, r) {
@@ -463,13 +465,14 @@
     const k = keepParts(c, r);
     return html`<span class="hover-card keep-card" role="tooltip">
       <span class="hc-title">Keep in account · ${k.when}</span>
+      <span class="hc-row"><span>Exact amount</span><b class="num">${moneyFmt.format(r.held_cents / 100)}</b></span>
       ${k.lines.map(([label, cents]) => html`<span class="hc-row"><span>${label}</span><b class="num">${money(cents)}</b></span>`)}
       ${k.tight ? html`<span class="hc-warn">More than this ${cycleWord()}'s ${money(r.deposit_cents)} transfer, so none of it is spare.</span>` : ''}
       ${k.low ? html`<span class="hc-note">${k.low}</span>` : ''}
       ${r.ahead.length ? html`<span class="hc-sub">Big bills ahead</span>
         ${r.ahead.slice(0, 5).map((b) => html`<span class="hc-row"><span>${b.name} <span class="muted">· ${dayText(b.date)}</span></span><b class="num">${money(b.amount_cents)}</b></span>`)}
         ${r.ahead.length > 5 ? html`<span class="hc-note">and ${r.ahead.length - 5} more</span>` : ''}` : ''}
-      <span class="hc-foot">Anything above this is spare. Savings not included. Click for more.</span>
+      <span class="hc-foot">Savings aren't included, so you can take this pay's out. Anything above this is spare. Click for more.</span>
     </span>`;
   };
   // An account's buffer beside its transfer, as a small "+10%" with the details on hover.
@@ -492,8 +495,9 @@
       cls: 'keep-pop',
       body: html`
         ${popHead('Keep in account', {}, html`<div class="muted small">${a.name} · ${k.when}</div>`)}
-        <div class="keep-big ${k.tight ? 'tight' : ''}"><b class="num">${money(r.held_cents)}</b></div>
-        <p class="muted small">So every bill in the next 12 months can be paid with the deposits still to come. Savings aren't included.</p>
+        <div class="keep-big ${k.tight ? 'tight' : ''}"><b class="num">${moneyFmt.format(r.held_cents / 100)}</b></div>
+        <p class="muted small">So every bill in the next 12 months can be paid with the deposits still to come.</p>
+        <p class="keep-sav small">Savings aren't included. Take this ${cycleWord()}'s savings out and keep at least this much, and every bill is still covered.</p>
         <ul class="list keep-list">${k.lines.map(([label, cents]) => html`<li><span class="grow">${label}</span><b class="num">${money(cents)}</b></li>`)}</ul>
         ${k.tight ? html`<p class="keep-warn">That's more than this ${cycleWord()}'s ${money(r.deposit_cents)} transfer, so none of this deposit is spare. The rest needs to be in the account already.</p>` : ''}
         ${k.low ? html`<p class="small">${k.low}</p>` : ''}
@@ -527,8 +531,8 @@
               <div class="dep-head">
                 <div class="grow"><div class="dep-name"><span class="sq" aria-hidden="true"></span><button class="acct-btn" data-action="account-details" data-id="${a.id}" data-tip="${bankTip(a) || 'No bank details yet'}">${a.name}</button></div>
                   <div class="dep-per"><b class="num">${money(r.deposit_cents)}</b> per pay${bufferTag(r)}</div></div>
-                <button type="button" class="dep-keep ${tight ? 'tight' : ''}" data-action="keep-details" data-id="${a.id}" aria-label="Keep ${money(r.held_cents)} in account: show the breakdown">
-                  <b class="num">${money(r.held_cents)}</b><span class="kl">Keep in account</span>${keepCard(c, r)}</button>
+                <button type="button" class="dep-keep ${tight ? 'tight' : ''}" data-action="keep-details" data-id="${a.id}" aria-label="Keep ${money(keepUp(r.held_cents))} in account: show the breakdown">
+                  <b class="num">${money(keepUp(r.held_cents))}</b><span class="kl">Keep in account</span>${keepCard(c, r)}</button>
               </div>
               <div class="dep-seg" role="img" aria-label="${money(r.paid_cents)} of bills out, ${money(r.remaining_cents)} to come, ${money(r.savings_cents)} savings, ${over ? `${money(-r.spare_cents)} over` : `${money(r.spare_cents)} extra`}">
                 ${seg(r.paid_cents, 'out', `${money(r.paid_cents)} in bills has come out`)}${seg(r.remaining_cents, 'left', `${money(r.remaining_cents)} in bills still to come out`)}${seg(r.savings_cents, 'sav', `${money(r.savings_cents)} to savings`)}${seg(r.spare_cents, 'extra', `${money(r.spare_cents)} extra`)}
