@@ -2405,3 +2405,4 @@ li.deposit.dep2:hover, li.deposit.dep2:focus-within { position: relative; z-inde
 .dep-total-line { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .dep-in { color: var(--brand); flex: none; }
 .dep-card-head .head-sub { font-size: 12px; }
+.dep-card-head { padding-bottom: 12px; margin-bottom: 0; border-bottom: 1px solid var(--line); }
