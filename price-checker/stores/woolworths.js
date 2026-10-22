@@ -25,6 +25,7 @@ const toResult = (p) => p && result({
   available: p.IsAvailable ?? p.IsInStock,
   sold: isEach(p) ? 'each' : 'pack',
   grams: Number(p.UnitWeightInGrams) || null,
+  image: p.SmallImageFile || p.MediumImageFile,
 });
 // How many loose results a search looks up the weight of (one request each, so only the first few).
 const WEIGH = 4;

@@ -12,6 +12,7 @@
 //   GET  /screen/:store            a picture of a store's tab, while it waits for a person
 //   POST /input/:store             { type: click | down | move | up | key | text, x, y, key, text }
 //   POST /warmup                   visit the stores' home pages now
+//   GET  /image?url=…              a product picture from a store's image server
 
 const http = require('node:http');
 const fs = require('node:fs');
@@ -19,6 +20,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { createJobs } = require('./lib/jobs');
 const { tick } = require('./lib/schedule');
+const { imageOf } = require('./stores/common');
 
 const DATA = process.env.DATA_DIR || '/data';
 const STATE = path.join(DATA, 'state.json');
@@ -37,7 +39,17 @@ function save(state) {
   } catch (err) { console.error('Could not save state:', err.message); }
 }
 
-function createServer({ jobs, browser, token }) {
+// A product picture from a store's own image server (only those), up to 500 KB. A plain request:
+// the stores' pictures need no cookies.
+async function fetchImage(url, fetchImpl = globalThis.fetch) {
+  const res = await fetchImpl(url, { headers: { accept: 'image/*' }, signal: AbortSignal.timeout(10e3) });
+  const type = res.headers.get('content-type') || '';
+  if (!res.ok || !/^image\/(jpeg|png|webp|gif)/i.test(type)) return null;
+  const body = Buffer.from(await res.arrayBuffer());
+  return body.length && body.length <= 500e3 ? { type, body } : null;
+}
+
+function createServer({ jobs, browser, token, fetchImpl = globalThis.fetch }) {
   const want = crypto.createHash('sha256').update(String(token)).digest();
   const allowed = (req) => {
     const m = /^Bearer (.+)$/.exec(req.headers.authorization || '');
@@ -88,6 +100,15 @@ function createServer({ jobs, browser, token }) {
         if (post && parts[0] === 'input') return send(res, 200, { ok: await browser.input(parts[1], await readBody(req)) });
       }
       if (post && url.pathname === '/warmup') return send(res, 201, jobs.start({ type: 'warmup' }));
+      if (req.method === 'GET' && url.pathname === '/image') {
+        const src = imageOf(url.searchParams.get('url'));
+        if (!src) return send(res, 400, { error: "That's not a store's picture." });
+        let img = null;
+        try { img = await fetchImage(src, fetchImpl); } catch { /* unreachable */ }
+        if (!img) return send(res, 404, { error: "Couldn't get that picture." });
+        res.writeHead(200, { 'content-type': img.type, 'cache-control': 'no-store' });
+        return res.end(img.body);
+      }
       send(res, 404, { error: 'Not found.' });
     } catch (err) {
       if (err instanceof RangeError) return send(res, 400, { error: err.message });

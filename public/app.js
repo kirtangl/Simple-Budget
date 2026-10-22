@@ -4294,6 +4294,34 @@ sudo docker compose up -d --build</pre>${s.extra}`;
   // A store's name in its colour, or a login's name in theirs, as a small tag.
   const shopTag = (text, colour) => html`<span class="shop-tag" style="--tag:${colour || 'var(--brand)'}">${text}</span>`;
   const storeDot = (id) => html`<span class="dot store-dot" style="background:${storeColour(id)}"></span>`;
+  // Product pictures: a store's, fetched for the app by the price-checker, and the small one kept
+  // with a product's match at a store (at this store if it has one, else the first that does).
+  const pictureUrl = (u) => `api/shop/picture?u=${encodeURIComponent(u)}`;
+  function productPicture(p, store) {
+    const at = (sid) => (p.matches?.[sid]?.image_v ? `api/shop/products/${p.id}/picture/${sid}?v=${p.matches[sid].image_v}` : null);
+    if (store != null && at(store)) return at(store);
+    for (const s of state.shop.stores) if (at(s.id)) return at(s.id);
+    return null;
+  }
+  // A picture made small (96 pixels on its longer side) in the browser, as a JPEG to keep.
+  async function thumbOf(url) {
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      const k = Math.min(1, 96 / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.naturalWidth * k));
+      c.height = Math.max(1, Math.round(img.naturalHeight * k));
+      const g = c.getContext('2d');
+      g.fillStyle = '#fff';
+      g.fillRect(0, 0, c.width, c.height);
+      g.drawImage(img, 0, 0, c.width, c.height);
+      return c.toDataURL('image/jpeg', 0.82);
+    } catch { return null; }
+  }
+  // A picture that won't load is hidden rather than shown broken.
+  document.addEventListener('error', (ev) => { if (ev.target instanceof HTMLImageElement && ev.target.classList.contains('pic')) ev.target.classList.add('gone'); }, true);
   const shopLocation = () => {
     const id = Number(recall('shop:location'));
     return state.shop.locations.find((l) => l.id === id) || null;
@@ -4541,6 +4569,8 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     // product on the left and a cheaper store on the right, each in its own cell so they can't run
     // into the amount. On a phone it folds to the name, amount and total, with a chevron to open
     // the rest.
+    // Pictures show once any product on the list has one, with a blank space for the rest.
+    const pics = rows.some((r) => productPicture(r.p, store));
     const row = ({ it, p }) => {
       const g = shopSpot(p, loc);
       const price = store ? lineCost(it, p, store) : null;
@@ -4557,6 +4587,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       const at = got && it.done_store_id;
       const open = !got && state.shopOpen.has(it.id);
       const unitHere = store != null ? unitAt(it, p, store) : null;
+      const pic = productPicture(p, store);
       const sizeText = swap ? '' : isWeighed(p) ? 'by the kg' : sizeLabel(p);
       const sim = !got && p.similar && !swap ? p.similar : null;
       // The cheaper store, said the way its shelf would: per pack, each, or for the weight.
@@ -4568,22 +4599,26 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         const grams = isWeighed(p) ? itemGrams(it, p) : null;
         const what = isWeighed(p) ? `${money2(cheaper.cents)}${grams ? ` for ${gramsText(grams)}` : ''}`
           : one ? `${money2(pk.cents)} each` : `${money2(pk ? pk.cents : cheaper.cents)} per pack`;
+        // Cheaper for what's on the list, but dearer for the amount (a smaller pack): said so.
+        const dearer = there && unitHere && there.per === unitHere.per && there.cents > unitHere.cents;
         cheapLine = html`<div class="si-cheap" id="si-c-${it.id}">${storeDot(cheaper.store)}<span class="ct">${what} at ${storeName(cheaper.store)}${there && !one ? html` · ${U.text(there)}` : ''}</span>
+          ${dearer ? html`<span class="dearer" title="${storeName(cheaper.store)}'s pack costs less, but more per ${there.per} than ${U.text(unitHere)} here">dearer per ${there.per}</span>` : ''}
           <span class="save-chip" title="Save ${money2(price - cheaper.cents)} at ${storeName(cheaper.store)}">−${money2(price - cheaper.cents)}</span></div>`;
       }
       const swapLine = sim ? html`<button type="button" class="si-swap" id="si-s-${it.id}" data-action="shop-item" data-id="${it.id}" title="A similar product costs less for the amount: tap to swap to it for this shop">
           ${raw(SWAP_ICON)}<span class="st">${storeProduct(sim.store_id, sim.name)}${sizeAfter(sim.name, sim.size)} · <b>${money2(sim.price_cents)}</b></span>${unitSpan(U.of(sim.price_cents, U.parse(sim.size) || U.parse(sim.name)))}</button>` : '';
       const setAisle = !got && loc && g.key === 'unsorted' ? html`<button type="button" class="linkish small" data-action="shop-spot" data-id="${p.id}">Set aisle</button>` : '';
       const sizeBits = [sizeText, unitHere ? U.text(unitHere) : ''].filter(Boolean).join(' · ');
-      const cls = ['shop-item', got ? 'got' : '', sim ? 'has-swap' : 'no-swap', cheapLine ? 'has-cheap' : ''].filter(Boolean).join(' ');
+      const cls = ['shop-item', got ? 'got' : '', sim ? 'has-swap' : 'no-swap', cheapLine ? 'has-cheap' : '', pics ? 'with-pic' : ''].filter(Boolean).join(' ');
       return html`<li class="${cls}" data-expanded="${open ? 'true' : 'false'}" data-name="${productLabel(p).toLowerCase()}" data-pname="${p.name.toLowerCase()}">
         <input type="checkbox" data-action="shop-tick" data-id="${it.id}" ${raw(got ? 'checked' : '')} aria-label="${got ? 'Not got' : 'Got'} ${p.name}">
         <div class="si-name" data-action="shop-item" data-id="${it.id}">
-          <div class="title"><span class="nm">${p.name}</span>${swap ? html` <span class="shop-size swapped" title="Swapped for this shop">⇄ ${swapLabel}${unitHere ? html` · ${U.text(unitHere)}` : ''}</span>`
+          ${pics ? html`<span class="si-pic">${pic ? html`<img class="pic" src="${pic}" alt="" loading="lazy">` : ''}</span>` : ''}
+          <div class="si-text"><div class="title"><span class="nm">${p.name}</span>${swap ? html` <span class="shop-size swapped" title="Swapped for this shop">⇄ ${swapLabel}${unitHere ? html` · ${U.text(unitHere)}` : ''}</span>`
             : sizeBits ? html` <span class="shop-size wide-only">${sizeBits}</span>` : ''}
             ${it.note ? html`<span class="note-mark" title="Note: ${it.note}" aria-label="Has a note">${raw(NOTE_ICON)}</span>` : ''}
             ${p.setup ? html`<button type="button" class="setup-tag" data-action="shop-setup" data-id="${p.id}">Set up</button>` : ''}</div>
-          <div class="si-size phone-only"><span class="qty-badge">${got && !weighed ? `×${it.qty}` : amountText}</span>${swap ? '' : html`<span>${sizeBits}</span>`}</div>
+          <div class="si-size phone-only"><span class="qty-badge">${got && !weighed ? `×${it.qty}` : amountText}</span>${swap ? '' : html`<span>${sizeBits}</span>`}</div></div>
         </div>
         <div class="si-who">${got ? html`${it.done_by_name ? html`<span class="who-init" style="--tag:${it.done_by_colour || 'var(--brand)'}" title="Checked off by ${it.done_by_name}">${it.done_by_name.slice(0, 1).toUpperCase()}</span>` : ''}
           ${at ? html`<span class="who-at">${storeDot(at)}${storeName(at)}</span>` : ''}` : setAisle}</div>
@@ -5444,8 +5479,9 @@ sudo docker compose up -d --build</pre>${s.extra}`;
             <button type="button" class="icon sp-del" data-del="${p.id}" aria-label="Delete ${p.name}" title="Delete">${BIN_ICON}</button></li>`;
         }
         const meta = [sizeLabel(p), unitPrice(p, here ?? (best && best.cents))].filter(Boolean).join(' · ');
+        const pic = productPicture(p, store);
         return html`<li class="sp-row ${it ? 'on' : ''}">
-          <button type="button" class="sp-main" data-open="${p.id}"><span class="sp-name">${p.name}</span>${meta ? html`<span class="sp-meta">${meta}</span>` : ''}</button>
+          <button type="button" class="sp-main ${pic ? 'with-pic' : ''}" data-open="${p.id}">${pic ? html`<img class="pic sp-pic" src="${pic}" alt="" loading="lazy">` : ''}<span class="sp-txt"><span class="sp-name">${p.name}</span>${meta ? html`<span class="sp-meta">${meta}</span>` : ''}</span></button>
           ${store ? html`<span class="sp-here num">${here != null ? money2(here) : '—'}${here != null ? html`<small class="${priceIsAuto(p, store) ? 'sp-auto' : ''}">${priceIsAuto(p, store) ? 'auto' : 'manual'}</small>` : ''}</span>` : ''}
           <span class="sp-best num ${best ? (bestHereToo ? 'here' : 'away') : ''}">${best ? money2(best.cents) : '—'}${best ? html`<small>${bestHereToo ? 'here' : storeName(best.store)}${!bestHereToo && priceIsAuto(p, best.store) ? ' · auto' : ''}</small>` : ''}</span>
           <button type="button" class="sp-qty ${it ? 'on' : ''}" data-add="${p.id}" aria-label="${it ? `One more ${p.name}, ${it.qty} on the list` : `Add ${p.name} to the list`}">${it ? `×${it.qty}` : '+'}</button></li>`;
@@ -5939,6 +5975,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     const mineAt = (sid) => shopProduct(p.id)?.matches?.[sid];
     let tab = (stores.find((s) => !mineAt(s.id)?.url) || stores[0])?.id;
     const opened = new Set(); // stores showing their other results
+    let byPrice = false; // best match first, or cheapest per kg first
     // A store that sells it by the kg, picked while it's bought by the pack: offer to switch.
     let byKg = null;
 
@@ -5986,6 +6023,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       const one = !loose && r.sold === 'each' && !r.per_kg_cents && BASE[p.unit] ? html`<div class="fp-sub">Price of one; the store doesn't say what one weighs.</div>` : '';
       const per = loose ? (p.price_per !== 'each' ? (PER_LABELS[p.price_per] || '').toLowerCase() : `for ${sizeLabel(p)}`) : '';
       return html`<li class="fp-row${on ? ' on' : ''}"><label class="fp-pick"><input type="radio" name="fp-${s.id}" data-match="${s.id}" data-i="${r.i}" ${raw(on ? 'checked' : '')}>
+          <span class="fp-pic">${r.image ? html`<img class="pic" src="${pictureUrl(r.image)}" alt="" loading="lazy">` : ''}</span>
           <span class="fp-text"><b class="fp-name">${r.name}</b><span class="fp-sub">${bits}${note}</span>${one}</span>
           <span class="fp-price"><b class="num">${money2(cost)}</b>${per ? html`<span class="fp-per">${per}</span>` : ''}</span></label>
         <a class="fp-view" href="${r.url}" target="_blank" rel="noopener noreferrer" aria-label="View ${r.name} at ${s.name}" title="View at ${s.name}">↗</a></li>`;
@@ -6015,10 +6053,12 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       const { likely, others, kinds } = split(list, s.id);
       const unitWord = likely.some((r) => perUnit(r)?.per === 'L') && !likely.some((r) => perUnit(r)?.per === 'kg') ? 'L' : 'kg';
       const show = opened.has(s.id);
-      return html`<div class="fp-list-head"><span>Likely matches</span><span class="fp-sort">Sorted by price per ${unitWord}</span></div>
-        <ul class="fp-list">${likely.slice().sort(byUnit).map((r) => row(s, r, mine?.url === r.url))}</ul>
+      // Closest to the product first (its words, brand and size; see relevance in src/shop.js), or cheapest for the amount.
+      const order = byPrice ? byUnit : (a, b) => (b.score ?? 0) - (a.score ?? 0) || a.i - b.i;
+      return html`<div class="fp-list-head"><span>Likely matches</span><button type="button" class="fp-sort linkish" data-fp-sort>${byPrice ? `Cheapest per ${unitWord} first` : 'Best match first'} ⇅</button></div>
+        <ul class="fp-list ${list.some((r) => r.image) ? 'with-pics' : ''}">${likely.slice().sort(order).map((r) => row(s, r, mine?.url === r.url))}</ul>
         ${others.length ? html`<button type="button" class="fp-more" data-fp-more="${s.id}" aria-expanded="${show ? 'true' : 'false'}">${show ? 'Hide' : 'Show'} ${others.length} other ${others.length === 1 ? 'result' : 'results'}${kinds.length ? html` <span class="muted">${kinds.slice(0, 3).join(', ')}</span>` : ''}</button>
-          ${show ? html`<ul class="fp-list fp-others">${others.slice().sort(byUnit).map((r) => row(s, r, mine?.url === r.url))}</ul>` : ''}` : ''}
+          ${show ? html`<ul class="fp-list fp-others ${list.some((r) => r.image) ? 'with-pics' : ''}">${others.slice().sort(order).map((r) => row(s, r, mine?.url === r.url))}</ul>` : ''}` : ''}
         ${none}`;
     };
     const draw = (j) => {
@@ -6063,8 +6103,9 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         form.querySelector('#find-q').onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); again(); } };
         const pick = async (store, i) => {
           try {
-            await api('PUT', `/shop/products/${p.id}/matches`, { job: current.id, picks: { [store]: i } });
             const r = i != null && (current.results?.[store] || []).find((x) => x.i === i);
+            const thumb = r && r.image ? await thumbOf(pictureUrl(r.image)) : null;
+            await api('PUT', `/shop/products/${p.id}/matches`, { job: current.id, picks: { [store]: i }, ...(thumb ? { images: { [store]: thumb } } : {}) });
             if (r && (r.sold === 'kg' || r.sold === 'each') && r.per_kg_cents) byKg = store;
             await loadShop(state.shop.list);
             render();
@@ -6078,6 +6119,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         form.onclick = async (ev) => {
           if (solveClick(form, ev)) return;
           if (ev.target.closest('[data-find-go]')) { again(); return; }
+          if (ev.target.closest('[data-fp-sort]')) { byPrice = !byPrice; if (current) draw(current); return; }
           if (ev.target.closest('[data-find-back]')) { back(); return; }
           const t = ev.target.closest('[data-fp-tab]');
           if (t) { tab = Number(t.dataset.fpTab); if (current) draw(current); return; }

@@ -1906,6 +1906,7 @@ button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
   .shop-item[data-expanded="true"] .si-cheap { display: flex; grid-column: 2 / span 3; grid-row: 3; justify-self: start; flex-wrap: wrap; margin-top: 8px; white-space: normal; }
   .shop-item[data-expanded="true"] .si-cheap .ct { overflow: visible; }
   .shop-item[data-expanded="true"] .si-swap { display: block; grid-column: 2 / span 3; grid-row: 4; margin-top: 6px; white-space: normal; overflow-wrap: anywhere; }
+  .shop-item.with-pic .si-qty, .shop-item.with-pic .si-cheap, .shop-item.with-pic .si-who { padding-left: 42px; }
   .stepper button { width: 30px; height: 30px; }
   .shop-gtoggle .g-right { display: contents; }
   .shop-gtoggle .g-total { margin-left: auto; margin-right: 36px; }
@@ -1997,6 +1998,21 @@ button.mini { min-height: 0; padding: 5px 12px; font-size: .82rem; }
 .sp-row.edit { grid-template-columns: minmax(0, 1fr) auto auto; }
 .sp-main { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; min-height: 0; padding: 0; border: 0; background: none; box-shadow: none; color: inherit; text-align: left; font-weight: 600; }
 .sp-name { overflow-wrap: anywhere; font-weight: 600; }
+.sp-main.with-pic { flex-direction: row; align-items: center; gap: 10px; }
+.sp-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* Product pictures: small, on white so a store's cut-out photo reads in every theme. */
+.pic { display: block; object-fit: contain; background: #fff; border-radius: 6px; }
+.pic.gone { visibility: hidden; }
+.sp-pic { flex: none; width: 36px; height: 36px; }
+.fp-pic { flex: none; width: 44px; height: 44px; }
+.fp-pic .pic { width: 44px; height: 44px; }
+.fp-list:not(.with-pics) .fp-pic { display: none; }
+.si-name { display: flex; align-items: center; gap: 10px; }
+.si-text { flex: 1; min-width: 0; }
+.si-pic { flex: none; width: 32px; height: 32px; }
+.si-pic .pic { width: 32px; height: 32px; }
+.shop-item.with-pic .si-swap { padding-left: 42px; }
+.dearer { flex: none; color: var(--due); font-size: .72rem; font-weight: 600; white-space: nowrap; }
 .sp-meta { font-size: .75rem; font-weight: 400; color: var(--muted); overflow-wrap: anywhere; }
 .sp-here, .sp-best { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; white-space: nowrap; }
 .sp-here small, .sp-best small { font-size: .68rem; font-weight: 400; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; }

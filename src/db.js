@@ -465,6 +465,10 @@ const MIGRATIONS = [
   ALTER TABLE accounts ADD COLUMN rounding TEXT;
   ALTER TABLE accounts ADD COLUMN buffer_percent INTEGER;
   `,
+  // 29: a small picture of each product's listing at a store, made when it's picked in Find prices.
+  `
+  ALTER TABLE shop_matches ADD COLUMN image TEXT;
+  `,
 ];
 
 function openDatabase(file) {
