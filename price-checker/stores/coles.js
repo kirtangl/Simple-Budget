@@ -22,6 +22,8 @@ const toResult = (p) => p && p.pricing && result({
   available: p.availability,
   // Loose fruit and veg are sold each ("approx. 180g"), with a price per kg beside it.
   sold: /\beach\b|approx/i.test(p.size || '') || (p.pricing.unit && p.pricing.unit.isWeighted) ? 'each' : 'pack',
+  // Its picture, on Coles' image server.
+  image: Array.isArray(p.imageUris) && p.imageUris[0] && p.imageUris[0].uri ? `https://productimages.coles.com.au/productimages${p.imageUris[0].uri}` : null,
 });
 
 async function build(page) {

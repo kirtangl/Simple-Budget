@@ -19,6 +19,7 @@ async function withServer(options, fn) {
       });
       const set = res.headers.get('set-cookie');
       if (set) cookie = set.split(';')[0];
+      if (headers['x-raw']) return { status: res.status, type: (res.headers.get('content-type') || '').split(';')[0], size: (await res.arrayBuffer()).byteLength };
       return { status: res.status, body: await res.json() };
     };
   };
@@ -32,6 +33,8 @@ async function withServer(options, fn) {
 
 // The built-in stores, by name.
 const storesOf = async (call) => Object.fromEntries((await call('GET', '/shop')).body.stores.map((s) => [s.name, s.id]));
+// A response that isn't JSON (a picture), through the same logged-in caller's cookie.
+const fetchRaw = (call, path) => call('GET', path, undefined, { 'x-raw': '1' });
 
 test('shopping: add by name, tick off, untick, and clear', () => withServer({}, async (call) => {
   let r = await call('POST', '/shop/items', { list: 'shared', name: '  Milk ' });
@@ -321,7 +324,7 @@ async function withChecker(fn) {
   const { createChecker } = require('../src/checker');
   const shelf = {
     woolworths: [
-      { name: 'Test Brand Rolled Oats 750g', size: '750g', price_cents: 280, was_cents: 350, special: true, url: 'https://shop.example/w/1' },
+      { name: 'Test Brand Rolled Oats 750g', size: '750g', price_cents: 280, was_cents: 350, special: true, url: 'https://shop.example/w/1', image: 'https://cdn0.woolworths.media/content/wowproductimages/small/1.jpg' },
       { name: 'Fancy Rolled Oats', size: '750g', price_cents: 550, url: 'https://shop.example/w/2' },
       { name: 'Test Brand Rolled Oats 1kg', size: '1kg', price_cents: 340, url: 'https://shop.example/w/3' },
     ],
@@ -337,7 +340,13 @@ async function withChecker(fn) {
   }]));
   const browser = { page: async () => ({}), closePage: async () => {}, idle: () => {}, size: { width: 1366, height: 768 } };
   const jobs = createJobs({ browser, stores, sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))) });
-  const server = createServer({ jobs, browser, token: 'test-token' });
+  // The stores' picture servers: a tiny JPEG for any address on them.
+  // (Coles sends its JPEGs as application/octet-stream.) Anything that isn't a picture is turned away.
+  const fetchImpl = async (u) => (/woolworths\.media/.test(u) ? new Response(Buffer.from([0xff, 0xd8, 0xff, 0xd9]), { headers: { 'content-type': 'image/jpeg' } })
+    : /coles\.com\.au\/productimages\/1/.test(u) ? new Response(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0]), { headers: { 'content-type': 'application/octet-stream' } })
+      : /coles/.test(u) ? new Response('<html>not a picture</html>', { headers: { 'content-type': 'application/octet-stream' } })
+        : new Response('nope', { status: 404 }));
+  const server = createServer({ jobs, browser, token: 'test-token', fetchImpl });
   server.listen(0);
   await new Promise((r) => server.once('listening', r));
   const url = `http://127.0.0.1:${server.address().port}`;
@@ -648,3 +657,76 @@ test('shopping: not sold at a store, in place of its price, and typing over an a
   p = (await call('GET', '/shop')).body.products.find((x) => x.id === id);
   assert.ok(p.not_sold[stores.Aldi]);
 }));
+
+test('shopping: search results closest to the product come first', () => {
+  const { relevance } = require('../src/shop');
+  const sugar = { name: 'CSR Brown Sugar', size: 500, unit: 'g', sold_by: 'pack' };
+  const order = (p, names, opts) => names.map((n) => [n, relevance(p, { name: n, size: null }, opts)]).sort((a, b) => b[1] - a[1]).map(([n]) => n);
+  assert.deepEqual(order(sugar, ['Coles White Sugar 1kg', 'CSR White Sugar 500g', 'Coles Dark Brown Sugar 1kg', 'CSR Brown Sugar 1kg', 'CSR Brown Sugar 500g']),
+    ['CSR Brown Sugar 500g', 'CSR Brown Sugar 1kg', 'CSR White Sugar 500g', 'Coles Dark Brown Sugar 1kg', 'Coles White Sugar 1kg']);
+  // A word it adds makes it a different thing.
+  assert.equal(order(sugar, ['CSR Dark Brown Sugar 500g', 'CSR Brown Sugar 500g'])[0], 'CSR Brown Sugar 500g');
+  // No 500 g to be had: the nearest size wins.
+  assert.deepEqual(order(sugar, ['CSR Brown Sugar 1kg', 'CSR Brown Sugar 430g', 'CSR Brown Sugar 25g']), ['CSR Brown Sugar 430g', 'CSR Brown Sugar 1kg', 'CSR Brown Sugar 25g']);
+  // Something made from it comes after the thing itself.
+  const chicken = { name: 'Chicken Thigh Fillets', size: 500, unit: 'g', sold_by: 'pack' };
+  assert.equal(order(chicken, ['Chicken Seasoning 500g', 'Chicken Thigh Fillets 1kg', 'Chicken Thigh Fillet 480g'])[0], 'Chicken Thigh Fillet 480g');
+  assert.equal(order(chicken, ['Chicken Seasoning 500g', 'Chicken Breast 500g']).at(-1), 'Chicken Seasoning 500g');
+  // What it's matched to at another store helps: the same brand first.
+  const oats = { name: 'Rolled Oats', size: 750, unit: 'g', sold_by: 'pack' };
+  assert.equal(order(oats, ['Fancy Rolled Oats 750g', 'Uncle Tobys Rolled Oats 750g'], { refs: ['Uncle Tobys Oats Traditional 750g'] })[0], 'Uncle Tobys Rolled Oats 750g');
+});
+
+test('shopping: pictures of what was picked, from the stores\' own picture servers', () => withChecker(({ checker }) => withServer({ checker }, async (call) => {
+  const { imageUrl } = require('../src/shop');
+  assert.equal(imageUrl('https://cdn0.woolworths.media/content/wowproductimages/small/1.jpg'), 'https://cdn0.woolworths.media/content/wowproductimages/small/1.jpg');
+  assert.equal(imageUrl('https://productimages.coles.com.au/productimages/1/2.jpg'), 'https://productimages.coles.com.au/productimages/1/2.jpg');
+  assert.equal(imageUrl('http://cdn0.woolworths.media/1.jpg'), null);
+  assert.equal(imageUrl('https://evil.example/woolworths.media.jpg'), null);
+  assert.equal(imageUrl('https://woolworths.media.evil.example/1.jpg'), null);
+
+  const stores = await storesOf(call);
+  const id = (await call('POST', '/shop/items', { name: 'Rolled oats' })).body.product_id;
+  const found = await until(call, (await call('POST', '/shop/checker/find', { product_id: id })).body.id);
+  const r = found.results[stores.Woolworths].find((x) => x.url === 'https://shop.example/w/1');
+  assert.equal(r.image, 'https://cdn0.woolworths.media/content/wowproductimages/small/1.jpg');
+  assert.ok(typeof r.score === 'number');
+
+  // Find prices shows it through the app; only the stores' picture servers.
+  const base = `/shop/picture?u=${encodeURIComponent(r.image)}`;
+  const pic = await fetchRaw(call, base);
+  assert.deepEqual([pic.status, pic.type], [200, 'image/jpeg']);
+  assert.equal((await call('GET', `/shop/picture?u=${encodeURIComponent('https://evil.example/x.jpg')}`)).status, 400);
+  const coles = await fetchRaw(call, `/shop/picture?u=${encodeURIComponent('https://productimages.coles.com.au/productimages/1/1.jpg')}`);
+  assert.deepEqual([coles.status, coles.type, coles.size], [200, 'image/jpeg', 6]);
+  assert.equal((await fetchRaw(call, `/shop/picture?u=${encodeURIComponent('https://productimages.coles.com.au/productimages/2/2.jpg')}`)).status, 404);
+
+  // Picked with the small copy the browser made: kept with the match, and served from the app.
+  const small = `data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64')}`;
+  let p = (await call('PUT', `/shop/products/${id}/matches`, { job: found.id, picks: { [stores.Woolworths]: 0 }, images: { [stores.Woolworths]: small } })).body;
+  assert.ok(p.matches[stores.Woolworths].image_v > 0);
+  const kept = await fetchRaw(call, `/shop/products/${id}/picture/${stores.Woolworths}`);
+  assert.deepEqual([kept.status, kept.type, kept.size], [200, 'image/jpeg', 4]);
+  // Picked again without one: kept. Anything that isn't a small picture is left out.
+  p = (await call('PUT', `/shop/products/${id}/matches`, { job: found.id, picks: { [stores.Woolworths]: 0 } })).body;
+  assert.ok(p.matches[stores.Woolworths].image_v > 0);
+  p = (await call('PUT', `/shop/products/${id}/matches`, { job: found.id, picks: { [stores.Coles]: 0 }, images: { [stores.Coles]: 'data:text/html;base64,PGI+' } })).body;
+  assert.equal(p.matches[stores.Coles].image_v, undefined);
+  assert.equal((await fetchRaw(call, `/shop/products/${id}/picture/${stores.Coles}`)).status, 404);
+  // Kept in a backup.
+  const backup = (await call('GET', '/export')).body;
+  assert.equal(backup.shopping.matches.find((m) => m.store_id === stores.Woolworths).image, small);
+})));
+
+test('shopping: something counted is priced for what one weighs at a store that sells it by the kilo', () => {
+  const { priceFor } = require('../src/shop');
+  const aldi = { price_cents: 349, per_kg_cents: 349, sold: 'kg' };
+  // Two onions, about 200 g each, bought each: Aldi's $3.49/kg is about $0.70 for one.
+  assert.equal(priceFor({ size: null, unit: 'each', price_per: 'each', sold_by: 'pack', each_g: 200 }, aldi).cents, 70);
+  // Its size as a weight works the same way.
+  assert.equal(priceFor({ size: 200, unit: 'g', price_per: 'each', sold_by: 'pack' }, aldi).cents, 70);
+  // Without either, there's nothing to work it out from.
+  assert.equal(priceFor({ size: null, unit: 'each', price_per: 'each', sold_by: 'pack' }, aldi).cents, 349);
+  // A store's own price for one (Woolworths) stays as it is.
+  assert.equal(priceFor({ size: null, unit: 'each', price_per: 'each', sold_by: 'pack', each_g: 200 }, { price_cents: 63, per_kg_cents: 350, sold: 'each' }).cents, 63);
+});

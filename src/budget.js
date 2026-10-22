@@ -304,9 +304,12 @@ function buildCycle({ anchor, payAnchor = anchor, index, today, expenses, accoun
     const cycleBills = bills.filter((b) => b.account_id === a.id && b.kind !== 'saving');
     const billsTotal = cycleBills.reduce((sum, b) => sum + b.amount_cents, 0);
     const paid = cycleBills.filter((b) => b.status === 'paid').reduce((sum, b) => sum + b.amount_cents, 0);
-    const rounded = roundUp(average, rules.rounding);
-    const deposit = depositCents(average, rules);
-    return { account_id: a.id, average_cents: Math.round(average), rounded_cents: rounded, deposit_cents: deposit,
+    // Each account can have its own rounding and buffer; empty means the household's.
+    const ownRules = { rounding: Object.hasOwn(ROUNDING, a.rounding ?? '') ? a.rounding : rules.rounding,
+      buffer_percent: a.buffer_percent ?? rules.buffer_percent };
+    const rounded = roundUp(average, ownRules.rounding);
+    const deposit = depositCents(average, ownRules);
+    return { account_id: a.id, rules: ownRules, average_cents: Math.round(average), rounded_cents: rounded, deposit_cents: deposit,
       bills_cents: billsTotal, savings_cents: Math.round(saved), paid_cents: paid, remaining_cents: billsTotal - paid,
       spare_cents: deposit - billsTotal - Math.round(saved) };
   });
@@ -352,24 +355,19 @@ function buildCycle({ anchor, payAnchor = anchor, index, today, expenses, accoun
 // ---------- What should be in each account ----------
 //
 // A guide to how much each account should be holding today so that, with the
-// deposits still to come each cycle, every bill up to the look-ahead date can
-// be paid. E.g. $50 a fortnight towards a $1,300 bill due in two cycles: the
+// deposits still to come each cycle, every bill in the next 12 months can be
+// paid. E.g. $50 a fortnight towards a $1,300 bill due in two cycles: the
 // account should already hold $1,200. Savings are left out (they just build up).
-//   year:      look ahead 12 months
-//   financial: up to the end of the financial year (30 June)
-//   calendar:  up to the end of the calendar year (31 December)
-const HELD_BASES = ['year', 'financial', 'calendar'];
+// Bills share the account, so money put in early for a bill that's months away
+// can cover one that comes sooner; this is the least that never runs short.
 
-function lookAheadEnd(today, basis) {
-  const [y, m] = today.split('-').map(Number);
-  if (basis === 'calendar') return `${y}-12-31`;
-  if (basis === 'financial') return m >= 7 ? `${y + 1}-06-30` : `${y}-06-30`;
-  return addDays(today, 365);
-}
+// Bills that come out every two months or less often.
+const isBigBill = (e) => !isSplit(e) && (FREQUENCIES[e.frequency]?.months || 0) >= 2;
 
-// Per account, in whole cents (never below zero).
-function heldEstimates(rows, accounts, { today, anchor = today, payAnchor = anchor, payCycle: pc = DEFAULT_PAY_CYCLE, basis = 'year' }) {
-  const until = lookAheadEnd(today, HELD_BASES.includes(basis) ? basis : 'year');
+// Per account, in whole cents (never below zero), with the day the account is
+// at its lowest (low_on, after the bill named low_after) and the big bills ahead.
+function heldEstimates(rows, accounts, { today, anchor = today, payAnchor = anchor, payCycle: pc = DEFAULT_PAY_CYCLE }) {
+  const until = addDays(today, 365);
   const live = rows.filter((e) => e.active && (e.kind || 'expense') !== 'saving'
     && !(e.end_date && e.end_date < today) && !isSplit(e));
   // Deposits land at the start of each cycle after today.
@@ -385,23 +383,29 @@ function heldEstimates(rows, accounts, { today, anchor = today, payAnchor = anch
     // Each deposit only covers what applies in that cycle (not before it starts or after it ends).
     for (const bounds of depositCycles) {
       const perCycle = own.filter((e) => inRange(e, bounds)).reduce((sum, e) => sum + perCycleCents(e, pc), 0);
-      events.push([bounds.start, 0, -perCycle]);
+      events.push([bounds.start, 0, -perCycle, null]);
     }
+    const ahead = [];
     for (const e of own) {
+      let first = true;
       for (const d of occurrences(e, today, until, payAnchor)) {
         if ((e.start_date && d < e.start_date) || (e.end_date && d > e.end_date)) continue;
-        events.push([d, 1, e.amount_cents]);
+        events.push([d, 1, e.amount_cents, e.name]);
+        if (first && isBigBill(e)) ahead.push({ expense_id: e.id, name: e.name, date: d, amount_cents: e.amount_cents });
+        first = false;
       }
     }
     // Deposits before bills on the same day; track the most the account is ever short.
     events.sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : x[1] - y[1]));
     let running = 0;
     let need = 0;
-    for (const [, , amount] of events) {
+    let low = null;
+    for (const [date, , amount, name] of events) {
       running += amount;
-      if (running > need) need = running;
+      if (running > need) { need = running; low = { date, name }; }
     }
-    return { account_id: a.id, held_cents: Math.round(need) };
+    ahead.sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : x.name.localeCompare(y.name)));
+    return { account_id: a.id, held_cents: Math.round(need), low_on: low && low.date, low_after: low && low.name, ahead };
   });
 }
 
@@ -719,5 +723,5 @@ module.exports = {
   LOAN_FREQUENCIES, amortisedRepayment, maxPrincipal, addMonths, loanAsExpense, scheduleAsExpense,
   scheduledRepayment, budgetedRepayment, nextDue, loanEndDate, calculatedRepayment, minimumBalance,
   loanRepayment, simulateLoan, loanEstimates, loanTimeline, loanHistory, ROUNDING, DEFAULT_DEPOSIT_RULES, roundUp, depositCents, buildCycle,
-  HELD_BASES, lookAheadEnd, heldEstimates,
+  heldEstimates,
 };

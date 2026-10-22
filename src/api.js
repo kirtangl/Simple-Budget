@@ -100,7 +100,8 @@ const tooMany = (name) => `That's more ${ROW_WORDS[name] || name} than Simple Bu
 const RESOURCES = {
   accounts: {
     fields: { name: T.text, nickname: T.text, institution: T.text, type: T.text, owner: T.text,
-      bsb: T.bsb, account_number: T.accountNumber, color: T.colour, sort_order: T.int },
+      bsb: T.bsb, account_number: T.accountNumber, color: T.colour, sort_order: T.int,
+      rounding: T.enumOf(...Object.keys(budget.ROUNDING)), buffer_percent: T.range(0, 20) },
     required: ['name'],
     order: 'sort_order, name COLLATE NOCASE',
     unique: { label: 'An account' },
@@ -367,11 +368,6 @@ function payCycleOf(db) {
   return budget.payCycle(getSetting(db, 'pay_frequency') || 'fortnightly', getSetting(db, 'pay_custom_days'));
 }
 
-function heldBasis(db) {
-  const b = getSetting(db, 'held_basis');
-  return budget.HELD_BASES.includes(b) ? b : 'year';
-}
-
 function depositRules(db) {
   const rounding = getSetting(db, 'rounding');
   const buffer = Number(getSetting(db, 'buffer_percent'));
@@ -398,7 +394,7 @@ function createApi(db) {
     const now = today();
     return { pay_anchor_date: anchor, today: now, pay_frequency: pc.frequency, pay_custom_days: pc.days,
       pays_per_year: budget.paysPerYear(pc), cycle_end: budget.cycleBounds(anchor, budget.cycleIndexFor(anchor, now, pc), pc).end,
-      held_basis: heldBasis(db), ...depositRules(db) };
+      next_cycle_end: budget.cycleBounds(anchor, budget.cycleIndexFor(anchor, now, pc) + 1, pc).end, ...depositRules(db) };
   }
 
   // Loans with their estimates, and as expense-like rows for the pay-cycle maths.
@@ -458,10 +454,12 @@ function createApi(db) {
     const cycle = budget.buildCycle({ anchor, index, today: now, expenses: rows, accounts, incomes: list('incomes'), rules: depositRules(db), payCycle: pc });
     // What each account should be holding: today for this cycle, or at the start of any other cycle shown.
     const heldOn = offset === 0 ? now : cycle.cycle.start;
-    const held = new Map(budget.heldEstimates(rows, accounts, { today: heldOn, anchor, payCycle: pc, basis: heldBasis(db) })
-      .map((h) => [h.account_id, h.held_cents]));
-    cycle.accounts.forEach((a) => { a.held_cents = held.get(a.account_id) ?? 0; });
-    res.json({ offset, held_basis: heldBasis(db), held_on: heldOn, ...cycle });
+    const held = new Map(budget.heldEstimates(rows, accounts, { today: heldOn, anchor, payCycle: pc }).map((h) => [h.account_id, h]));
+    cycle.accounts.forEach((a) => {
+      const h = held.get(a.account_id);
+      Object.assign(a, { held_cents: h?.held_cents ?? 0, low_on: h?.low_on ?? null, low_after: h?.low_after ?? null, ahead: h?.ahead ?? [] });
+    });
+    res.json({ offset, held_on: heldOn, ...cycle });
   });
 
   // Month-by-month totals for the next `months` months (Analytics → Annual trends).
@@ -755,10 +753,6 @@ function createApi(db) {
       if (!Number.isInteger(days) || days < 1 || days > 366) throw new BadRequest('A custom pay cycle must be 1 to 366 days.');
       changes.pay_custom_days = String(days);
     }
-    if ('held_basis' in body) {
-      if (!budget.HELD_BASES.includes(body.held_basis)) throw new BadRequest('Look-ahead must be year, financial or calendar.');
-      changes.held_basis = body.held_basis;
-    }
     if ('buffer_percent' in body) {
       const pct = Number(body.buffer_percent);
       if (!Number.isInteger(pct) || pct < 0 || pct > 20) throw new BadRequest('Buffer must be a whole number from 0 to 20.');
@@ -924,7 +918,7 @@ const BACKUP_UPGRADES = {
   1: (data) => ({ ...data, amount_history: [] }),
 };
 const BACKUP_SECTIONS = ['accounts', 'payees', 'categories', 'incomes', 'expenses', 'goals', 'goal_groups', 'loans'];
-const BACKUP_SETTINGS = ['pay_anchor_date', 'pay_frequency', 'pay_custom_days', 'rounding', 'buffer_percent', 'held_basis'];
+const BACKUP_SETTINGS = ['pay_anchor_date', 'pay_frequency', 'pay_custom_days', 'rounding', 'buffer_percent'];
 
 function exportBackup(db) {
   const all = (name) => db.prepare(`SELECT * FROM ${name} ORDER BY id`).all().map((row) => ({ ...row }));
@@ -1142,7 +1136,6 @@ function importBackup(db, input) {
     const pct = Number(s.buffer_percent);
     if (s.buffer_percent !== undefined && Number.isInteger(pct) && pct >= 0 && pct <= 20) setSetting(db, 'buffer_percent', String(pct));
     if (Object.hasOwn(budget.PAY_FREQUENCIES, s.pay_frequency)) setSetting(db, 'pay_frequency', s.pay_frequency);
-    if (budget.HELD_BASES.includes(s.held_basis)) setSetting(db, 'held_basis', s.held_basis);
     const days = Number(s.pay_custom_days);
     if (Number.isInteger(days) && days >= 1 && days <= 366) setSetting(db, 'pay_custom_days', String(days));
 
