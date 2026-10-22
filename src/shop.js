@@ -206,14 +206,19 @@ const body = (req) => (req.body && typeof req.body === 'object' && !Array.isArra
 // What a store's result costs, priced the way the product is. Loose fruit and veg (sold each, like
 // a banana at Woolworths, or by the kilo, like one at Aldi) with a price per kg is priced by
 // weight: per kg or 100 g (L or 100 mL) as the product is, or for its size when it's priced each
-// with a weight, like 1 kg of bananas at $4.50/kg = $4.50. Anything else costs its own price.
+// with a weight, like 1 kg of bananas at $4.50/kg = $4.50. Something counted (2 onions) that a
+// store only prices by the kilo is priced for what one weighs (about 200 g at $3.49/kg = $0.70).
+// Anything else costs its own price.
 const PER_KG_SHARE = { kg: 1, '100g': 0.1, L: 1, '100mL': 0.1 };
 const GRAMS = { g: 1, kg: 1000, mL: 1, L: 1000 };
 function priceFor(p, r) {
   const own = { cents: r.price_cents, was: r.was_cents || null };
-  const loose = (r.sold === 'each' || r.sold === 'kg') && Number.isInteger(r.per_kg_cents) && r.per_kg_cents > 0;
+  const perKg = Number.isInteger(r.per_kg_cents) && r.per_kg_cents > 0;
+  const byKilo = r.sold === 'kg';
+  const loose = perKg && (r.sold === 'each' || byKilo);
   if (!loose || !p) return own;
-  const share = PER_KG_SHARE[p.price_per] ?? (p.size > 0 && GRAMS[p.unit] ? (p.size * GRAMS[p.unit]) / 1000 : null);
+  const share = PER_KG_SHARE[p.price_per] ?? (p.size > 0 && GRAMS[p.unit] ? (p.size * GRAMS[p.unit]) / 1000
+    : byKilo && p.each_g > 0 ? p.each_g / 1000 : null);
   if (!share) return own;
   const cents = Math.round(r.per_kg_cents * share);
   if (!(cents > 0 && cents <= 100000)) return own;
@@ -1151,4 +1156,4 @@ function importShop(db, data) {
   return { products: db.prepare('SELECT count(*) AS n FROM shop_products').get().n, skipped };
 }
 
-module.exports = { createShop, createHelper, exportShop, importShop, priceDay, relevance, imageUrl, UNITS };
+module.exports = { createShop, createHelper, exportShop, importShop, priceDay, priceFor, relevance, imageUrl, UNITS };

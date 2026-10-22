@@ -717,3 +717,16 @@ test('shopping: pictures of what was picked, from the stores\' own picture serve
   const backup = (await call('GET', '/export')).body;
   assert.equal(backup.shopping.matches.find((m) => m.store_id === stores.Woolworths).image, small);
 })));
+
+test('shopping: something counted is priced for what one weighs at a store that sells it by the kilo', () => {
+  const { priceFor } = require('../src/shop');
+  const aldi = { price_cents: 349, per_kg_cents: 349, sold: 'kg' };
+  // Two onions, about 200 g each, bought each: Aldi's $3.49/kg is about $0.70 for one.
+  assert.equal(priceFor({ size: null, unit: 'each', price_per: 'each', sold_by: 'pack', each_g: 200 }, aldi).cents, 70);
+  // Its size as a weight works the same way.
+  assert.equal(priceFor({ size: 200, unit: 'g', price_per: 'each', sold_by: 'pack' }, aldi).cents, 70);
+  // Without either, there's nothing to work it out from.
+  assert.equal(priceFor({ size: null, unit: 'each', price_per: 'each', sold_by: 'pack' }, aldi).cents, 349);
+  // A store's own price for one (Woolworths) stays as it is.
+  assert.equal(priceFor({ size: null, unit: 'each', price_per: 'each', sold_by: 'pack', each_g: 200 }, { price_cents: 63, per_kg_cents: 350, sold: 'each' }).cents, 63);
+});

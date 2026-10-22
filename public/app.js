@@ -5269,9 +5269,9 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           <div class="field"><label for="pe-unit">Unit</label><select id="pe-unit" name="unit">${sold === 'pack' ? html`<option value="">None</option>` : ''}${unitOptions(sold, usualUnit)}</select></div>
           <div class="field pe-weight"><label for="pe-step">+/− step</label><select id="pe-step" name="step_g">${STEPS.map((g) => html`<option value="${g}" ${raw(Number(v('step_g', stepOf(p))) === g ? 'selected' : '')}>${gramsText(g)}</option>`)}</select></div>
         </div>
-        <div class="field pe-weight"><label for="pe-each">About how much one weighs</label>
+        <div class="field pe-each"><label for="pe-each">About how much one weighs</label>
           <span class="ip-each-in"><input id="pe-each" name="each_g" inputmode="numeric" value="${v('each_g', p.each_g ?? '')}" placeholder="Like 180"><span>g each</span></span>
-          <p class="muted small">For counting them on the list, like 6 bananas. Filled in from Woolworths when it says.</p></div>
+          <p class="muted small" id="pe-each-hint"></p></div>
         <h3 class="form-section"><span id="pe-price-label">${sold === 'weight' ? 'Price per kg' : 'Price per pack'}</span><span class="muted small">Leave blank if unknown</span></h3>
         <div class="fields three">${stores.map((s) => html`<div class="field price-field"><label for="pe-${s.id}">${storeDot(s.id)}${s.name}</label>
           <input id="pe-${s.id}" name="price-${s.id}" inputmode="decimal" class="${notSold(s) ? 'not-sold' : ''}" placeholder="${notSold(s) ? '⊘ Not sold' : '$'}" value="${v(`price-${s.id}`, moneyInput(priceShown(s)))}">
@@ -5310,6 +5310,12 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           const m = mode();
           form.querySelectorAll('.pe-sold label').forEach((l) => l.classList.toggle('on', l.querySelector('input').checked));
           form.querySelectorAll('.pe-weight').forEach((el) => { el.hidden = m !== 'weight'; });
+          // What one weighs: for counting things bought by weight, and for pricing things bought
+          // each (2 onions) at a store that only gives a price per kg, like Aldi.
+          const counted = m === 'pack' && !MEASURE_OF[form.elements.unit.value];
+          form.querySelector('.pe-each').hidden = !(m === 'weight' || counted);
+          form.querySelector('#pe-each-hint').textContent = m === 'weight' ? 'For counting them on the list, like 6 bananas. Filled in from Woolworths when it says.'
+            : 'For a store that only gives a price per kg (like Aldi\'s loose onions): its price for one is worked out from this. Press Refresh now after changing it.';
           form.querySelector('#pe-size-label').textContent = m === 'weight' ? 'Usual amount' : m === 'volume' ? 'Bottle size' : 'Pack size';
           form.querySelector('#pe-price-label').textContent = m === 'weight' ? 'Price per kg' : 'Price per pack';
           form.querySelector('#pe-sold-hint').textContent = m === 'weight' ? `Goes on the list as a weight (or a count), with − / + by the step. Prices are per kg.${before ? ' Its size wasn\'t a weight, so type the price per kg.' : ''}`
@@ -5326,7 +5332,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         };
         form.addEventListener('input', (ev) => { if (before && ev.target.name !== 'sold_by') before = null; });
         form.addEventListener('change', (ev) => {
-          if (ev.target.name !== 'sold_by') { if (before && ev.target.name === 'unit') before = null; return; }
+          if (ev.target.name !== 'sold_by') { if (ev.target.name === 'unit') { if (before) before = null; show(); } return; }
           const m = mode();
           const unit = form.elements.unit;
           if (was === 'weight' && m !== 'weight' && before) {
@@ -5411,7 +5417,8 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         if (size && Number.isNaN(Number(size))) throw new Error('The size should be a number, like 2 or 500.');
         if (m === 'weight' && !(Number(size) > 0)) throw new Error('Give the usual amount, like 1 kg or 500 g.');
         const each = val(form, 'each_g');
-        if (m === 'weight' && each && !(Number.isInteger(Number(each)) && Number(each) > 0)) throw new Error('What one weighs should be a whole number of g, like 180.');
+        const counted = m === 'pack' && !MEASURE_OF[val(form, 'unit')];
+        if ((m === 'weight' || counted) && each && !(Number.isInteger(Number(each)) && Number(each) > 0)) throw new Error('What one weighs should be a whole number of g, like 180.');
         // Prices left alone stay as they were checked, even when they're now said per kg or per pack.
         const prices = {};
         const converted = [];
@@ -5429,7 +5436,8 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         await api('PATCH', `/shop/products/${p.id}`, {
           name: val(form, 'name'), size: size === '' ? null : Number(size), unit: val(form, 'unit') || null,
           sold_by: m, price_per: m === 'weight' ? 'kg' : 'each', prices, converted, not_sold: notSoldNow,
-          ...(m === 'weight' ? { step_g: Number(val(form, 'step_g')) || null, each_g: each ? Number(each) : null } : {}),
+          ...(m === 'weight' ? { step_g: Number(val(form, 'step_g')) || null } : {}),
+          ...(m === 'weight' || counted ? { each_g: each ? Number(each) : null } : {}),
         });
         await loadShop(state.shop.list);
         if (back) setTimeout(back); // once this popup has closed
@@ -6021,7 +6029,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       ].filter(Boolean).join(' · ');
       const note = r.special ? html`${bits ? ' · ' : ''}<span class="fp-special">Special${r.was_cents ? ` · was ${money2(r.was_cents)}` : ''}</span>` : '';
       const one = !loose && r.sold === 'each' && !r.per_kg_cents && BASE[p.unit] ? html`<div class="fp-sub">Price of one; the store doesn't say what one weighs.</div>` : '';
-      const per = loose ? (p.price_per !== 'each' ? (PER_LABELS[p.price_per] || '').toLowerCase() : `for ${sizeLabel(p)}`) : '';
+      const per = loose ? (p.price_per !== 'each' ? (PER_LABELS[p.price_per] || '').toLowerCase() : !sizeIn(p) && p.each_g ? `each (≈ ${gramsText(p.each_g)})` : `for ${sizeLabel(p)}`) : '';
       return html`<li class="fp-row${on ? ' on' : ''}"><label class="fp-pick"><input type="radio" name="fp-${s.id}" data-match="${s.id}" data-i="${r.i}" ${raw(on ? 'checked' : '')}>
           <span class="fp-pic">${r.image ? html`<img class="pic" src="${pictureUrl(r.image)}" alt="" loading="lazy">` : ''}</span>
           <span class="fp-text"><b class="fp-name">${r.name}</b><span class="fp-sub">${bits}${note}</span>${one}</span>

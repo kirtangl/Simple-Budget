@@ -20,3 +20,9 @@ test('results carry a small picture from the store\'s own picture server', () =>
   const x = woolworths.toResult({ Stockcode: 4, Name: 'Odd', Price: 1, SmallImageFile: 'https://elsewhere.example/1.jpg' });
   assert.equal(x.image, undefined);
 });
+
+test('Aldi loose fruit and veg sold by the kilo', () => {
+  assert.equal(aldi.toResult({ sku: '5', name: 'Brown Onions', sellingSize: 'per kg', price: { amount: 349 } }).sold, 'kg');
+  assert.equal(aldi.toResult({ sku: '5', name: 'Brown Onions', sellingSize: 'per kg', price: { amount: 349 } }).per_kg_cents, 349);
+  assert.equal(aldi.toResult({ sku: '6', name: 'Pears 1kg bag', sellingSize: '1 kg', price: { amount: 349 } }).sold, 'pack');
+});
