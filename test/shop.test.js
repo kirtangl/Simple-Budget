@@ -341,8 +341,11 @@ async function withChecker(fn) {
   const browser = { page: async () => ({}), closePage: async () => {}, idle: () => {}, size: { width: 1366, height: 768 } };
   const jobs = createJobs({ browser, stores, sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))) });
   // The stores' picture servers: a tiny JPEG for any address on them.
+  // (Coles sends its JPEGs as application/octet-stream.) Anything that isn't a picture is turned away.
   const fetchImpl = async (u) => (/woolworths\.media/.test(u) ? new Response(Buffer.from([0xff, 0xd8, 0xff, 0xd9]), { headers: { 'content-type': 'image/jpeg' } })
-    : new Response('nope', { status: 404 }));
+    : /coles\.com\.au\/productimages\/1/.test(u) ? new Response(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0]), { headers: { 'content-type': 'application/octet-stream' } })
+      : /coles/.test(u) ? new Response('<html>not a picture</html>', { headers: { 'content-type': 'application/octet-stream' } })
+        : new Response('nope', { status: 404 }));
   const server = createServer({ jobs, browser, token: 'test-token', fetchImpl });
   server.listen(0);
   await new Promise((r) => server.once('listening', r));
@@ -694,6 +697,9 @@ test('shopping: pictures of what was picked, from the stores\' own picture serve
   const pic = await fetchRaw(call, base);
   assert.deepEqual([pic.status, pic.type], [200, 'image/jpeg']);
   assert.equal((await call('GET', `/shop/picture?u=${encodeURIComponent('https://evil.example/x.jpg')}`)).status, 400);
+  const coles = await fetchRaw(call, `/shop/picture?u=${encodeURIComponent('https://productimages.coles.com.au/productimages/1/1.jpg')}`);
+  assert.deepEqual([coles.status, coles.type, coles.size], [200, 'image/jpeg', 6]);
+  assert.equal((await fetchRaw(call, `/shop/picture?u=${encodeURIComponent('https://productimages.coles.com.au/productimages/2/2.jpg')}`)).status, 404);
 
   // Picked with the small copy the browser made: kept with the match, and served from the app.
   const small = `data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64')}`;

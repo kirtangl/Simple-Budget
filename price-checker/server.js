@@ -40,13 +40,18 @@ function save(state) {
 }
 
 // A product picture from a store's own image server (only those), up to 500 KB. A plain request:
-// the stores' pictures need no cookies.
+// the stores' pictures need no cookies. Its type comes from its first bytes, since Coles sends its
+// JPEGs as application/octet-stream.
+const KINDS = [['image/jpeg', (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff],
+  ['image/png', (b) => b.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]))],
+  ['image/gif', (b) => b.subarray(0, 4).toString('latin1') === 'GIF8'],
+  ['image/webp', (b) => b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP']];
 async function fetchImage(url, fetchImpl = globalThis.fetch) {
   const res = await fetchImpl(url, { headers: { accept: 'image/*' }, signal: AbortSignal.timeout(10e3) });
-  const type = res.headers.get('content-type') || '';
-  if (!res.ok || !/^image\/(jpeg|png|webp|gif)/i.test(type)) return null;
+  if (!res.ok) return null;
   const body = Buffer.from(await res.arrayBuffer());
-  return body.length && body.length <= 500e3 ? { type, body } : null;
+  const kind = KINDS.find(([, is]) => is(body));
+  return kind && body.length <= 500e3 ? { type: kind[0], body } : null;
 }
 
 function createServer({ jobs, browser, token, fetchImpl = globalThis.fetch }) {
