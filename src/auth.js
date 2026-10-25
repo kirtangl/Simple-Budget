@@ -480,6 +480,8 @@ function createAuth({ db, secret, secureCookies }) {
       const { changes } = db.prepare('DELETE FROM logins WHERE id = ?').run(id);
       // Their goals become shared, so a future login given the same id doesn't inherit them.
       if (changes) db.prepare('UPDATE goals SET owner_id = NULL WHERE owner_id = ?').run(id);
+      // Their once-offs become shared too, and no longer private, so they don't vanish for everyone.
+      if (changes) db.prepare('UPDATE purchases SET owner_id = NULL, private = 0 WHERE owner_id = ? OR (owner_id IS NULL AND created_by = ?)').run(id, id);
       // Their own shopping list goes with them, for the same reason.
       if (changes) db.prepare('DELETE FROM shop_items WHERE owner_id = ?').run(id);
       if (!changes) return res.status(404).json({ error: 'Not found.' });

@@ -1,6 +1,6 @@
 {
   "name": "simple-budget-price-checker",
-  "version": "0.9.13",
+  "version": "0.9.14",
   "description": "Looks up supermarket prices in a real browser for Simple Budget's Shopping tab.",
   "private": true,
   "main": "server.js",

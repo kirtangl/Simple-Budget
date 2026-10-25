@@ -485,6 +485,53 @@ const MIGRATIONS = [
   );
   CREATE INDEX notifications_created ON notifications (created_at);
   `,
+  // 31: once-off purchases, and the tracked types they can be given (Not tracked, the default,
+  // is no type at all). Times are ISO in UTC; the purchase's fortnight is its local date.
+  // clears_at is when the bank takes it: the purchase time for Instant, +24h, +48h or a date.
+  `
+  CREATE TABLE purchase_types (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0
+  );
+  INSERT INTO purchase_types (name, sort_order) VALUES ('Personal', 1), ('Work expense', 2), ('Medical', 3), ('Gift', 4);
+  CREATE TABLE purchases (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    amount_cents INTEGER NOT NULL CHECK (amount_cents >= 0),
+    account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+    purchased_at TEXT NOT NULL,
+    clear_mode TEXT NOT NULL DEFAULT 'instant' CHECK (clear_mode IN ('instant', '24h', '48h', 'custom')),
+    clears_at TEXT NOT NULL,
+    shop TEXT,
+    category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+    subcategory_id INTEGER REFERENCES subcategories(id) ON DELETE SET NULL,
+    type_id INTEGER REFERENCES purchase_types(id) ON DELETE SET NULL,
+    tax_deductible INTEGER NOT NULL DEFAULT 0,
+    notes TEXT,
+    payment_method TEXT,
+    quantity INTEGER,
+    serial TEXT,
+    link TEXT,
+    warranty_start TEXT,
+    warranty_length INTEGER,
+    warranty_unit TEXT,
+    ext_provider TEXT,
+    ext_length INTEGER,
+    ext_unit TEXT,
+    ext_notes TEXT,
+    keep_forever INTEGER NOT NULL DEFAULT 0,
+    owner_id INTEGER,
+    private INTEGER NOT NULL DEFAULT 0,
+    exclude INTEGER NOT NULL DEFAULT 0,
+    goal_id INTEGER REFERENCES goals(id) ON DELETE SET NULL,
+    created_by INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX purchases_when ON purchases (purchased_at);
+  CREATE INDEX purchases_clears ON purchases (clears_at);
+  `,
 ];
 
 function openDatabase(file) {

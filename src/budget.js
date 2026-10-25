@@ -274,7 +274,9 @@ function fundedRows(rows, cycle, payAnchor = cycle.start) {
 // Savings only count as expenses when show_as_expense is set.
 // `anchor` is where budget cycles start; `payAnchor` is the pay day that weekly
 // and fortnightly bills are counted from (the same unless they're set apart).
-function buildCycle({ anchor, payAnchor = anchor, index, today, expenses, accounts, incomes, rules = DEFAULT_DEPOSIT_RULES, payCycle: pc = DEFAULT_PAY_CYCLE }) {
+// `oneoffs` are once-off purchases (see oneOffRows), with `now` the moment that decides which have cleared.
+function buildCycle({ anchor, payAnchor = anchor, index, today, expenses, accounts, incomes, rules = DEFAULT_DEPOSIT_RULES, payCycle: pc = DEFAULT_PAY_CYCLE,
+  oneoffs = [], now = new Date().toISOString() }) {
   const cycle = cycleBounds(anchor, index, pc);
   const active = expenses.filter((e) => e.active && inRange(e, cycle));
   const perCycle = (e) => perCycleCents(e, pc);
@@ -292,6 +294,7 @@ function buildCycle({ anchor, payAnchor = anchor, index, today, expenses, accoun
         amount_cents: amount, status, moved_from_day: movedFrom(e, date, spread(e)), payee_id: e.payee_id, category_id: e.category_id, subcategory_id: e.subcategory_id, account_id: e.account_id });
     }
   }
+  bills.push(...oneOffRows(oneoffs, cycle, now));
   bills.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.name.localeCompare(b.name)));
 
   const funded = fundedRows(active, cycle, payAnchor);
@@ -301,9 +304,13 @@ function buildCycle({ anchor, payAnchor = anchor, index, today, expenses, accoun
     const average = own.reduce((sum, e) => sum + perCycle(e), 0);
     // Bills come out of the account; savings stay in it, so they're listed separately.
     const saved = own.filter((e) => (e.kind || 'expense') === 'saving').reduce((sum, e) => sum + perCycle(e), 0);
-    const cycleBills = bills.filter((b) => b.account_id === a.id && b.kind !== 'saving');
+    const cycleBills = bills.filter((b) => b.account_id === a.id && b.kind !== 'saving' && b.kind !== 'oneoff');
     const billsTotal = cycleBills.reduce((sum, b) => sum + b.amount_cents, 0);
     const paid = cycleBills.filter((b) => b.status === 'paid').reduce((sum, b) => sum + b.amount_cents, 0);
+    // Once-offs come out of what's already in the account: the deposit stays the same and what's left over goes down.
+    const oneoffs = bills.filter((b) => b.account_id === a.id && b.kind === 'oneoff' && b.counted);
+    const oneoffTotal = oneoffs.reduce((sum, b) => sum + b.amount_cents, 0);
+    const oneoffPaid = oneoffs.filter((b) => b.status === 'paid').reduce((sum, b) => sum + b.amount_cents, 0);
     // Each account can have its own rounding and buffer; empty means the household's.
     const ownRules = { rounding: Object.hasOwn(ROUNDING, a.rounding ?? '') ? a.rounding : rules.rounding,
       buffer_percent: a.buffer_percent ?? rules.buffer_percent };
@@ -311,7 +318,8 @@ function buildCycle({ anchor, payAnchor = anchor, index, today, expenses, accoun
     const deposit = depositCents(average, ownRules);
     return { account_id: a.id, rules: ownRules, average_cents: Math.round(average), rounded_cents: rounded, deposit_cents: deposit,
       bills_cents: billsTotal, savings_cents: Math.round(saved), paid_cents: paid, remaining_cents: billsTotal - paid,
-      spare_cents: deposit - billsTotal - Math.round(saved) };
+      oneoff_cents: oneoffTotal, oneoff_paid_cents: oneoffPaid,
+      spare_cents: deposit - billsTotal - Math.round(saved) - oneoffTotal };
   });
 
   const unassigned = funded.filter((e) => !e.account_id).reduce((sum, e) => sum + perCycle(e), 0);
@@ -330,6 +338,7 @@ function buildCycle({ anchor, payAnchor = anchor, index, today, expenses, accoun
   const billsTotal = sum(spending, 'amount_cents');
   const paid = sum(spending.filter((b) => b.status === 'paid'), 'amount_cents');
   const savingsTotal = sum(bills.filter((b) => b.kind === 'saving'), 'amount_cents');
+  const oneoffsTotal = sum(spending.filter((b) => b.kind === 'oneoff'), 'amount_cents');
 
   return {
     cycle: { ...cycle, is_current: cycle.start <= today && today <= cycle.end, frequency: pc.frequency },
@@ -348,6 +357,7 @@ function buildCycle({ anchor, payAnchor = anchor, index, today, expenses, accoun
       paid_cents: paid,
       outstanding_cents: billsTotal - paid,
       unassigned_cents: depositCents(unassigned, rules),
+      oneoffs_cents: oneoffsTotal,
     },
   };
 }
@@ -366,7 +376,9 @@ const isBigBill = (e) => !isSplit(e) && (FREQUENCIES[e.frequency]?.months || 0) 
 
 // Per account, in whole cents (never below zero), with the day the account is
 // at its lowest (low_on, after the bill named low_after) and the big bills ahead.
-function heldEstimates(rows, accounts, { today, anchor = today, payAnchor = anchor, payCycle: pc = DEFAULT_PAY_CYCLE }) {
+// `pending` are once-offs not yet taken by the bank ({ account_id, date, amount_cents, name },
+// see pendingAt): the account has to keep that money until the day they clear.
+function heldEstimates(rows, accounts, { today, anchor = today, payAnchor = anchor, payCycle: pc = DEFAULT_PAY_CYCLE, pending = [] }) {
   const until = addDays(today, 365);
   const live = rows.filter((e) => e.active && (e.kind || 'expense') !== 'saving'
     && !(e.end_date && e.end_date < today) && !isSplit(e));
@@ -395,6 +407,8 @@ function heldEstimates(rows, accounts, { today, anchor = today, payAnchor = anch
         first = false;
       }
     }
+    const waiting = pending.filter((p) => p.account_id === a.id);
+    for (const p of waiting) events.push([p.date < today ? today : p.date, 1, p.amount_cents, p.name]);
     // Deposits before bills on the same day; track the most the account is ever short.
     events.sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : x[1] - y[1]));
     let running = 0;
@@ -405,8 +419,64 @@ function heldEstimates(rows, accounts, { today, anchor = today, payAnchor = anch
       if (running > need) { need = running; low = { date, name }; }
     }
     ahead.sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : x.name.localeCompare(y.name)));
-    return { account_id: a.id, held_cents: Math.round(need), low_on: low && low.date, low_after: low && low.name, ahead };
+    return { account_id: a.id, held_cents: Math.round(need), low_on: low && low.date, low_after: low && low.name, ahead,
+      pending_cents: waiting.reduce((sum, p) => sum + p.amount_cents, 0) };
   });
+}
+
+// ---------- Once-off purchases ----------
+//
+// Money spent once from an account. Deposits never change: a once-off lowers what's left over
+// in the account in the cycle it was bought (by its local date). Until the bank takes it
+// (clears_at: straight away, 24 or 48 hours later, or a chosen time) it's pending, and the
+// account has to keep that money. One that clears in a later cycle shows there greyed, as
+// "from last fortnight", but only counts once. "Don't count" ones are only a record.
+
+const HOUR_MS = 60 * 60 * 1000;
+const CLEAR_HOURS = { instant: 0, '24h': 24, '48h': 48 };
+
+// The start of a local day as a moment, e.g. a cycle's first morning.
+function startOfDay(date) {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(y, m - 1, d).toISOString();
+}
+
+// The local date (YYYY-MM-DD) of a moment, by the server's time zone.
+function localDateOf(iso) {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// When a purchase clears: its own time plus the delay, or the chosen time for "custom".
+function clearsAtFor(purchasedAt, mode, custom) {
+  if (mode === 'custom') return custom;
+  return new Date(Date.parse(purchasedAt) + (CLEAR_HOURS[mode] || 0) * HOUR_MS).toISOString();
+}
+
+// A cycle's once-offs as rows beside its bills (kind 'oneoff'): counted ones bought in it,
+// greyed ones (carried) bought before it that clear in it, and records that aren't counted.
+function oneOffRows(purchases, cycle, now) {
+  const out = [];
+  for (const p of purchases) {
+    const date = localDateOf(p.purchased_at);
+    const clearsOn = localDateOf(p.clears_at);
+    const bought = date >= cycle.start && date <= cycle.end;
+    const carried = !bought && date < cycle.start && clearsOn >= cycle.start && clearsOn <= cycle.end && !p.exclude;
+    if (!bought && !carried) continue;
+    const counted = bought && !p.exclude;
+    out.push({ purchase_id: p.id, kind: 'oneoff', date: bought ? date : clearsOn, bought_on: date, name: p.name, amount_cents: p.amount_cents,
+      status: p.clears_at <= now ? 'paid' : 'pending', clears_at: p.clears_at, clear_mode: p.clear_mode,
+      counted, carried, excluded: Boolean(p.exclude), is_expense: counted, private: Boolean(p.private), hidden: Boolean(p.hidden),
+      category_id: p.category_id ?? null, subcategory_id: p.subcategory_id ?? null, account_id: p.account_id ?? null,
+      expense_id: null, loan_id: null, payee_id: null, moved_from_day: null });
+  }
+  return out;
+}
+
+// The once-offs still waiting to be taken at a moment, for heldEstimates.
+function pendingAt(purchases, moment) {
+  return purchases.filter((p) => !p.exclude && p.purchased_at <= moment && p.clears_at > moment)
+    .map((p) => ({ account_id: p.account_id, date: localDateOf(p.clears_at), amount_cents: p.amount_cents, name: p.name }));
 }
 
 // ---------- Loans ----------
@@ -723,5 +793,5 @@ module.exports = {
   LOAN_FREQUENCIES, amortisedRepayment, maxPrincipal, addMonths, loanAsExpense, scheduleAsExpense,
   scheduledRepayment, budgetedRepayment, nextDue, loanEndDate, calculatedRepayment, minimumBalance,
   loanRepayment, simulateLoan, loanEstimates, loanTimeline, loanHistory, ROUNDING, DEFAULT_DEPOSIT_RULES, roundUp, depositCents, buildCycle,
-  heldEstimates,
+  heldEstimates, localDateOf, startOfDay, clearsAtFor, oneOffRows, pendingAt, CLEAR_HOURS,
 };
