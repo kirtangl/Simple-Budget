@@ -2,7 +2,7 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
-## v0.9.12 (20 October 2026)
+## v0.9.12 (25 October 2026)
 
 ### New
 - **Find prices puts the closest match first.** Results are sorted by how well they fit the product: its words and brand (CSR Brown Sugar before White Sugar), what it's matched to at your other stores, fewer extra words (Brown Sugar before Dark Brown Sugar), nothing made from it (Chicken Seasoning drops down), and the size nearest yours (430 g before 1 kg when there's no 500 g). Tap **Best match first** to sort by price per kg instead. The stores are still searched for the name alone.
