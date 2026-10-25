@@ -469,6 +469,22 @@ const MIGRATIONS = [
   `
   ALTER TABLE shop_matches ADD COLUMN image TEXT;
   `,
+  // 30: the notifications bell. A notice is for everyone (login_id empty) or one login, and is
+  // read, then cleared, by whoever sees it. Ones older than 90 days are deleted.
+  `
+  CREATE TABLE notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('info', 'warning', 'alert', 'deleted')),
+    title TEXT NOT NULL,
+    body TEXT,
+    link TEXT,
+    read_at TEXT,
+    cleared_at TEXT,
+    login_id INTEGER
+  );
+  CREATE INDEX notifications_created ON notifications (created_at);
+  `,
 ];
 
 function openDatabase(file) {

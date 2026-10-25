@@ -1,11 +1,11 @@
 'use strict';
 
-// Copies of the whole database in <data>/backups, listed in Settings → Updates.
+// Copies of the whole database in <data>/backups, listed in Settings → Backups.
 //   budget-before-v0.7.1-<time>.db    made before an update (the newest 5, 10 or 20 kept,
 //   budget-before-restore-<time>.db   with the ones made before a restore)
 //   budget-manual-<time>.db           made with "Back up now" (up to 20, kept until deleted)
 // Restoring one puts back the budget itself. Logins, passwords and the app's own
-// settings stay as they are now, so nobody is logged out or locked out.
+// settings stay as they are now, so nobody is logged out or locked out. So do the notices in the bell.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -19,13 +19,15 @@ class BackupError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
-// keep() is how many automatic backups to keep (Settings → Updates → Preferences).
-function createBackups({ db, dataDir, keep = () => 5 }) {
+// keep() is how many automatic backups to keep (Settings → Backups & Updates → Preferences).
+// failed(kind, err) hears about a backup that couldn't be written (a full disk, say).
+function createBackups({ db, dataDir, keep = () => 5, failed = () => {} }) {
   const dir = dataDir ? path.join(dataDir, 'backups') : null;
 
   function list() {
-    if (!dir || !fs.existsSync(dir)) return [];
-    return fs.readdirSync(dir).map((name) => {
+    let names;
+    try { names = dir ? fs.readdirSync(dir) : []; } catch { return []; } // none yet, or unreadable
+    return names.map((name) => {
       const m = NAME.exec(name);
       if (!m) return null;
       const stat = fs.statSync(path.join(dir, name));
@@ -38,14 +40,20 @@ function createBackups({ db, dataDir, keep = () => 5 }) {
   // `keepName` is never tidied away, so restoring the oldest backup doesn't delete it.
   function create(kind, version, { keepName = null } = {}) {
     if (!dir) throw new BackupError(400, "This copy doesn't keep backups on the server.");
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace('Z', '');
     const what = kind === 'manual' ? 'manual' : kind === 'restore' ? 'before-restore' : `before-v${String(version).replace(/[^\w.-]/g, '')}`;
     if (kind === 'manual' && list().filter((b) => b.kind === 'manual').length >= MAX_MANUAL) {
       throw new BackupError(409, `There are already ${MAX_MANUAL} backups made by hand. Delete an older one first.`);
     }
     const name = `budget-${what}-${stamp}.db`;
-    db.exec(`VACUUM INTO '${path.join(dir, name).replace(/'/g, "''")}'`);
+    try {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      db.exec(`VACUUM INTO '${path.join(dir, name).replace(/'/g, "''")}'`);
+    } catch (err) {
+      try { fs.rmSync(path.join(dir, name), { force: true }); } catch { /* nothing half-written to tidy */ }
+      failed(kind, err);
+      throw new BackupError(500, `Couldn't save the backup (${err.message}). Check there's space on the server.`);
+    }
     // A backup holds the logins' password hashes, so only the app can read it.
     try { fs.chmodSync(path.join(dir, name), 0o600); } catch { /* e.g. a share that has no file permissions */ }
     for (const old of list().filter((b) => b.kind !== 'manual' && b.name !== keepName).slice(keep())) {
@@ -81,7 +89,7 @@ function createBackups({ db, dataDir, keep = () => 5 }) {
       db.prepare('ATTACH DATABASE ? AS r').run(work);
       try {
         transaction(db, () => {
-          const tables = db.prepare("SELECT name FROM main.sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('settings', 'logins')").all().map((t) => t.name);
+          const tables = db.prepare("SELECT name FROM main.sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('settings', 'logins', 'notifications')").all().map((t) => t.name);
           for (const t of tables) {
             const theirCols = new Set(db.prepare(`PRAGMA r.table_info("${t}")`).all().map((c) => c.name));
             const cols = db.prepare(`PRAGMA main.table_info("${t}")`).all().map((c) => c.name).filter((c) => theirCols.has(c));

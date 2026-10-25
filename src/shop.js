@@ -1156,4 +1156,4 @@ function importShop(db, data) {
   return { products: db.prepare('SELECT count(*) AS n FROM shop_products').get().n, skipped };
 }
 
-module.exports = { createShop, createHelper, exportShop, importShop, priceDay, priceFor, relevance, imageUrl, UNITS };
+module.exports = { createShop, createHelper, exportShop, importShop, priceDay, priceFor, relevance, imageUrl, UNITS, CHECKER_STORES };

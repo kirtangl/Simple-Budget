@@ -6,10 +6,12 @@ const express = require('express');
 const { openDatabase, getSetting, setSetting } = require('./db');
 const { createAuth } = require('./auth');
 const { createApi } = require('./api');
-const { createShop, createHelper } = require('./shop');
+const { createShop, createHelper, CHECKER_STORES } = require('./shop');
 const { createChecker } = require('./checker');
 const { createUpdates, UpdateError, compareVersions, parseVersion } = require('./updates');
+const fs = require('node:fs');
 const { createBackups, BackupError } = require('./backups');
+const { createNotifications, tryNotify } = require('./notifications');
 const { createConfig, ConfigError, splitHosts } = require('./config');
 const { iconRoutes } = require('./icon');
 const { version: PACKAGE_VERSION } = require('../package.json');
@@ -65,7 +67,10 @@ function recordVersion(db, backups) {
   if (!was) updated = backups.list().some((b) => b.kind === 'update' && b.version === VERSION && Date.now() - Date.parse(b.created_at) < 60 * 60 * 1000);
   setSetting(db, 'installed_version', VERSION);
   setSetting(db, 'installed_at', now);
-  if (updated) setSetting(db, 'just_updated', JSON.stringify({ from: was || null, to: VERSION, at: now }));
+  if (updated) {
+    setSetting(db, 'just_updated', JSON.stringify({ from: was || null, to: VERSION, at: now }));
+    tryNotify(db, { kind: 'info', title: `Updated to v${VERSION}`, body: was ? `Simple Budget was updated from v${was}. See what's new under Backups & Updates.` : "See what's new under Backups & Updates.", link: '#/settings/updates' });
+  }
 }
 
 function createApp({ db, secureCookies = false, fetchImpl, dataDir = null, checker = createChecker() }) {
@@ -83,7 +88,11 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null, check
     const n = Number(getSetting(db, key));
     return allowed.includes(n) ? n : fallback;
   };
-  const backups = createBackups({ db, dataDir, keep: () => numSetting('backups_keep', KEEPS, 5) });
+  const BACKUP_WHAT = { update: 'before an update', restore: 'before a restore', manual: '' };
+  const backups = createBackups({
+    db, dataDir, keep: () => numSetting('backups_keep', KEEPS, 5),
+    failed: (kind, err) => tryNotify(db, { kind: 'alert', title: `A backup ${BACKUP_WHAT[kind] ? `${BACKUP_WHAT[kind]} ` : ''}failed`, body: `It couldn't be saved: ${err.message}. Check there's space on the server.`, link: '#/settings/backups' }),
+  });
   recordVersion(db, backups);
   const auth = createAuth({ db, secret, secureCookies: () => secureCookies || config.secureCookies() });
   const updates = createUpdates({
@@ -172,7 +181,7 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null, check
     try {
       res.json(await updates.install({ backup: dataDir ? (v) => backups.create('update', v) : null }));
     } catch (err) {
-      if (err instanceof UpdateError) return res.status(err.status).json({ error: err.message });
+      if (err instanceof UpdateError || err instanceof BackupError) return res.status(err.status).json({ error: err.message });
       next(err);
     }
   });
@@ -256,6 +265,19 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null, check
     const r = backups.restore(req.body && req.body.name);
     res.json({ ...backupsView(), ...r });
   }));
+  // Settings → Backups & Updates → Storage: how much room the app's files take, and what's left.
+  app.get('/api/storage', auth.require, (req, res) => {
+    const { page_count: pages } = db.prepare('PRAGMA page_count').get();
+    const { page_size: size } = db.prepare('PRAGMA page_size').get();
+    let free = null;
+    try { if (dataDir) { const st = fs.statfsSync(dataDir); free = st.bavail * st.bsize; } } catch { /* not known here */ }
+    res.json({ database: pages * size, backups: backups.list().reduce((s, b) => s + b.size, 0), backups_count: backups.list().length, free });
+  });
+  // Settings → Apps → Price Checker: whether it's set up and answering.
+  app.get('/api/apps/price-checker', auth.require, asyncRoute(async (req, res) => {
+    res.json({ ...(checker.status ? await checker.status() : { set_up: Boolean(checker.on) }), stores: CHECKER_STORES });
+  }));
+  app.use('/api/notifications', auth.require, createNotifications(db));
   app.get('/api/me', auth.require, auth.me);
   app.put('/api/me/theme', auth.require, auth.saveTheme);
   app.get('/api/logins', auth.require, auth.listLogins);
