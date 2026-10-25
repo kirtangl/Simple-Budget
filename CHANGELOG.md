@@ -2,6 +2,17 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v0.9.13 (25 October 2026)
+
+### New
+- **Notifications bell.** A bell beside your account button (top left on a phone) gets a dot when there's something new: red for an alert, amber for a warning. Tap it to see the notices, newest first. Tap one to go where it points, or use **Mark all read** and **Clear all**. For now it tells you when a backup fails and when an update has been installed, and later updates will add more. Notices are deleted after 90 days.
+- **Storage**, at the top of Settings → Backup and Storage, shows how much room the database and the backups take, and how much space is left on the server.
+- **Settings → Apps → Price Checker** shows whether the price checker is set up, running and using the right password, with the commands to add it if it isn't. **Set up the Coles button** is there too.
+
+### Improved
+- **Settings is grouped.** Your budget (Income, Accounts, Payees, Categories), Appearance & Security, Backups & Updates (Updates, Backup and Storage, and Advanced) and Apps (Price Checker). The budget cycle, which was the only thing left under General, is now under Income. On a computer the groups are a list down the side. On a phone, Settings opens as that list, and each page has a back arrow. Old links and bookmarks still open the right page.
+- **Backups have their own page.** The backups kept on the server, and downloading or restoring a backup file (which was under General), are now together under Settings → Backup and Storage. **Back up now** is a proper button, **Download backup** is green and **Restore from backup** is red.
+
 ## v0.9.12 (25 October 2026)
 
 ### New

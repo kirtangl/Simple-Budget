@@ -386,17 +386,44 @@ input::-webkit-date-and-time-value { text-align: left; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .toolbar input, .toolbar select { width: auto; flex: 1; min-width: 140px; }
 
-/* Settings: one strip of tabs like Budget and Goals. Budget set-up | the app itself | Advanced, with quiet dividers. */
-.settings-tabs { align-items: center; }
-.st-group { display: flex; gap: 2px; }
-.settings-tabs a.active { background: var(--brand-soft); color: var(--brand); }
-.st-sep { flex: none; width: 1px; height: 22px; margin: 0 6px; background: var(--line); }
+/* Settings: a side list of groups on a computer (Your budget, Site, Appearance & Security, Backups & Updates, Apps).
+   On a phone, Settings on its own is that list, and each page opens with a back arrow to it. */
+.settings { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 0 24px; align-items: start; }
+.settings .st-head { grid-column: 1 / -1; }
+.settings-nav { position: sticky; top: calc(var(--top-h, 58px) + 12px); display: grid; gap: 14px; }
+.sn-group { display: grid; gap: 2px; }
+.sn-head { margin: 0 0 2px 10px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.settings-nav a { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; font-size: 14px; font-weight: 600;
+  color: color-mix(in srgb, var(--text) 80%, var(--card)); text-decoration: none; }
+.settings-nav a:hover { background: color-mix(in srgb, var(--text) 5%, var(--card)); }
+.settings-nav a.active { background: var(--brand-soft); color: var(--brand); }
+.sn-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sn-go, .st-crumb, .st-title { display: none; }
+.settings-page { min-width: 0; }
 .st-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--brand); flex: none; }
 .st-dot[hidden] { display: none; }
 /* Advanced: set apart in a warning red. */
-.settings-tabs a.st-advanced { color: var(--danger); }
-.settings-tabs a.st-advanced:hover { background: color-mix(in srgb, var(--danger) 10%, var(--card)); }
-.settings-tabs a.st-advanced.active { background: var(--danger-soft); color: var(--danger); }
+.settings-nav a.st-advanced { color: var(--danger); }
+.settings-nav a.st-advanced:hover { background: color-mix(in srgb, var(--danger) 10%, var(--card)); }
+.settings-nav a.st-advanced.active { background: var(--danger-soft); color: var(--danger); }
+@media (max-width: 720px) {
+  .settings { display: block; }
+  .settings-home .settings-page, .settings:not(.settings-home) .settings-nav, .settings:not(.settings-home) .st-head { display: none; }
+  .settings-nav { position: static; gap: 18px; }
+  .sn-group { gap: 0; }
+  .sn-head { margin: 0 0 6px 4px; }
+  .settings-nav a, .settings-nav a.active { min-height: 48px; padding: 10px 14px; border-radius: 0; font-size: 15px; color: var(--text);
+    background: var(--card); border: 1px solid var(--line); border-top-width: 0; }
+  .settings-nav a.st-advanced, .settings-nav a.st-advanced.active { color: var(--danger); background: var(--card); }
+  .settings-nav .sn-head + a { border-top-width: 1px; border-radius: var(--radius) var(--radius) 0 0; }
+  .settings-nav a:last-child { border-radius: 0 0 var(--radius) var(--radius); }
+  .settings-nav .sn-head + a:last-child { border-radius: var(--radius); }
+  .sn-go { display: inline; font-size: 1.4rem; line-height: 1; color: var(--muted); }
+  .st-crumb { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+  .st-back { display: inline-flex; align-items: center; min-height: 40px; font-weight: 600; }
+  .st-where { font-size: 12px; color: var(--muted); }
+  .st-title { display: block; margin: 0 0 12px; font-size: 1.35rem; }
+}
 .adv-warning { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: color-mix(in srgb, var(--danger-soft) 55%, var(--card)); }
 .adv-warning h2 { color: var(--danger); }
 .upd-token .row { margin-top: 10px; }
@@ -414,15 +441,6 @@ input::-webkit-date-and-time-value { text-align: left; }
 .adv-fields .field { max-width: 640px; }
 .env-chip { background: var(--upcoming-soft); color: var(--upcoming); font-weight: 600; }
 .adv-info li { display: flex; gap: 8px; }
-@media (max-width: 899px) {
-  /* Rows of equal buttons in the one strip, instead of a sideways scroll. */
-  .sec-tabs.settings-tabs { display: grid; gap: 2px; }
-  .st-group { display: grid; gap: 2px; }
-  .st-group.st-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .st-group.st-1 { grid-template-columns: 1fr; }
-  .settings-tabs .st-group a { padding: 7px 2px; gap: 5px; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .st-sep { width: auto; height: 1px; margin: 2px 6px; }
-}
 
 .tag button { min-height: 0; padding: 0 6px; border: 0; background: none; color: var(--muted); font-size: 1rem; }
 
@@ -477,6 +495,10 @@ dialog form > .dialog-actions:not([hidden]) ~ .error:empty { display: none; }
 
 .empty { text-align: center; color: var(--muted); padding: 24px 8px; }
 
+/* Download a backup (green) and restore one (red, since it replaces everything). */
+.btn.btn-good { background: var(--paid); border-color: var(--paid); color: var(--card); font-weight: 600; }
+.btn.btn-bad { background: var(--danger); border-color: var(--danger); color: var(--card); font-weight: 600; }
+.btn.btn-good:hover, .btn.btn-bad:hover { filter: brightness(1.08); text-decoration: none; }
 a.btn, label.btn { display: inline-flex; align-items: center; text-decoration: none; color: var(--text); font-size: inherit; margin: 0; }
 
 /* Text-style buttons for inline actions ("change", "Show 3 incomes") */
@@ -769,7 +791,12 @@ button.info:hover { color: var(--brand); border-color: var(--brand); }
 .swatch[data-preview="slate"] { --pbg: #111827; --pcard: #1c2433; --pbrand: #93c5fd; }
 .swatch[data-preview="midnight"] { --pbg: #000; --pcard: #0d0d0f; --pbrand: #a78bfa; }
 .swatch[data-preview="system"]::after { content: ''; position: absolute; inset: 0; background: #0f1418; clip-path: polygon(100% 0, 100% 100%, 0 100%); }
-@media (max-width: 720px) { .user-menu { position: absolute; right: max(16px, env(safe-area-inset-right)); } }
+@media (max-width: 720px) {
+  /* The name stays centred: the bell on the left, the account (and any update) on the right. */
+  .user-menu { position: absolute; right: max(16px, env(safe-area-inset-right)); left: max(16px, env(safe-area-inset-left)); pointer-events: none; }
+  .user-menu > * { pointer-events: auto; }
+  .user-menu .bell-btn { margin-right: auto; }
+}
 
 /* Filters: a status switch and account chips with their colour dots */
 .filters { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: -2px 0 10px; }
@@ -1515,6 +1542,38 @@ dialog.loan-modal .error:empty { display: none; }
 
 /* Updates */
 .user-menu { display: flex; align-items: center; gap: 8px; }
+/* The notifications bell, beside the account button, and its panel. */
+.bell-btn { position: relative; display: grid; place-items: center; width: 38px; height: 38px; min-height: 0; padding: 0; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--card); color: var(--muted); }
+.bell-btn:hover { color: var(--brand); border-color: var(--brand); }
+.bell-dot { position: absolute; top: 5px; right: 6px; width: 9px; height: 9px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 2px var(--card); }
+.bell-dot[hidden] { display: none; }
+.bell-dot[data-level="warning"] { background: var(--due); }
+.bell-dot[data-level="alert"] { background: var(--danger); }
+.bell-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.bell-item { all: unset; box-sizing: border-box; display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--card); cursor: pointer; color: var(--text); }
+.bell-item:hover { border-color: var(--brand); }
+.bell-item:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.bell-item.unread { background: color-mix(in srgb, var(--brand-soft) 45%, var(--card)); }
+.bell-kind { flex: none; width: 9px; height: 9px; margin-top: 6px; border-radius: 50%; background: var(--brand); }
+.bell-kind[data-kind="warning"] { background: var(--due); }
+.bell-kind[data-kind="alert"], .bell-kind[data-kind="deleted"] { background: var(--danger); }
+.bell-item:not(.unread) .bell-kind { opacity: .45; }
+.bell-text { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.bell-title { font-weight: 600; overflow-wrap: anywhere; }
+.bell-item:not(.unread) .bell-title { font-weight: 500; }
+.bell-body { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.bell-when { font-size: 12px; color: var(--muted); }
+.bell-go { flex: none; align-self: center; font-size: 1.3rem; color: var(--muted); }
+.bell-empty { margin: 4px 0 8px; }
+@media (min-width: 721px) { dialog.bell-pop { width: min(480px, calc(100vw - 24px)); } }
+/* Apps → Price Checker */
+.pc-state { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.pc-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+.pc-dot.ok { background: var(--paid); }
+.pc-dot.bad { background: var(--danger); }
+.upd-cmd + .row { margin-top: 10px; }
 .update-pill { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: 999px; font-size: 12px; font-weight: 700;
   text-decoration: none; background: var(--brand-soft); color: var(--brand); }
 .update-pill::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--brand); }

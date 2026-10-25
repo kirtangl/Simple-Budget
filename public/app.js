@@ -130,6 +130,56 @@
   async function reload() {
     state.data = await api('GET', '/data');
     state.trends = null; // the year ahead is worked out from this data, so fetch it again next time
+    showBell(state.data.notices);
+  }
+
+  // ---------- Notifications ----------
+  // The bell in the top bar: a dot while there's something unread, red for an alert or deleted
+  // data, amber for a warning, the accent colour otherwise. Its count comes with the data, and
+  // with the hourly look for updates, so there's no polling of its own.
+  function showBell(n) {
+    if (!n) return;
+    const dot = document.getElementById('bell-dot');
+    dot.hidden = !n.unread;
+    dot.dataset.level = n.level || 'info';
+    document.getElementById('bell').setAttribute('aria-label', n.unread ? `Notifications, ${n.unread} unread` : 'Notifications');
+  }
+  const NOTICE_LABEL = { info: 'Info', warning: 'Warning', alert: 'Alert', deleted: 'Deleted' };
+  function bellBody(list) {
+    if (!list.items.length) return html`<p class="muted bell-empty">Nothing here. Notices about backups, updates and anything that needs a look show up here.</p>`;
+    return html`<ul class="bell-list">${list.items.map((n) => html`<li>
+      <button type="button" class="bell-item ${n.read_at ? '' : 'unread'}" data-notice="${n.id}" data-link="${n.link || ''}">
+        <span class="bell-kind" data-kind="${n.kind}" title="${NOTICE_LABEL[n.kind]}"></span>
+        <span class="bell-text"><span class="bell-title">${n.title}</span>${n.body ? html`<span class="bell-body">${n.body}</span>` : ''}
+          <span class="bell-when">${updWhen(n.created_at)}</span></span>
+        ${n.link ? html`<span class="bell-go" aria-hidden="true">›</span>` : ''}
+      </button></li>`)}</ul>`;
+  }
+  function bellPanel(list) {
+    showBell(list);
+    const any = list.items.length > 0;
+    openForm({
+      title: 'Notifications',
+      cls: 'bell-pop',
+      focus: false,
+      body: bellBody(list),
+      lead: any ? html`<button type="button" data-bell="read" ${list.unread ? '' : raw('disabled')}>Mark all read</button><button type="button" data-bell="clear">Clear all</button>` : null,
+      afterRender: (form) => {
+        form.onclick = async (ev) => {
+          const item = ev.target.closest('[data-notice]');
+          const act = ev.target.closest('[data-bell]');
+          try {
+            if (item) {
+              const fresh = await api('POST', `/notifications/${item.dataset.notice}/read`);
+              showBell(fresh);
+              if (item.dataset.link) { closeForm(); location.hash = item.dataset.link; } else bellPanel(fresh);
+            } else if (act) {
+              bellPanel(await api('POST', `/notifications/${act.dataset.bell}`));
+            }
+          } catch (err) { form.querySelector('#form-error').textContent = err.message; }
+        };
+      },
+    });
   }
 
   // ---------- Small UI pieces ----------
@@ -578,7 +628,7 @@
 
       ${empty ? html`<div class="card welcome"><h2>Welcome!</h2><p>Start by adding your <a href="#/settings/accounts">accounts</a> and
         <a href="#/settings/income">income</a>, then add your bills on the <a href="#/budget/expenses">Expenses</a> tab.
-        Set your budget cycle under <a href="#/settings/cycle">Settings → General</a>.</p></div>` : ''}
+        Set your budget cycle under <a href="#/settings/income">Settings → Income</a>.</p></div>` : ''}
 
       <div class="stats">
         <div class="card stat"><div class="label">Income</div><div class="value num pos">${money(t.income_cents)}</div>
@@ -2855,20 +2905,41 @@
 
   // ---------- Settings ----------
 
-  const SETTINGS_TABS = [['income', 'Income'], ['accounts', 'Accounts'], ['payees', 'Payees'], ['categories', 'Categories'], ['cycle', 'General'], ['appearance', 'Appearance'], ['security', 'Security'], ['updates', 'Updates'], ['advanced', 'Advanced']];
+  const SETTINGS_TABS = [['income', 'Income'], ['accounts', 'Accounts'], ['payees', 'Payees'], ['categories', 'Categories'],
+    ['appearance', 'Appearance'], ['security', 'Security'], ['updates', 'Updates'], ['backups', 'Backup and Storage'], ['advanced', 'Advanced'], ['price-checker', 'Price Checker']];
+  // Old addresses of pages that have moved: the budget cycle (General) is on Income now.
+  const SETTINGS_MOVED = { logins: 'security', cycle: 'income' };
 
-  // Setting up the budget, then the app itself.
-  const SETTINGS_GROUPS = [['income', 'accounts', 'payees', 'categories'], ['cycle', 'appearance', 'security', 'updates'], ['advanced']];
+  // Setting up the budget, then the app itself. Each page keeps its old address, so links and bookmarks still work.
+  const SETTINGS_GROUPS = [
+    ['Your budget', ['income', 'accounts', 'payees', 'categories']],
+    ['Appearance & Security', ['appearance', 'security']],
+    ['Backups & Updates', ['updates', 'backups', 'advanced']],
+    ['Apps', ['price-checker']],
+  ];
+  const settingsName = (k) => SETTINGS_TABS.find(([x]) => x === k)[1];
 
+  // A side list of the groups on a computer. On a phone, Settings on its own is the list, and each
+  // page has a back arrow to it.
   function renderSettings(sub) {
-    if (sub === 'logins') sub = 'security'; // its old name
-    const tab = SETTINGS_TABS.some(([k]) => k === sub) ? sub : 'income';
-    const body = { income: settingsIncome, accounts: settingsAccounts, payees: settingsPayees, categories: settingsCategories, cycle: settingsCycle, appearance: themeCard, security: settingsSecurity, updates: settingsUpdates, advanced: settingsAdvanced }[tab]();
+    if (SETTINGS_MOVED[sub]) sub = SETTINGS_MOVED[sub];
+    const home = !SETTINGS_TABS.some(([k]) => k === sub);
+    const tab = home ? 'income' : sub;
+    const body = { income: settingsIncome, accounts: settingsAccounts, payees: settingsPayees, categories: settingsCategories,
+      appearance: themeCard, security: settingsSecurity, updates: settingsUpdates, backups: settingsBackups, advanced: settingsAdvanced, 'price-checker': settingsPriceChecker }[tab]();
+    const group = SETTINGS_GROUPS.find(([, keys]) => keys.includes(tab))[0];
     return html`
-      <div class="page-head"><h1>Settings</h1></div>
-      <nav class="sec-tabs settings-tabs" aria-label="Settings">${SETTINGS_GROUPS.map((keys, i) => html`${i ? html`<span class="st-sep" aria-hidden="true"></span>` : ''}<div class="st-group st-${keys.length}">
-        ${keys.map((k) => html`<a href="#/settings/${k}" ${k === tab ? raw('aria-current="page"') : ''} class="${k === tab ? 'active' : ''} ${k === 'advanced' ? 'st-advanced' : ''}">${SETTINGS_TABS.find(([x]) => x === k)[1]}${k === 'updates' ? updTabDot() : ''}</a>`)}</div>`)}</nav>
-      ${body}`;
+      <div class="settings ${home ? 'settings-home' : ''}">
+        <div class="page-head st-head"><h1>Settings</h1></div>
+        <nav class="settings-nav" aria-label="Settings">${SETTINGS_GROUPS.map(([name, keys]) => html`<div class="sn-group">
+          <h2 class="sn-head">${name}</h2>
+          ${keys.map((k) => html`<a href="#/settings/${k}" ${!home && k === tab ? raw('aria-current="page"') : ''} class="${k === tab ? 'active' : ''} ${k === 'advanced' ? 'st-advanced' : ''}"><span class="sn-name">${settingsName(k)}</span>${k === 'updates' ? updTabDot() : ''}<span class="sn-go" aria-hidden="true">›</span></a>`)}</div>`)}</nav>
+        <div class="settings-page">
+          <div class="st-crumb"><a href="#/settings" class="st-back" aria-label="Back to Settings">‹ Settings</a><span class="st-where">${group}</span></div>
+          <h2 class="st-title">${settingsName(tab)}</h2>
+          ${body}
+        </div>
+      </div>`;
   }
 
   // Expandable table of this pay's incomes on the Overview. Rows open the edit popup.
@@ -2911,7 +2982,8 @@
             <div class="right"><div class="num" style="font-weight:700">${money(incomePerCycle(i))}</div><div class="meta">${aCycle()} after tax</div>
               ${(i.frequency || 'fortnightly') !== state.data.settings.pay_frequency ? html`<div class="meta num">(${money(i.after_tax_cents)} ${(INCOME_FREQ[i.frequency] || 'Fortnightly').toLowerCase()})</div>` : ''}</div>
           </li>`)}</ul>` : html`<p class="empty">No income added yet.</p>`}
-      </div>`;
+      </div>
+      ${settingsCycle()}`;
   }
 
   function incomeForm(i = {}) {
@@ -3159,21 +3231,6 @@
         </form>
         <p class="hint">${s.pay_frequency === 'monthly' ? `Each cycle starts on the ${ordinal(Number(s.pay_anchor_date.slice(8)))} of the month.`
           : `Currently each cycle starts on a ${weekdayFor(0, true)}.`} Usually this is a pay day. Weekly and fortnightly bills are counted from it.</p>
-      </div>
-      <div class="card">
-        <h2>Backup and restore</h2>
-        <p class="muted small">Download everything (accounts, income, payees, categories, expenses, savings, loans, goals, debts and these settings)
-          as a file you can keep somewhere safe. Restoring a backup <b>replaces</b> what's in the app now. Your password isn't included or changed.</p>
-        <div class="row">
-          <a class="btn" href="api/export" download>Download backup</a>
-          ${state.me && state.me.main ? html`<label class="btn" style="margin:0;font-size:inherit">Restore from backup…
-            <input type="file" accept="application/json,.json" data-input="restore" hidden></label>` : ''}
-        </div>
-        ${state.me && state.me.main ? '' : html`<p class="muted small">Only the main login can restore a backup.</p>`}
-      </div>
-      <div class="card">
-        <h2>Password and logins</h2>
-        <p class="muted small">Your password, and logins for anyone else in the household, are under <a href="#/settings/security">Security</a>.</p>
       </div>`;
   }
 
@@ -3283,7 +3340,7 @@
     const label = day === today ? 'Today' : day === addDaysIso(today, -1) ? 'Yesterday' : fmtDate(day, day.slice(0, 4) !== today.slice(0, 4));
     return `${label}, ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
   }
-  const fileSize = (b) => (b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+  const fileSize = (b) => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)} GB` : b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
   // The logo's ring, drawn in the current colour.
   const ringSvg = (cls = '') => raw(`<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6.5" fill="none" stroke="currentColor" stroke-width="3.6" pathLength="100" stroke-dasharray="44 6 25 6 13 6" transform="rotate(-90 12 12)"/></svg>`);
 
@@ -3296,7 +3353,7 @@
       ${updMainCard(u, main)}
       <div class="upd-grid">
         ${updNotesCard(u)}
-        <div class="upd-side">${updBackupsCard(main)}${updPrefsCard(u, main)}</div>
+        <div class="upd-side">${updPrefsCard(u, main)}</div>
       </div>`;
   }
 
@@ -3492,15 +3549,85 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     </section>`;
   }
 
+  // Backups & Updates → Backups: the copies kept on the server, a file to download or restore, and
+  // how much room it all takes.
+  function settingsBackups() {
+    const main = Boolean(state.me && state.me.main);
+    return html`
+      ${storageCard()}
+      ${updBackupsCard(main)}
+      <div class="card">
+        <h2>Download or restore a backup file</h2>
+        <p class="muted small">Download everything (accounts, income, payees, categories, expenses, savings, loans, goals, debts, shopping and these settings)
+          as a file you can keep somewhere safe. Restoring a backup <b>replaces</b> what's in the app now. Your password isn't included or changed.</p>
+        <div class="row">
+          <a class="btn btn-good" href="api/export" download>Download backup</a>
+          ${main ? html`<label class="btn btn-bad" style="margin:0;font-size:inherit">Restore from backup…
+            <input type="file" accept="application/json,.json" data-input="restore" hidden></label>` : ''}
+        </div>
+        ${main ? '' : html`<p class="muted small">Only the main login can restore a backup.</p>`}
+      </div>`;
+  }
+
+  // Read-only: what the app's files take up on the server.
+  function storageCard() {
+    const st = state.storage;
+    const row = (label, sub, bytes) => html`<li><span class="grow"><span>${label}</span>${sub ? html`<span class="muted small"> · ${sub}</span>` : ''}</span><b>${bytes == null ? '—' : bytes ? fileSize(bytes) : 'None'}</b></li>`;
+    return html`<div class="card storage-card" id="storage">
+      <h2>Storage</h2>
+      ${!st ? html`<p class="muted small">Couldn't load how much room the app takes.</p>` : html`<ul class="list adv-info">
+        ${row('Database', 'your budget, shopping and settings', st.database)}
+        ${row('Backups', `${st.backups_count} kept on the server`, st.backups)}
+        ${st.free != null ? row('Free space on the server', 'where the app keeps its data', st.free) : ''}
+      </ul>`}
+    </div>`;
+  }
+
+  // Apps → Price Checker: whether the optional price-checker is set up and answering, and the Coles button.
+  const CHECKER_CMD = "printf '\\nCOMPOSE_PROFILES=prices\\nPRICE_CHECKER_URL=http://price-checker:8090\\nPRICE_CHECKER_TOKEN=%s\\n' \"$(openssl rand -hex 24)\" | sudo tee -a .env\nsudo docker compose up -d";
+  function settingsPriceChecker() {
+    const c = state.checkerStatus;
+    const names = { woolworths: 'Woolworths', coles: 'Coles', aldi: 'Aldi' };
+    let status;
+    if (!c) status = html`<p class="muted small">Couldn't load the price checker's status.</p>`;
+    else if (!c.set_up) {
+      status = html`<div class="pc-state"><span class="pc-dot off"></span><b>Not set up</b></div>
+        <p class="small">The price checker is an optional second container that looks up Woolworths, Coles and Aldi prices for the Shopping tab, the way a person would in a browser.
+          It's a big download the first time (about 2 GB). To add it, run these in the app's folder on the server:</p>
+        <pre class="upd-cmd">${CHECKER_CMD}</pre>
+        <div class="row"><button type="button" data-action="copy-checker-cmd">Copy commands</button></div>`;
+    } else if (!c.reachable) {
+      status = html`<div class="pc-state"><span class="pc-dot bad"></span><b>Not answering</b></div>
+        <p class="small">${c.error || "Couldn't reach it."} In the app's folder on the server, <code>sudo docker compose up -d</code> starts it again.</p>`;
+    } else if (!c.token_ok) {
+      status = html`<div class="pc-state"><span class="pc-dot bad"></span><b>Wrong password</b></div>
+        <p class="small">It's running, but didn't accept the app's password. <code>PRICE_CHECKER_TOKEN</code> in .env should be the same for both. After fixing it, run <code>sudo docker compose up -d</code>.</p>`;
+    } else {
+      status = html`<div class="pc-state"><span class="pc-dot ok"></span><b>Running</b>${c.busy ? html`<span class="muted small"> · checking prices now</span>` : ''}</div>
+        <p class="small muted">It updates with the app from Backups & Updates.</p>`;
+    }
+    return html`
+      <div class="card">
+        <h2>Price Checker</h2>
+        ${status}
+        ${c && c.stores ? html`<p class="small muted">Stores it knows: ${c.stores.map((k) => names[k] || k).join(', ')}. Pick which of your stores use it under Shopping → Change store → a store's ⋯ → Colour and automatic prices.</p>` : ''}
+      </div>
+      <div class="card">
+        <h2>Coles button</h2>
+        <p class="small">Coles turns automatic price checkers away, so its prices come from a button in your own browser instead (Brave, Chrome or Edge on a computer).</p>
+        <div class="row"><button type="button" data-action="shop-helper">Set up the Coles button</button></div>
+      </div>`;
+  }
+
   function updBackupsCard(main) {
     const b = state.backups;
     const label = (x) => (x.kind === 'manual' ? 'Manual backup' : x.kind === 'restore' ? 'Before a restore' : `Before v${x.version}`);
     return html`<section class="card upd-backups" id="upd-backups">
-      <div class="upd-card-head"><div><h3>Backups</h3>
+      <div class="upd-card-head"><div><h3>Kept on the server</h3>
         <p class="upd-card-sub">Made automatically before every update. Kept for the last ${b ? b.keep || 5 : 5}. Up to 20 made by hand.</p></div>
-        ${b && b.available ? html`<button class="linkish" data-action="backup-now">Back up now</button>` : ''}</div>
+        ${b && b.available ? html`<button class="primary" data-action="backup-now">Back up now</button>` : ''}</div>
       ${!b ? html`<p class="muted small">Couldn't load the backups.</p>`
-        : !b.available ? html`<p class="muted small">This copy doesn't keep backups on the server. Download one under <a href="#/settings/cycle">General</a> instead.</p>`
+        : !b.available ? html`<p class="muted small">This copy doesn't keep backups on the server. Download a backup file below instead.</p>`
         : b.backups.length ? html`<ul class="upd-backup-list">${b.backups.map((x) => html`<li>
             <div><div class="upd-backup-name">${label(x)}</div><div class="upd-card-sub">${updWhen(x.created_at)} · ${fileSize(x.size)}</div></div>
             ${main ? html`<div class="upd-backup-btns">${x.kind === 'manual' ? html`<button class="linkish danger-link" data-action="backup-delete" data-name="${x.name}">Delete</button>` : ''}
@@ -4133,7 +4260,9 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       void el.offsetWidth; // restart the highlight if pressed again
       el.classList.add('flash');
     },
-    'upd-to-backups': () => document.getElementById('upd-backups')?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+    'upd-to-backups': () => { location.hash = '#/settings/backups'; },
+    'open-bell': async () => { closeMenu(); bellPanel(await api('GET', '/notifications')); },
+    'copy-checker-cmd': () => copyText(CHECKER_CMD, 'Commands'),
     'upd-pref': async (el) => {
       const key = el.dataset.key;
       el.disabled = true;
@@ -4253,7 +4382,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       state.offset = 0;
       render();
       const total = Object.values(result.counts).reduce((a, b) => a + b, 0);
-      toast(result.backup ? `Restored ${total} items. What was there before is under Settings → Updates → Backups.` : `Restored ${total} items`);
+      toast(result.backup ? `Restored ${total} items. What was there before is under Settings → Backup and Storage.` : `Restored ${total} items`);
       if (result.warnings.length) alert(`Restored, with a few things to check:\n\n${result.warnings.join('\n')}`);
     } catch (err) {
       alert(`Restore failed: ${err.message}`);
@@ -6750,7 +6879,9 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       else if (page === 'overview' && sub === 'analytics') out = await renderAnalytics();
       else if (page === 'settings') {
         if (sub === 'updates' && !state.updates) await loadUpdates();
-        if (sub === 'updates' && !state.backups) state.backups = await api('GET', '/backups').catch(() => null);
+        if ((sub === 'updates' || sub === 'backups') && !state.backups) state.backups = await api('GET', '/backups').catch(() => null);
+        if (sub === 'backups') state.storage = await api('GET', '/storage').catch(() => null);
+        if (sub === 'price-checker') state.checkerStatus = await api('GET', '/apps/price-checker').catch(() => null);
         if (sub === 'advanced' && !state.advanced) state.advanced = await api('GET', '/advanced');
         if ((sub === 'security' || sub === 'logins') && !state.logins) state.logins = await api('GET', '/logins');
         out = renderSettings(sub);
@@ -6797,6 +6928,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
 
   // A tab or home-screen app left open overnight would still think it was yesterday.
   document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible' && state.me) api('GET', '/notifications/unread').then(showBell).catch(() => { /* next time */ });
     if (document.visibilityState !== 'visible' || !state.data || state.data.settings.today === localDate(new Date())) return;
     try { await reload(); await render(); } catch { /* shown on the next action */ }
   });
@@ -6838,7 +6970,13 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       render();
       // New versions: on start, then every hour (the server itself asks GitHub every few hours).
       loadUpdates();
-      if (!state.updateTimer) state.updateTimer = setInterval(() => { if (state.me) loadUpdates(); }, 60 * 60 * 1000);
+      if (!state.updateTimer) {
+        state.updateTimer = setInterval(() => {
+          if (!state.me) return;
+          loadUpdates();
+          api('GET', '/notifications/unread').then(showBell).catch(() => { /* next time */ });
+        }, 60 * 60 * 1000);
+      }
     } catch (err) {
       if (err.message !== 'Please log in.') $app.innerHTML = html`<div class="card"><p class="error">Could not reach the server: ${err.message}</p></div>`.s;
     }

@@ -4,6 +4,7 @@ const express = require('express');
 const { transaction, getSetting, setSetting, fillAccountColours } = require('./db');
 const { exportShop, importShop } = require('./shop');
 const budget = require('./budget');
+const { unread } = require('./notifications');
 
 class BadRequest extends Error {}
 
@@ -438,6 +439,8 @@ function createApi(db) {
       deposits: Object.fromEntries(cycle.accounts.map((a) => [a.account_id, a.deposit_cents])),
       goals: list('goals'),
       goal_groups: list('goal_groups'),
+      // The bell's dot, so it's up to date whenever the data is.
+      notices: unread(db, req.login ? req.login.id : null),
     });
   });
 

@@ -34,6 +34,15 @@ function createChecker({ url = process.env.PRICE_CHECKER_URL, token = process.en
 
   return {
     on: Boolean(base),
+    // Whether it's running and takes the token: /health answers anyone, a made-up job needs the token.
+    async status() {
+      if (!base) return { set_up: false };
+      let health;
+      try { health = await call('GET', '/health'); } catch (err) { return { set_up: true, reachable: false, error: err.message }; }
+      let tokenOk = true;
+      try { await call('GET', '/jobs/status-check'); } catch (err) { if (err.status !== 404) tokenOk = false; }
+      return { set_up: true, reachable: true, token_ok: tokenOk, busy: Boolean(health && health.busy) };
+    },
     start: (job) => call('POST', '/jobs', job),
     get: (id) => call('GET', `/jobs/${encodeURIComponent(id)}`),
     cancel: (id) => call('POST', `/jobs/${encodeURIComponent(id)}/cancel`, {}),
