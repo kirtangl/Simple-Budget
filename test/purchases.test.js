@@ -188,30 +188,28 @@ test('adding, editing and deleting a once-off, with its clearing time worked out
   assert.equal((await call('GET', `/purchases/${p.id}`)).status, 404);
 }));
 
-test('the Private tick hides a once-off from the other login, but it still counts', () => withServer(async (call, { login }) => {
+test('the Private tick hides a once-off from the other login, but their deposits still include it', () => withServer(async (call, { login }) => {
   const acct = (await call('POST', '/accounts', { name: 'Everyday' })).body;
   await call('POST', '/logins', { name: 'Sam', password: 'sams-password' });
-  const secret = (await call('POST', '/purchases', { name: 'Birthday present', amount_cents: 6000, account_id: acct.id, purchased_at: hoursAgo(2), private: true, shop: 'Example Toys' })).body;
+  const secret = (await call('POST', '/purchases', { name: 'Birthday present', amount_cents: 6000, account_id: acct.id, purchased_at: hoursAgo(2), clear_mode: '48h', private: true, shop: 'Example Toys' })).body;
   await call('POST', '/purchases', { name: 'Bin bags', amount_cents: 900, account_id: acct.id, purchased_at: hoursAgo(2), owner_id: null });
   const mine = (await call('GET', '/data')).body.oneoffs;
   assert.deepEqual(mine.map((b) => b.name).sort(), ['Bin bags', 'Birthday present']);
 
   await login('sams-password');
   const theirs = (await call('GET', '/data')).body.oneoffs;
-  const hidden = theirs.find((b) => b.purchase_id === secret.id);
-  assert.equal(hidden.name, 'Private');
-  assert.equal(hidden.hidden, true);
-  assert.equal(hidden.amount_cents, 6000);
-  assert.ok(!JSON.stringify(theirs).includes('Birthday'));
+  assert.equal(theirs.some((b) => b.purchase_id === secret.id), false);
   assert.ok(theirs.some((b) => b.name === 'Bin bags'));
   assert.equal((await call('GET', `/purchases/${secret.id}`)).status, 404);
   assert.equal((await call('PATCH', `/purchases/${secret.id}`, { name: 'Peek' })).status, 404);
   assert.equal((await call('DELETE', `/purchases/${secret.id}`)).status, 404);
   // The money left the account either way, so Sam's numbers include it.
-  const a = (await call('GET', '/cycle?offset=0')).body.accounts.find((x) => x.account_id === acct.id);
+  const c = (await call('GET', '/cycle?offset=0')).body;
+  const a = c.accounts.find((x) => x.account_id === acct.id);
   assert.equal(a.oneoff_cents, 6900);
-  const cycleRows = (await call('GET', '/cycle?offset=0')).body.bills.filter((b) => b.kind === 'oneoff');
-  assert.ok(!JSON.stringify(cycleRows).includes('Birthday'));
+  assert.equal(a.pending_cents, 6000); // Keep in account still holds it, without naming it
+  assert.deepEqual(c.bills.filter((b) => b.kind === 'oneoff').map((b) => b.name), ['Bin bags']);
+  assert.ok(!JSON.stringify(c).includes('Birthday'));
 
   await login('household-pw');
   assert.equal((await call('GET', `/purchases/${secret.id}`)).body.name, 'Birthday present');

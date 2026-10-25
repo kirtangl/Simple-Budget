@@ -465,8 +465,9 @@ function createApi(db) {
       .all(budget.startOfDay(budget.addDays(cycle.end, 1)), from, from).map((p) => ({ ...p }));
   };
   // Once-offs still waiting for the bank at a moment, for Keep in account.
-  const pendingPurchases = (moment) => budget.pendingAt(db.prepare('SELECT * FROM purchases WHERE exclude = 0 AND purchased_at <= ? AND clears_at > ?')
-    .all(moment, moment).map((p) => ({ ...p })), moment);
+  // Someone else's private ones are named "a once-off", since Keep in account can say which item the account is tightest after.
+  const pendingPurchases = (moment, loginId) => budget.pendingAt(db.prepare('SELECT * FROM purchases WHERE exclude = 0 AND purchased_at <= ? AND clears_at > ?')
+    .all(moment, moment).map((p) => (canSee(p, loginId) ? { ...p } : { ...p, name: 'a once-off' })), moment);
 
   // A once-off as it will be saved: the body checked, merged over what's there, and its clearing time worked out.
   function purchaseRow(body, before) {
@@ -558,7 +559,8 @@ function createApi(db) {
       goal_groups: list('goal_groups'),
       purchase_types: list('purchase_types'),
       // This cycle's once-offs, as the Overview lists them (Budget → Once-offs).
-      oneoffs: cycle.bills.filter((b) => b.kind === 'oneoff'),
+      // Someone else's private ones are left out of the lists; the deposits still include them.
+      oneoffs: cycle.bills.filter((b) => b.kind === 'oneoff' && !b.hidden),
       // The bell's dot, so it's up to date whenever the data is.
       notices: unread(db, req.login ? req.login.id : null),
     });
@@ -581,13 +583,13 @@ function createApi(db) {
     // with the once-offs the bank hasn't taken yet at that moment.
     const heldOn = offset === 0 ? now : cycle.cycle.start;
     const moment = offset === 0 ? new Date().toISOString() : budget.startOfDay(heldOn);
-    const held = new Map(budget.heldEstimates(rows, accounts, { today: heldOn, anchor, payCycle: pc, pending: pendingPurchases(moment) }).map((h) => [h.account_id, h]));
+    const held = new Map(budget.heldEstimates(rows, accounts, { today: heldOn, anchor, payCycle: pc, pending: pendingPurchases(moment, loginOf(req)) }).map((h) => [h.account_id, h]));
     cycle.accounts.forEach((a) => {
       const h = held.get(a.account_id);
       Object.assign(a, { held_cents: h?.held_cents ?? 0, low_on: h?.low_on ?? null, low_after: h?.low_after ?? null, ahead: h?.ahead ?? [],
         pending_cents: h?.pending_cents ?? 0 });
     });
-    res.json({ offset, held_on: heldOn, ...cycle });
+    res.json({ offset, held_on: heldOn, ...cycle, bills: cycle.bills.filter((b) => !b.hidden) });
   });
 
   // Month-by-month totals for the next `months` months (Analytics → Annual trends).

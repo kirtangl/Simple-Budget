@@ -822,7 +822,7 @@
               ${other ? html`<option value="other" selected>${other.name}</option>` : ''}
               <option value="mine" ${mine && !other ? raw('selected') : ''}>Mine</option></select></div>
             <div class="field"><label class="check o-check"><input type="checkbox" name="private" ${p.private ? raw('checked') : ''}> Private</label>
-              <div class="hint">Others see "Private" and the amount only.</div></div>` : ''}
+              <div class="hint">Hidden from the other logins. Their deposits still include it.</div></div>` : ''}
           <div class="field full"><label class="check"><input type="checkbox" name="exclude" data-toggle="#o-goal-row" ${p.exclude ? raw('checked') : ''}> Don't count in expenses</label>
             <div class="hint">Already covered, like a pre-order paid from a goal. It's kept as a record and doesn't change Extra or Keep in account.</div></div>
           <div class="field full" id="o-goal-row" ${p.exclude ? '' : raw('hidden')}><label for="o-goal">Paid from goal (optional)</label>
