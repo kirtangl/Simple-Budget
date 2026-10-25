@@ -110,6 +110,12 @@ test('deposit settings are saved and used', () => withServer({}, async (call) =>
   assert.equal(r.status, 400);
   r = await call('PUT', '/settings', { rounding: 'up7' });
   assert.equal(r.status, 400);
+  // An account's own rounding and buffer win over the household's.
+  r = await call('PATCH', `/accounts/${acct.id}`, { rounding: 'exact', buffer_percent: 0 });
+  assert.equal(r.status, 200);
+  assert.equal((await call('GET', '/cycle?offset=0')).body.accounts[0].deposit_cents, 30100);
+  assert.equal((await call('PATCH', `/accounts/${acct.id}`, { buffer_percent: 21 })).status, 400);
+  assert.equal((await call('PATCH', `/accounts/${acct.id}`, { rounding: 'up7' })).status, 400);
 }));
 
 test('backup round trip restores everything with the same numbers', () => withServer({}, async (call) => {

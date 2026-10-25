@@ -149,6 +149,50 @@ function optionsAt(p, list, match) {
   return out;
 }
 
+// How well a store's search result fits a product, so the closest comes first: the product's
+// words in its name (the brand too: CSR Brown Sugar over White Sugar), the words of what it's
+// matched to at other stores, a little less for each word it adds (Dark Brown Sugar), less for
+// something else made from it (chicken seasoning isn't chicken), and less the further its size is
+// from the product's (by ratio: 430 g is closer to 500 g than 1 kg is). The stores are still
+// searched for the name alone.
+const OTHER_THING = new Set(['seasoning', 'stock', 'marinade', 'flavoured', 'flavored', 'mix', 'sauce', 'gravy', 'powder', 'chip', 'crisp',
+  'cracker', 'juice', 'cordial', 'syrup', 'essence', 'soup', 'noodle', 'dip', 'bite', 'nugget', 'snack', 'bar', 'biscuit', 'cake', 'baby', 'pouch', 'pet', 'dog', 'cat']);
+const stemOf = (w) => (w.length > 3 ? w.replace(/(?:es|s)$/, '') : w);
+const stemsOf = (s) => [...wordsOf(s)].map(stemOf);
+function relevance(p, r, { refs = [], size = null } = {}) {
+  const want = stemsOf(p.name);
+  const got = new Set(stemsOf(r.name));
+  let score = want.length ? (3 * want.filter((w) => got.has(w)).length) / want.length : 0;
+  const ref = [...new Set(refs.flatMap((n) => stemsOf(bareName(n))))];
+  if (ref.length) score += ref.filter((w) => got.has(w)).length / ref.length;
+  if ([...got].some((w) => OTHER_THING.has(w) && !want.includes(w))) score -= 1.5;
+  // Each word it has that the product (and its other matches) doesn't, like Dark in Dark Brown Sugar.
+  const extra = [...got].filter((w) => !want.includes(w) && !ref.includes(w)).length;
+  score -= Math.min(0.8, extra * 0.2);
+  if (p.sold_by === 'weight') return score + (r.sold === 'each' || r.sold === 'kg' ? 1 : 0);
+  const own = size || (p.size && MEASURE[p.unit] ? measureOf(`${p.size}${p.unit}`) : null);
+  if (own) {
+    const m = measureOf(r.size) || measureOf(r.name);
+    if (!m) score -= 0.3;
+    else if (m[0] !== own[0]) score -= 0.8;
+    else score -= Math.min(1.5, Math.abs(Math.log(m[1] / own[1])));
+  }
+  return score;
+}
+
+// A store's product picture: only from the stores' own image servers, over https.
+const IMAGE_HOSTS = /(^|\.)(woolworths\.media|woolworths\.com\.au|coles\.com\.au|aldi\.cx|aldi\.com\.au)$/i;
+const imageUrl = (v) => {
+  try {
+    const u = new URL(String(v || ''));
+    return u.protocol === 'https:' && IMAGE_HOSTS.test(u.hostname) ? u.href : null;
+  } catch { return null; }
+};
+// A small picture the browser made from it when the match was picked: a JPEG, PNG or WebP as a
+// data address, up to 60 KB.
+const IMAGE_DATA = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+const imageData = (v) => (typeof v === 'string' && v.length <= 80000 && IMAGE_DATA.test(v) ? v : null);
+
 // Pricing by weight or volume needs a size it can be worked out from.
 function pricePer(per, size, unit) {
   if (!(per in PRICE_PER)) throw new BadRequest(`The price should be per ${Object.keys(PRICE_PER).join(', ')}.`);
@@ -162,14 +206,19 @@ const body = (req) => (req.body && typeof req.body === 'object' && !Array.isArra
 // What a store's result costs, priced the way the product is. Loose fruit and veg (sold each, like
 // a banana at Woolworths, or by the kilo, like one at Aldi) with a price per kg is priced by
 // weight: per kg or 100 g (L or 100 mL) as the product is, or for its size when it's priced each
-// with a weight, like 1 kg of bananas at $4.50/kg = $4.50. Anything else costs its own price.
+// with a weight, like 1 kg of bananas at $4.50/kg = $4.50. Something counted (2 onions) that a
+// store only prices by the kilo is priced for what one weighs (about 200 g at $3.49/kg = $0.70).
+// Anything else costs its own price.
 const PER_KG_SHARE = { kg: 1, '100g': 0.1, L: 1, '100mL': 0.1 };
 const GRAMS = { g: 1, kg: 1000, mL: 1, L: 1000 };
 function priceFor(p, r) {
   const own = { cents: r.price_cents, was: r.was_cents || null };
-  const loose = (r.sold === 'each' || r.sold === 'kg') && Number.isInteger(r.per_kg_cents) && r.per_kg_cents > 0;
+  const perKg = Number.isInteger(r.per_kg_cents) && r.per_kg_cents > 0;
+  const byKilo = r.sold === 'kg';
+  const loose = perKg && (r.sold === 'each' || byKilo);
   if (!loose || !p) return own;
-  const share = PER_KG_SHARE[p.price_per] ?? (p.size > 0 && GRAMS[p.unit] ? (p.size * GRAMS[p.unit]) / 1000 : null);
+  const share = PER_KG_SHARE[p.price_per] ?? (p.size > 0 && GRAMS[p.unit] ? (p.size * GRAMS[p.unit]) / 1000
+    : byKilo && p.each_g > 0 ? p.each_g / 1000 : null);
   if (!share) return own;
   const cents = Math.round(r.per_kg_cents * share);
   if (!(cents > 0 && cents <= 100000)) return own;
@@ -210,7 +259,7 @@ function createShop(db, { checker = null } = {}) {
   function productsView() {
     const prices = all('SELECT * FROM shop_prices');
     const spots = all('SELECT * FROM shop_spots');
-    const matches = all('SELECT * FROM shop_matches');
+    const matches = all('SELECT product_id, store_id, url, name, size, missing_at, length(image) AS image_v FROM shop_matches');
     const options = all('SELECT * FROM shop_options');
     const notSold = all('SELECT * FROM shop_not_sold');
     return all('SELECT * FROM shop_products ORDER BY name COLLATE NOCASE, size').map((p) => {
@@ -226,7 +275,7 @@ function createShop(db, { checker = null } = {}) {
         checked: Object.fromEntries(mine.map((x) => [x.store_id, x.checked_at])),
         was: Object.fromEntries(mine.filter((x) => x.was_cents).map((x) => [x.store_id, x.was_cents])),
         matches: Object.fromEntries(matches.filter((x) => x.product_id === p.id)
-          .map((x) => [x.store_id, { url: x.url, name: x.name, size: x.size, missing_at: x.missing_at }])),
+          .map((x) => [x.store_id, { url: x.url, name: x.name, size: x.size, missing_at: x.missing_at, ...(x.image_v ? { image_v: x.image_v } : {}) }])),
         options: opts,
         not_sold: Object.fromEntries(notSold.filter((x) => x.product_id === p.id).map((x) => [x.store_id, x.at])),
         spots: Object.fromEntries(spots.filter((x) => x.product_id === p.id)
@@ -669,8 +718,13 @@ function createShop(db, { checker = null } = {}) {
       const m = own && measureOf(r.size);
       return Boolean(m && m[0] === own[0] && Math.abs(m[1] - own[1]) <= own[1] * 0.02);
     };
-    return list.map((r, i) => ({ ...r, i, cost_cents: priceFor(p, r).cents, near: near(r) }))
-      .sort((a, b) => Number(b.near) - Number(a.near) || a.i - b.i);
+    // What it's matched to at other stores helps find it at the next.
+    const others = p ? all("SELECT name, size FROM shop_matches WHERE product_id = ? AND url != ''", p.id) : [];
+    const size = own || others.map((m) => measureOf(m.size)).find(Boolean) || null;
+    const refs = others.map((m) => m.name);
+    return list.map((r, i) => ({ ...r, i, cost_cents: priceFor(p, r).cents, near: near(r),
+      score: p ? Math.round(relevance(p, r, { refs, size }) * 100) / 100 : 0 }))
+      .sort((a, b) => b.score - a.score || Number(b.near) - Number(a.near) || a.i - b.i);
   }
 
   // The checker's job as the app sees it: stores by their ids here.
@@ -886,6 +940,7 @@ function createShop(db, { checker = null } = {}) {
     if (!meta.final) meta.results = (await checker.get(b.job)).results;
     const results = meta.results || {};
     const picks = b.picks && typeof b.picks === 'object' ? Object.entries(b.picks) : [];
+    const images = b.images && typeof b.images === 'object' ? b.images : {};
     transaction(db, () => {
       for (const [sid, index] of picks) {
         const key = meta.stores[Number(sid)];
@@ -893,15 +948,18 @@ function createShop(db, { checker = null } = {}) {
         // None of them: remembered (an empty address), so it isn't asked about again until found anew.
         if (index === null) {
           db.prepare(`INSERT INTO shop_matches (product_id, store_id, url, name, size, missing_at) VALUES (?, ?, '', '', NULL, NULL)
-            ON CONFLICT (product_id, store_id) DO UPDATE SET url = '', name = '', size = NULL, missing_at = NULL`).run(id, Number(sid));
+            ON CONFLICT (product_id, store_id) DO UPDATE SET url = '', name = '', size = NULL, missing_at = NULL, image = NULL`).run(id, Number(sid));
           markNotSold(id, Number(sid));
           continue;
         }
         const r = (results[key] || [])[int(index, 0, 1000, 'The pick')];
         if (!r) throw new BadRequest('That result is not there.');
-        db.prepare(`INSERT INTO shop_matches (product_id, store_id, url, name, size, missing_at) VALUES (?, ?, ?, ?, ?, NULL)
-          ON CONFLICT (product_id, store_id) DO UPDATE SET url = excluded.url, name = excluded.name, size = excluded.size, missing_at = NULL`)
-          .run(id, Number(sid), String(r.url).slice(0, 500), String(r.name).slice(0, 200), r.size ? String(r.size).slice(0, 40) : null);
+        // Its picture, as the browser made it small; kept when the same listing is picked again.
+        const was = one('SELECT url, image FROM shop_matches WHERE product_id = ? AND store_id = ?', id, Number(sid));
+        const image = imageData(images[sid]) || (was && was.url === r.url ? was.image : null);
+        db.prepare(`INSERT INTO shop_matches (product_id, store_id, url, name, size, missing_at, image) VALUES (?, ?, ?, ?, ?, NULL, ?)
+          ON CONFLICT (product_id, store_id) DO UPDATE SET url = excluded.url, name = excluded.name, size = excluded.size, missing_at = NULL, image = excluded.image`)
+          .run(id, Number(sid), String(r.url).slice(0, 500), String(r.name).slice(0, 200), r.size ? String(r.size).slice(0, 40) : null, image);
         const price = priceFor(p, r);
         savePrice(id, Number(sid), price.cents, price.was);
         fillWeight(p, r);
@@ -912,6 +970,31 @@ function createShop(db, { checker = null } = {}) {
       }
     });
     res.json(productView(id));
+  });
+
+  // A store's product picture for Find prices, fetched by the price-checker (the app itself has no
+  // way out to the internet) and kept for a while, since the same ones are looked at again.
+  const pictures = new Map();
+  router.get('/picture', async (req, res) => {
+    const url = imageUrl(req.query.u);
+    if (!url) return res.status(400).json({ error: "That's not a store's picture." });
+    needChecker();
+    let pic = pictures.get(url);
+    if (!pic) {
+      pic = await checker.image(url);
+      pictures.set(url, pic);
+      if (pictures.size > 300) pictures.delete(pictures.keys().next().value);
+    }
+    res.set({ 'Content-Type': pic.type, 'Cache-Control': 'private, max-age=86400' }).send(pic.body);
+  });
+
+  // A product's picture at a store, kept with its match.
+  router.get('/products/:id/picture/:store', (req, res) => {
+    const m = one('SELECT image FROM shop_matches WHERE product_id = ? AND store_id = ?', Number(req.params.id), Number(req.params.store));
+    const data = m && imageData(m.image);
+    if (!data) return res.status(404).json({ error: 'No picture.' });
+    const [, type, b64] = /^data:([^;]+);base64,(.*)$/.exec(data);
+    res.set({ 'Content-Type': type, 'Cache-Control': 'private, max-age=604800' }).send(Buffer.from(b64, 'base64'));
   });
 
   // The key the browser helper (the Coles button) uses, made the first time it's asked for.
@@ -1038,7 +1121,7 @@ const SHOP_TABLES = {
   products: ['shop_products', ['id', 'name', 'size', 'unit', 'price_per', 'sold_by', 'step_g', 'each_g', 'setup']],
   prices: ['shop_prices', ['product_id', 'store_id', 'price_cents', 'checked_at', 'was_cents']],
   // Each product's own listing at a store, for automatic prices, and its other size and close match there.
-  matches: ['shop_matches', ['product_id', 'store_id', 'url', 'name', 'size', 'missing_at']],
+  matches: ['shop_matches', ['product_id', 'store_id', 'url', 'name', 'size', 'missing_at', 'image']],
   options: ['shop_options', ['product_id', 'store_id', 'kind', 'name', 'size', 'url', 'price_cents', 'was_cents', 'seen_at']],
   spots: ['shop_spots', ['product_id', 'location_id', 'aisle', 'section_id', 'missing']],
   not_sold: ['shop_not_sold', ['product_id', 'store_id', 'at']],
@@ -1073,4 +1156,4 @@ function importShop(db, data) {
   return { products: db.prepare('SELECT count(*) AS n FROM shop_products').get().n, skipped };
 }
 
-module.exports = { createShop, createHelper, exportShop, importShop, priceDay, UNITS };
+module.exports = { createShop, createHelper, exportShop, importShop, priceDay, priceFor, relevance, imageUrl, UNITS };

@@ -10,6 +10,11 @@ const { Challenge } = require('../lib/jobs');
 const HOME = 'https://www.aldi.com.au/';
 const API = 'https://asl.api.aldi.com.au/commerce';
 const urlOf = (p) => `${HOME}product/${p.urlSlugText || 'item'}-${p.sku}`;
+// Its picture's address has the width and name to fill in: a small one, 120 pixels wide.
+const imageOf = (p) => {
+  const a = Array.isArray(p.assets) ? p.assets.find((x) => x && typeof x.url === 'string') : null;
+  return a ? a.url.replace(/\{width\}/g, '120').replace(/\{slug\}/g, encodeURIComponent(p.urlSlugText || 'item')) : null;
+};
 
 const toResult = (p) => p && p.price && result({
   name: [p.brandName, p.name].filter(Boolean).join(' '),
@@ -18,8 +23,9 @@ const toResult = (p) => p && p.price && result({
   was: p.price.wasPriceDisplay,
   unit: p.price.comparisonDisplay,
   url: urlOf(p),
-  // Loose fruit and veg are priced by the kilo.
-  sold: String(p.quantityUnit || '').toLowerCase() === 'kg' ? 'kg' : 'pack',
+  // Loose fruit and veg are priced by the kilo (its size says "per kg" when its unit doesn't).
+  sold: String(p.quantityUnit || '').toLowerCase() === 'kg' || /^\s*(per\s*)?kg\s*$/i.test(p.sellingSize || '') ? 'kg' : 'pack',
+  image: imageOf(p),
 });
 
 function create(fetchImpl = globalThis.fetch) {

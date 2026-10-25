@@ -9,7 +9,7 @@
   const $prompt = document.getElementById('prompt');
   const $promptForm = document.getElementById('prompt-form');
 
-  const state = { data: null, offset: 0, showIncomes: false, showUnused: false, calc: { amount: '', rate: '6', years: '30', frequency: 'monthly', limit: '70', result: null }, expenseQuery: '', expenseAccount: '', expenseWhen: '', expenseSort: 'due', expenseGroup: '', billAccount: '', billWhen: '' };
+  const state = { data: null, offset: 0, showIncomes: false, showUnused: false, calc: { amount: '', rate: '6', years: '30', frequency: 'monthly', limit: '70', result: null }, expenseQuery: '', expenseAccount: '', expenseWhen: '', expenseSort: 'due', expenseGroup: '', billAccount: '', billWhen: '', shopOpen: new Set() };
 
   // ---------- HTML helpers (everything interpolated is escaped unless raw) ----------
 
@@ -98,20 +98,12 @@
   const subcategory = (id) => state.data.categories.flatMap((c) => c.subcategories).find((s) => s.id === id);
   const bankTip = (a) => [a.institution, a.bsb && `BSB ${a.bsb}`, a.account_number && `Acc ${a.account_number}`].filter(Boolean).join('\n');
 
-  const HELD_LABELS = { year: 'Over the next 12 months', financial: 'Up to the end of the financial year (30 June)', calendar: 'Up to the end of the calendar year (31 December)' };
   const ROUNDING_LABELS = { exact: 'Exact (no rounding)', up5: 'Round up to the next $5', up10: 'Round up to the next $10' };
 
   // The server works out the deposits, and which bills and loans they cover this cycle,
   // the same way the Overview does, so every page shows the same numbers.
   const inDeposit = (e) => Boolean(e.in_deposit);
   const depositFor = (accountId) => (state.data.deposits && state.data.deposits[accountId]) || 0;
-
-  function depositNote() {
-    const s = state.data.settings;
-    const parts = [s.rounding === 'exact' ? 'not rounded' : s.rounding === 'up5' ? 'rounded up to $5' : 'rounded up to $10'];
-    if (s.buffer_percent) parts.push(`plus ${s.buffer_percent}% buffer`);
-    return parts.join(', ');
-  }
 
   // ---------- API ----------
 
@@ -449,6 +441,72 @@
     <div class="sec-tabs ov-tabs" role="tablist" aria-label="Overview"><a role="tab" href="#/overview" aria-selected="${active === 'pay' ? 'true' : 'false'}" tabindex="${active === 'pay' ? '0' : '-1'}">This ${cycleWord()}</a>
       <a role="tab" href="#/overview/analytics" aria-selected="${active === 'analytics' ? 'true' : 'false'}" tabindex="${active === 'analytics' ? '0' : '-1'}">Analytics</a></div>`;
 
+  const DEPOSIT_KEY = [['out', 'Bills that have come out'], ['left', 'Bills still to come out'], ['sav', 'Savings (they stay in the account)'],
+    ['extra', 'Extra: more than the bills and savings'], ['over', "Over: the transfer doesn't cover them"]];
+  // Keep in account shows rounded up to the whole dollar; its popup shows the exact amount.
+  const keepUp = (cents) => Math.ceil((cents || 0) / 100) * 100;
+  const dayText = (d) => fmtDate(d, d.slice(0, 4) !== state.data.settings.today.slice(0, 4));
+  // What "Keep in account" is made of, as plain lines (the hover, and the popup on a tap).
+  function keepParts(c, r) {
+    const when = c.cycle.is_current ? 'today' : `on ${fmtDate(c.held_on)}, once that deposit is in`;
+    const ahead = Math.max(0, r.held_cents - r.remaining_cents);
+    return {
+      when,
+      lines: [
+        [`Still to come out ${thisCycle()}`, r.remaining_cents],
+        ...(ahead ? [['Held for bills further ahead', ahead]] : []),
+      ],
+      tight: r.held_cents > r.deposit_cents,
+      low: r.held_cents && r.low_on ? `Tightest on ${dayText(r.low_on)}, after ${r.low_after}: the account gets down to $0 if it holds exactly this.` : '',
+    };
+  }
+  // A styled card shown on hover (on a computer); tapping still opens the full popup.
+  const keepCard = (c, r) => {
+    const k = keepParts(c, r);
+    return html`<span class="hover-card keep-card" role="tooltip">
+      <span class="hc-title">Keep in account · ${k.when}</span>
+      <span class="hc-row"><span>Exact amount</span><b class="num">${moneyFmt.format(r.held_cents / 100)}</b></span>
+      ${k.lines.map(([label, cents]) => html`<span class="hc-row"><span>${label}</span><b class="num">${money(cents)}</b></span>`)}
+      ${k.tight ? html`<span class="hc-warn">More than this ${cycleWord()}'s ${money(r.deposit_cents)} transfer, so none of it is spare.</span>` : ''}
+      ${k.low ? html`<span class="hc-note">${k.low}</span>` : ''}
+      ${r.ahead.length ? html`<span class="hc-sub">Big bills ahead</span>
+        ${r.ahead.slice(0, 5).map((b) => html`<span class="hc-row"><span>${b.name} <span class="muted">· ${dayText(b.date)}</span></span><b class="num">${money(b.amount_cents)}</b></span>`)}
+        ${r.ahead.length > 5 ? html`<span class="hc-note">and ${r.ahead.length - 5} more</span>` : ''}` : ''}
+      <span class="hc-foot">Savings aren't included, so you can take this pay's out. Anything above this is spare. Click for more.</span>
+    </span>`;
+  };
+  // An account's buffer beside its transfer, as a small "+10%" with the details on hover.
+  function bufferTag(r) {
+    const { rounding, buffer_percent: pct } = r.rules || {};
+    if (!pct) return '';
+    const up = { up5: '$5', up10: '$10' }[rounding];
+    return html` <span class="buf-tag" tabindex="0">+${pct}%<span class="hover-card" role="tooltip">
+      <span class="hc-title">Buffer</span><span class="hc-note">This transfer has a ${pct}% buffer on top of the account's bills and savings${up ? `, then it's rounded up to the next ${up}` : ''}. Change it by editing the account.</span></span></span>`;
+  }
+  function keepDetails(id) {
+    const c = state.cycleData;
+    const r = c && c.accounts.find((x) => x.account_id === id);
+    const a = account(id);
+    if (!r || !a) return;
+    const k = keepParts(c, r);
+    openForm({
+      title: null,
+      noActions: true,
+      cls: 'keep-pop',
+      body: html`
+        ${popHead('Keep in account', {}, html`<div class="muted small">${a.name} · ${k.when}</div>`)}
+        <div class="keep-big ${k.tight ? 'tight' : ''}"><b class="num">${moneyFmt.format(r.held_cents / 100)}</b></div>
+        <p class="muted small">So every bill in the next 12 months can be paid with the deposits still to come.</p>
+        <p class="keep-sav small">Savings aren't included. Take this ${cycleWord()}'s savings out and keep at least this much, and every bill is still covered.</p>
+        <ul class="list keep-list">${k.lines.map(([label, cents]) => html`<li><span class="grow">${label}</span><b class="num">${money(cents)}</b></li>`)}</ul>
+        ${k.tight ? html`<p class="keep-warn">That's more than this ${cycleWord()}'s ${money(r.deposit_cents)} transfer, so none of this deposit is spare. The rest needs to be in the account already.</p>` : ''}
+        ${k.low ? html`<p class="small">${k.low}</p>` : ''}
+        ${r.ahead.length ? html`<h3 class="keep-h">Big bills ahead</h3>
+          <ul class="list keep-list">${r.ahead.map((b) => html`<li><span class="grow">${b.name}<span class="muted"> · ${dayText(b.date)}</span></span><b class="num">${money(b.amount_cents)}</b></li>`)}</ul>` : ''}
+        <p class="muted small">Anything in the account above this is spare, so you can borrow it. Later deposits don't top it back up, so check again next ${cycleWord()}.</p>`,
+    });
+  }
+
   async function renderOverview() {
     const c = await api('GET', `/cycle?offset=${state.offset}`);
     const t = c.totals;
@@ -459,24 +517,36 @@
     const isUsed = ({ a, r }) => r.deposit_cents || r.bills_cents || r.savings_cents || r.held_cents || saved.has(a.id);
     const used = rows.filter(isUsed);
     const unused = rows.filter((x) => !isUsed(x));
-    // Plain wording, so no (i) is needed: what to transfer, what's still to come out, and what to keep in the account.
+    state.cycleData = c;
+    // Per account: the transfer, what to keep in the account, and a bar of where this cycle's transfer goes
+    // (bills out, bills still to come, savings, and what's extra).
     const depositRow = (a, r, i) => {
       const need = r.bills_cents + r.savings_cents;
+      const scale = Math.max(r.deposit_cents, need) || 1;
+      const seg = (cents, cls, tip) => (cents > 0 ? html`<span class="${cls}" style="width:${((cents / scale) * 100).toFixed(2)}%" title="${tip}"></span>` : '');
+      const over = r.spare_cents < 0;
+      const tight = r.held_cents > r.deposit_cents;
       return html`
-            <li class="acct-line deposit clickable" data-action="account-details" data-id="${a.id}" style="--acct:${colorFor(a, i)}">
-              <div class="grow">
-                <div class="dep-top"><button class="acct-btn" data-action="account-details" data-id="${a.id}" data-tip="${bankTip(a) || 'No bank details yet'}">${a.name}</button>
-                  <span class="dep-amt"><span class="muted">Transfer</span> <b class="num">${money(r.deposit_cents)}</b></span></div>
-                <div class="dep-bar" title="${r.bills_cents ? `${money(r.paid_cents)} of ${money(r.bills_cents)} in bills has come out` : `No bills from this account ${thisCycle()}`}">${progress(r.bills_cents ? r.paid_cents : 1, r.bills_cents || 1)}</div>
-                <div class="figures">
-                  <span class="figure" title="This ${cycleWord()}'s bills from this account that haven't come out yet (savings not included)"><span class="label">Still to come out</span> <b class="num">${money(r.remaining_cents)}</b></span>
-                  <span class="figure" title="${c.cycle.is_current ? 'About what should be in the account today' : `About what should be in the account on ${fmtDate(c.held_on, true)}, once that deposit is in`} so every bill ${HELD_LABELS[state.data.settings.held_basis].toLowerCase()} can be paid, with the deposits still to come. Savings not included."><span class="label">Keep in account</span> <b class="num">${money(r.held_cents)}</b></span>
-                  ${state.data.settings.buffer_percent ? html`<span class="figure muted">incl. ${state.data.settings.buffer_percent}% buffer</span>` : ''}
-                  ${saved.has(a.id) ? html`<span class="figure goal-saved" title="Saved so far in ${saved.get(a.id).goals.map((g) => g.name).join(', ')}"><span class="label">Goals</span> <b class="num">${money(saved.get(a.id).cents)} saved</b></span>` : ''}
-                </div>
-                ${r.spare_cents < 0 ? html`<div class="dep-warn">${r.savings_cents ? 'Bills + savings are' : 'Bills are'} ${money(need)}, ${money(-r.spare_cents)} more than this transfer</div>` : ''}
+            <li class="acct-line deposit dep2 clickable" data-action="account-details" data-id="${a.id}" style="--acct:${colorFor(a, i)}"><div class="grow">
+              <div class="dep-head">
+                <div class="grow"><div class="dep-name"><span class="sq" aria-hidden="true"></span><button class="acct-btn" data-action="account-details" data-id="${a.id}" data-tip="${bankTip(a) || 'No bank details yet'}">${a.name}</button></div>
+                  <div class="dep-per"><b class="num">${money(r.deposit_cents)}</b> per pay${bufferTag(r)}</div></div>
+                <button type="button" class="dep-keep ${tight ? 'tight' : ''}" data-action="keep-details" data-id="${a.id}" aria-label="Keep ${money(keepUp(r.held_cents))} in account: show the breakdown">
+                  <b class="num">${money(keepUp(r.held_cents))}</b><span class="kl">Keep in account</span>${keepCard(c, r)}</button>
               </div>
-            </li>`;
+              <div class="dep-seg" role="img" aria-label="${money(r.paid_cents)} of bills out, ${money(r.remaining_cents)} to come, ${money(r.savings_cents)} savings, ${over ? `${money(-r.spare_cents)} over` : `${money(r.spare_cents)} extra`}">
+                ${seg(r.paid_cents, 'out', `${money(r.paid_cents)} in bills has come out`)}${seg(r.remaining_cents, 'left', `${money(r.remaining_cents)} in bills still to come out`)}${seg(r.savings_cents, 'sav', `${money(r.savings_cents)} to savings`)}${seg(r.spare_cents, 'extra', `${money(r.spare_cents)} extra`)}
+                ${over ? html`<i class="dep-end" style="left:${((r.deposit_cents / scale) * 100).toFixed(2)}%" title="The ${money(r.deposit_cents)} transfer ends here"></i>` : ''}
+              </div>
+              <div class="dep-line">
+                <span title="This ${cycleWord()}'s bills from this account that haven't come out yet (savings not included)">${r.bills_cents ? html`<b class="num left-amt">${money(r.remaining_cents)}</b> of ${money(r.bills_cents)} left` : html`<span class="muted">No bills ${thisCycle()}</span>`}</span>
+                <span class="${r.savings_cents ? 'good-text' : 'muted'}" title="Savings from this account ${thisCycle()}. They stay in the account."><b class="num">${r.savings_cents ? '+' : ''}${money(r.savings_cents)}</b> Savings</span>
+                <span class="${over ? 'neg' : r.spare_cents ? 'info-text' : 'muted'}" title="${over ? `${r.savings_cents ? 'Bills + savings are' : 'Bills are'} ${money(need)}, ${money(-r.spare_cents)} more than this transfer` : r.spare_cents ? `${money(r.spare_cents)} more than this ${cycleWord()}'s bills and savings` : `Exactly this ${cycleWord()}'s bills and savings`}"><b class="num">${over ? '−' : r.spare_cents ? '+' : ''}${money(Math.abs(r.spare_cents))}</b> ${over ? 'Over' : r.spare_cents ? 'Extra' : 'Even'}</span>
+              </div>
+              ${saved.has(a.id) ? html`<div class="figures">
+                ${saved.has(a.id) ? html`<span class="figure goal-saved" title="Saved so far in ${saved.get(a.id).goals.map((g) => g.name).join(', ')}"><span class="label">Goals</span> <b class="num">${money(saved.get(a.id).cents)} saved</b></span>` : ''}
+              </div>` : ''}
+            </div></li>`;
     };
     const empty = !state.data.expenses.length && !state.data.loans.length;
     // Savings only show as expenses when they're set to.
@@ -559,8 +629,11 @@
 
         <div class="stack">
         <section class="card">
-          <div class="card-head"><div><h2>Deposits ${thisCycle()}</h2><div class="muted head-sub">${cap(depositNote())} · <button class="linkish" data-action="edit-deposit-rules">Change</button></div></div>
-            <b class="num dep-total">${money(t.deposits_cents)}</b></div>
+          <div class="card-head dep-card-head"><div><h2>Deposits ${thisCycle()} <button type="button" class="help-q" aria-label="What the colours mean">?<span class="hover-card key-card" role="tooltip"><span class="hc-title">What the colours mean</span>
+            ${DEPOSIT_KEY.map(([cls, text]) => html`<span class="hc-key"><i class="${cls}"></i>${text}</span>`)}
+            <span class="hc-note">Keep in account turns <b class="due-text">amber</b> when it's more than the transfer.</span></span></button></h2>
+            <div class="muted head-sub">${used.length} account${used.length === 1 ? '' : 's'}</div></div>
+            <div class="dep-sum"><div class="dep-total-line"><svg class="dep-in" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><b class="num dep-total">${money(t.deposits_cents)}</b></div><div class="muted">goes in each pay</div></div></div>
           ${rows.length ? html`<ul class="list">${used.map(({ a, r, i }) => depositRow(a, r, i))}
             ${state.showUnused ? unused.map(({ a, r, i }) => depositRow(a, r, i)) : ''}</ul>
             ${unused.length ? html`<button class="linkish small" data-action="toggle-unused" aria-expanded="${state.showUnused ? 'true' : 'false'}">${state.showUnused ? 'Hide' : 'Show'} ${unused.length} unused account${unused.length === 1 ? '' : 's'}</button>` : ''}`
@@ -1306,6 +1379,14 @@
     const r = relDue(date);
     return html`${r.label ? html`<span class="rel ${r.label[1]}">${r.label[0]}</span> · ` : ''}<span class="rel-date">${r.date}</span>`;
   };
+  // A dot by the schedule: green when the bill comes out this pay, blue next pay, faint grey after that.
+  function dueDot(e) {
+    if (isSplit(e) && e.active) return html`<i class="due-dot later" title="Put aside each ${cycleWord()}" role="img" aria-label="Put aside each ${cycleWord()}"></i>`;
+    if (!e.active || !e.next_date) return html`<i class="due-dot none" aria-hidden="true"></i>`;
+    const st = state.data.settings;
+    const [cls, tip] = e.next_date <= st.cycle_end ? ['now', `Due ${thisCycle()}`] : e.next_date <= st.next_cycle_end ? ['next', `Due next ${cycleWord()}`] : ['later', 'Not due for a while'];
+    return html`<i class="due-dot ${cls}" title="${tip}" role="img" aria-label="${tip}"></i>`;
+  }
   // The short schedule for the table: "Monthly on the 14th", "Weekly on Tue", "Fortnightly, wk 1 Thu".
   function shortSchedule(e) {
     const off = e.day_offset ?? 0;
@@ -1439,7 +1520,7 @@
         ${shut ? '' : html`<ul class="exp-rows" style="--acct:${g.color}">${g.items.map((e) => html`
           <li class="clickable ${e.active ? '' : 'paused'}" data-action="edit-expense" data-id="${e.id}">
             <div class="grow"><div class="b-line1">${nameLine(e)}</div>
-              <div class="b-line2">${e.active && e.next_date ? relDueHtml(e.next_date) : e.active ? FREQ_LABELS[e.frequency] : 'Paused'}${kindOf(e) === 'saving' && savingGoalText(e) ? ` · ${savingGoalText(e)}` : ''}</div></div>
+              <div class="b-line2">${dueDot(e)}${e.active && e.next_date ? relDueHtml(e.next_date) : e.active ? FREQ_LABELS[e.frequency] : 'Paused'}${kindOf(e) === 'saving' && savingGoalText(e) ? ` · ${savingGoalText(e)}` : ''}</div></div>
             <div class="right"><div>${updBtn(e)}${amountHtml(e)}</div>${showsPerCycle(e) ? html`<div class="b-line2 num">≈ ${money(e.per_pay_cents)} ${aCycle()}</div>` : ''}</div>
           </li>`)}</ul>`}
       </section>`;
@@ -1458,7 +1539,7 @@
           <span class="r g-total ${g.deposit != null && g.total > g.deposit ? 'over' : ''}">${money(g.total)}</span></div>
           ${shut ? '' : g.items.map((e) => html`<div class="exp-tr exp-td clickable ${isToday(e) ? 'today' : ''} ${e.active ? '' : 'paused'}" role="row" style="--acct:${g.color}" data-action="edit-expense" data-id="${e.id}">
             <span class="b-cell">${nameLine(e)}</span>
-            <span class="sched">${isSplit(e) ? `${money(e.yearly_cents)} a year, spread` : shortSchedule(e)}</span>
+            <span class="sched">${dueDot(e)}${isSplit(e) ? `${money(e.yearly_cents)} a year, spread` : shortSchedule(e)}</span>
             <span>${dueHtml(e)}</span>
             <span class="r">${updBtn(e)}${amountHtml(e)}</span>
             <span class="r per num">${money(e.per_pay_cents)}</span></div>`)}
@@ -2813,28 +2894,6 @@
       </section>`;
   }
 
-  // Popup version of the Settings → General deposit rules, opened from the Overview.
-  function depositRulesForm() {
-    const s = state.data.settings;
-    openForm({
-      title: 'Deposit rounding',
-      body: html`
-        <p class="muted small">Each account's deposit is the per-cycle total of its bills plus the buffer, then rounded up as a whole, so it's always a round number.
-          For example $301 with a 10% buffer is $331.10, and rounded up to $10 that's $340.</p>
-        <div class="fields">
-          <div class="field"><label for="m-rounding">Rounding</label><select id="m-rounding" name="rounding">
-            ${Object.entries(ROUNDING_LABELS).map(([k, v]) => html`<option value="${k}" ${k === s.rounding ? raw('selected') : ''}>${v}</option>`)}</select></div>
-          <div class="field"><label for="m-buffer">Buffer (%)</label><input id="m-buffer" name="buffer_percent" type="number" inputmode="numeric" min="0" max="20" step="1" value="${s.buffer_percent}">
-            <div class="hint">0 to 20.</div></div>
-        </div>`,
-      onSave: async (form) => {
-        const f = form.elements;
-        await api('PUT', '/settings', { rounding: f.rounding.value, buffer_percent: Number(f.buffer_percent.value || 0) });
-        await reload();
-      },
-    });
-  }
-
   function settingsIncome() {
     const today = state.data.settings.today;
     const now = state.data.incomes.filter((i) => (!i.end_date || i.end_date >= today) && (!i.start_date || i.start_date <= today));
@@ -2919,6 +2978,7 @@
 
   function accountForm(a = {}) {
     const i = a.id ? state.data.accounts.indexOf(a) : state.data.accounts.length;
+    const s = state.data.settings;
     openForm({
       title: a.id ? 'Edit account' : 'Add account',
       body: html`
@@ -2933,9 +2993,18 @@
           <div class="field"><label for="a-acc">Account number</label><input id="a-acc" name="account_number" inputmode="numeric" data-input="account-number" maxlength="30" autocomplete="off" value="${a.account_number || ''}">
             <div class="hint">Numbers only.</div></div>
           <div class="field"><label for="a-color">Colour</label><input id="a-color" type="color" name="color" value="${colorFor(a, i)}"></div>
+          <div class="field full form-sub"><b>Deposit</b><div class="hint">This account's deposit is the per-${cycleWord()} total of its bills and savings plus the buffer, then rounded up,
+            so it's a round number. For example $301 with a 10% buffer is $331.10, and rounded up to $10 that's $340.</div></div>
+          <div class="field"><label for="a-rounding">Rounding</label><select id="a-rounding" name="rounding">
+            ${Object.entries(ROUNDING_LABELS).map(([k, v]) => html`<option value="${k}" ${k === (a.rounding ?? s.rounding) ? raw('selected') : ''}>${v}</option>`)}</select></div>
+          <div class="field"><label for="a-buffer">Buffer (%)</label><input id="a-buffer" name="buffer_percent" type="number" inputmode="numeric" min="0" max="20" step="1" value="${a.buffer_percent ?? s.buffer_percent}">
+            <div class="hint">0 to 20. Extra on top, for prices that go up.</div></div>
         </div>`,
       onSave: async (form) => {
         const body = Object.fromEntries(['name', 'nickname', 'institution', 'type', 'owner', 'bsb', 'account_number', 'color'].map((k) => [k, val(form, k)]));
+        const pct = Number(form.elements.buffer_percent.value || 0);
+        if (!Number.isInteger(pct) || pct < 0 || pct > 20) throw new Error('The buffer needs to be a whole number from 0 to 20.');
+        Object.assign(body, { rounding: form.elements.rounding.value, buffer_percent: pct });
         if (!body.name) throw new Error('Please give the account a name.');
         if (body.bsb && !/^\d{3}-\d{3}$/.test(body.bsb)) throw new Error('The BSB needs 6 digits, like 062-000.');
         if (body.account_number && !/^\d{1,20}$/.test(body.account_number)) throw new Error('The account number can only have numbers, up to 20 digits.');
@@ -3090,24 +3159,6 @@
         </form>
         <p class="hint">${s.pay_frequency === 'monthly' ? `Each cycle starts on the ${ordinal(Number(s.pay_anchor_date.slice(8)))} of the month.`
           : `Currently each cycle starts on a ${weekdayFor(0, true)}.`} Usually this is a pay day. Weekly and fortnightly bills are counted from it.</p>
-      </div>
-      <div class="card">
-        <h2>Deposits</h2>
-        <p class="muted small">Each account's deposit is the per-cycle total of its bills plus the buffer, then rounded up as a whole, so it's always a round number.
-          For example $301 with a 10% buffer is $331.10, and rounded up to $10 that's $340.</p>
-        <form id="deposit-form">
-          <div class="fields">
-            <div class="field"><label for="rounding">Rounding</label><select id="rounding" name="rounding">
-              ${Object.entries(ROUNDING_LABELS).map(([k, v]) => html`<option value="${k}" ${k === s.rounding ? raw('selected') : ''}>${v}</option>`)}</select></div>
-            <div class="field"><label for="buffer">Buffer (%)</label><input id="buffer" name="buffer_percent" type="number" inputmode="numeric" min="0" max="20" step="1" value="${s.buffer_percent}">
-              <div class="hint">0 to 20. Adds extra on top of every account's deposit.</div></div>
-            <div class="field full"><label for="held">"Should hold" looks ahead</label><select id="held" name="held_basis">
-              ${Object.entries(HELD_LABELS).map(([k, v]) => html`<option value="${k}" ${k === s.held_basis ? raw('selected') : ''}>${v}</option>`)}</select>
-              <div class="hint">A guide on the Overview to how much each account should have in it today, so that with the deposits still to come,
-                every bill in that time can be paid. Savings aren't included. 12 months covers every yearly bill; the year-end options ignore bills after it.</div></div>
-          </div>
-          <button class="primary" type="submit">Save</button>
-        </form>
       </div>
       <div class="card">
         <h2>Backup and restore</h2>
@@ -3840,6 +3891,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
   const actions = {
     cycle: (el) => { const step = Number(el.dataset.step); state.offset = step === 0 ? 0 : state.offset + step; render(); },
     'account-details': (el) => showAccountDetails(Number(el.dataset.id)),
+    'keep-details': (el) => keepDetails(Number(el.dataset.id)),
     'copy-account': (el) => {
       const a = account(Number(el.dataset.id));
       copyText([a.bsb, a.account_number].filter(Boolean).join(' '), 'Bank details');
@@ -3968,7 +4020,6 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     'bill-details': async (el) => billDetails(Number(el.dataset.id), el.dataset),
     'toggle-incomes': () => { state.showIncomes = !state.showIncomes; render(); },
     'toggle-unused': () => { state.showUnused = !state.showUnused; render(); },
-    'edit-deposit-rules': () => depositRulesForm(),
     'edit-income': (el) => incomeForm(findById(state.data.incomes, el)),
     'new-account': () => accountForm(),
     'edit-account': (el) => accountForm(findById(state.data.accounts, el)),
@@ -4210,17 +4261,13 @@ sudo docker compose up -d --build</pre>${s.extra}`;
   });
 
   document.addEventListener('submit', async (ev) => {
-    if (ev.target.id !== 'cycle-form' && ev.target.id !== 'deposit-form') return;
+    if (ev.target.id !== 'cycle-form') return;
     ev.preventDefault();
     const f = ev.target.elements;
     try {
-      if (ev.target.id === 'cycle-form') {
-        await api('PUT', '/settings', { pay_anchor_date: f.pay_anchor_date.value, pay_frequency: f.pay_frequency.value,
-          pay_custom_days: f.pay_frequency.value === 'custom' ? Number(f.pay_custom_days.value) : null });
-        state.offset = 0;
-      } else {
-        await api('PUT', '/settings', { rounding: f.rounding.value, buffer_percent: Number(f.buffer_percent.value || 0), held_basis: f.held_basis.value });
-      }
+      await api('PUT', '/settings', { pay_anchor_date: f.pay_anchor_date.value, pay_frequency: f.pay_frequency.value,
+        pay_custom_days: f.pay_frequency.value === 'custom' ? Number(f.pay_custom_days.value) : null });
+      state.offset = 0;
       await reload();
       toast('Settings saved');
       render();
@@ -4247,6 +4294,34 @@ sudo docker compose up -d --build</pre>${s.extra}`;
   // A store's name in its colour, or a login's name in theirs, as a small tag.
   const shopTag = (text, colour) => html`<span class="shop-tag" style="--tag:${colour || 'var(--brand)'}">${text}</span>`;
   const storeDot = (id) => html`<span class="dot store-dot" style="background:${storeColour(id)}"></span>`;
+  // Product pictures: a store's, fetched for the app by the price-checker, and the small one kept
+  // with a product's match at a store (at this store if it has one, else the first that does).
+  const pictureUrl = (u) => `api/shop/picture?u=${encodeURIComponent(u)}`;
+  function productPicture(p, store) {
+    const at = (sid) => (p.matches?.[sid]?.image_v ? `api/shop/products/${p.id}/picture/${sid}?v=${p.matches[sid].image_v}` : null);
+    if (store != null && at(store)) return at(store);
+    for (const s of state.shop.stores) if (at(s.id)) return at(s.id);
+    return null;
+  }
+  // A picture made small (96 pixels on its longer side) in the browser, as a JPEG to keep.
+  async function thumbOf(url) {
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      const k = Math.min(1, 96 / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.naturalWidth * k));
+      c.height = Math.max(1, Math.round(img.naturalHeight * k));
+      const g = c.getContext('2d');
+      g.fillStyle = '#fff';
+      g.fillRect(0, 0, c.width, c.height);
+      g.drawImage(img, 0, 0, c.width, c.height);
+      return c.toDataURL('image/jpeg', 0.82);
+    } catch { return null; }
+  }
+  // A picture that won't load is hidden rather than shown broken.
+  document.addEventListener('error', (ev) => { if (ev.target instanceof HTMLImageElement && ev.target.classList.contains('pic')) ev.target.classList.add('gone'); }, true);
   const shopLocation = () => {
     const id = Number(recall('shop:location'));
     return state.shop.locations.find((l) => l.id === id) || null;
@@ -4467,12 +4542,42 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         : html`<div class="shop-store"><p class="muted small grow">Add the stores you shop at to sort the list by aisle and compare prices.</p>
             <button type="button" class="primary" data-action="shop-stores">+ Add a store location</button></div>`;
 
+    const U = window.UnitPrice;
+    // One pack at a store as it's priced there: its price, and the size it's matched to there (an
+    // Aldi 400 g against a 500 g product), else the product's own. Swapped: the pack it's swapped to.
+    const packAt = (it, p, s) => {
+      const swap = swappedAt(it, p, s);
+      if (swap) return { cents: swap.price_cents, size: U.parse(swap.size) || U.parse(swap.name) };
+      const cents = itemCost(p, s);
+      if (cents == null) return null;
+      const m = p.matches?.[s];
+      const matched = (!PER[p.price_per] && m && m.url && U.parse(m.size)) || null;
+      return { cents, size: matched || U.parse(p.size, p.unit) };
+    };
+    // Its price per kg, L or each at a store, for comparing stores and packs.
+    const unitAt = (it, p, s) => {
+      if (isWeighed(p)) return U.perKg(perKgAt(p, s));
+      const pk = packAt(it, p, s);
+      return pk && U.of(pk.cents, pk.size);
+    };
+    const unitSpan = (u) => (u ? html`<span class="unit">${U.text(u)}</span>` : '');
+    const MINUS = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M5 12h14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>';
+    const PLUS = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>';
+    const SWAP_ICON = '<span class="swap-mark" aria-hidden="true">⇆</span>';
+
+    // A row is two lines on a computer: the name, aisle, amount and total, then a cheaper similar
+    // product on the left and a cheaper store on the right, each in its own cell so they can't run
+    // into the amount. On a phone it folds to the name, amount and total, with a chevron to open
+    // the rest.
+    // Pictures show once any product on the list has one, with a blank space for the rest.
+    const pics = rows.some((r) => productPicture(r.p, store));
     const row = ({ it, p }) => {
       const g = shopSpot(p, loc);
       const price = store ? lineCost(it, p, store) : null;
       const cost = rowCost({ it, p }, store);
       const best = store && price != null ? lineBest(it, p, store) : null;
       const weighed = isWeighed(p) && it.grams != null;
+      const amountText = weighed ? gramsText(it.grams) : `${it.qty}×`;
       // Swapped for this shop, at whichever store it's swapped at.
       const swap = it.swap_store_id ? swappedAt(it, p, it.swap_store_id) : null;
       const swapLabel = swap && (it.swap_kind === 'similar' ? `${storeProduct(it.swap_store_id, swap.name)}${sizeAfter(swap.name, swap.size)}`
@@ -4480,27 +4585,55 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       const cheaper = best && best.store !== store ? best : null;
       const got = Boolean(it.done_at);
       const at = got && it.done_store_id;
-      return html`<li class="shop-item ${got ? 'got' : ''}" data-name="${productLabel(p).toLowerCase()}" data-pname="${p.name.toLowerCase()}">
+      const open = !got && state.shopOpen.has(it.id);
+      const unitHere = store != null ? unitAt(it, p, store) : null;
+      const pic = productPicture(p, store);
+      const sizeText = swap ? '' : isWeighed(p) ? 'by the kg' : sizeLabel(p);
+      const sim = !got && p.similar && !swap ? p.similar : null;
+      // The cheaper store, said the way its shelf would: per pack, each, or for the weight.
+      let cheapLine = '';
+      if (!got && cheaper) {
+        const there = unitAt(it, p, cheaper.store);
+        const pk = isWeighed(p) ? null : packAt(it, p, cheaper.store);
+        const one = pk && pk.size && pk.size.kind === 'count' && pk.size.amount === 1;
+        const grams = isWeighed(p) ? itemGrams(it, p) : null;
+        const what = isWeighed(p) ? `${money2(cheaper.cents)}${grams ? ` for ${gramsText(grams)}` : ''}`
+          : one ? `${money2(pk.cents)} each` : `${money2(pk ? pk.cents : cheaper.cents)} per pack`;
+        // Cheaper for what's on the list, but dearer for the amount (a smaller pack): said so.
+        const dearer = there && unitHere && there.per === unitHere.per && there.cents > unitHere.cents;
+        cheapLine = html`<div class="si-cheap" id="si-c-${it.id}">${storeDot(cheaper.store)}<span class="ct">${what} at ${storeName(cheaper.store)}${there && !one ? html` · ${U.text(there)}` : ''}</span>
+          ${dearer ? html`<span class="dearer" title="${storeName(cheaper.store)}'s pack costs less, but more per ${there.per} than ${U.text(unitHere)} here">dearer per ${there.per}</span>` : ''}
+          <span class="save-chip" title="Save ${money2(price - cheaper.cents)} at ${storeName(cheaper.store)}">−${money2(price - cheaper.cents)}</span></div>`;
+      }
+      const swapLine = sim ? html`<button type="button" class="si-swap" id="si-s-${it.id}" data-action="shop-item" data-id="${it.id}" title="A similar product costs less for the amount: tap to swap to it for this shop">
+          ${raw(SWAP_ICON)}<span class="st">${storeProduct(sim.store_id, sim.name)}${sizeAfter(sim.name, sim.size)} · <b>${money2(sim.price_cents)}</b></span>${unitSpan(U.of(sim.price_cents, U.parse(sim.size) || U.parse(sim.name)))}</button>` : '';
+      const setAisle = !got && loc && g.key === 'unsorted' ? html`<button type="button" class="linkish small" data-action="shop-spot" data-id="${p.id}">Set aisle</button>` : '';
+      const sizeBits = [sizeText, unitHere ? U.text(unitHere) : ''].filter(Boolean).join(' · ');
+      const cls = ['shop-item', got ? 'got' : '', sim ? 'has-swap' : 'no-swap', cheapLine ? 'has-cheap' : '', pics ? 'with-pic' : ''].filter(Boolean).join(' ');
+      return html`<li class="${cls}" data-expanded="${open ? 'true' : 'false'}" data-name="${productLabel(p).toLowerCase()}" data-pname="${p.name.toLowerCase()}">
         <input type="checkbox" data-action="shop-tick" data-id="${it.id}" ${raw(got ? 'checked' : '')} aria-label="${got ? 'Not got' : 'Got'} ${p.name}">
         <div class="si-name" data-action="shop-item" data-id="${it.id}">
-          <div class="title">${p.name}${swap ? html` <span class="shop-size swapped" title="Swapped for this shop">⇄ ${swapLabel}</span>`
-            : isWeighed(p) ? html` <span class="shop-size">by the kg</span>` : sizeLabel(p) ? html` <span class="shop-size">${sizeLabel(p)}</span>` : ''}
+          ${pics ? html`<span class="si-pic">${pic ? html`<img class="pic" src="${pic}" alt="" loading="lazy">` : ''}</span>` : ''}
+          <div class="si-text"><div class="title"><span class="nm">${p.name}</span>${swap ? html` <span class="shop-size swapped" title="Swapped for this shop">⇄ ${swapLabel}${unitHere ? html` · ${U.text(unitHere)}` : ''}</span>`
+            : sizeBits ? html` <span class="shop-size wide-only">${sizeBits}</span>` : ''}
             ${it.note ? html`<span class="note-mark" title="Note: ${it.note}" aria-label="Has a note">${raw(NOTE_ICON)}</span>` : ''}
             ${p.setup ? html`<button type="button" class="setup-tag" data-action="shop-setup" data-id="${p.id}">Set up</button>` : ''}</div>
-          ${!got && p.similar && !swap ? html`<button type="button" class="similar-line" data-action="shop-item" data-id="${it.id}" title="A similar product costs less for the amount: tap to swap to it for this shop">
-            <span class="swap-mark" aria-hidden="true">⇆</span>${storeProduct(p.similar.store_id, p.similar.name)}${sizeAfter(p.similar.name, p.similar.size)} <b>${money2(p.similar.price_cents)}</b></button>` : ''}
+          <div class="si-size phone-only"><span class="qty-badge">${got && !weighed ? `×${it.qty}` : amountText}</span>${swap ? '' : html`<span>${sizeBits}</span>`}</div></div>
         </div>
         <div class="si-who">${got ? html`${it.done_by_name ? html`<span class="who-init" style="--tag:${it.done_by_colour || 'var(--brand)'}" title="Checked off by ${it.done_by_name}">${it.done_by_name.slice(0, 1).toUpperCase()}</span>` : ''}
-          ${at ? html`<span class="who-at">${storeDot(at)}${storeName(at)}</span>` : ''}`
-          : loc && g.key === 'unsorted' ? html`<button type="button" class="linkish small" data-action="shop-spot" data-id="${p.id}">Set aisle</button>` : ''}</div>
-        <div class="si-qty">${got ? html`<span class="shop-qty">${weighed ? gramsText(it.grams) : `×${it.qty}`}</span>` : html`<span class="stepper ${weighed ? 'weighed' : ''}">
-          <button type="button" data-action="shop-qty" data-id="${it.id}" data-step="-1" aria-label="${weighed ? `${gramsText(stepOf(p))} less` : 'One less'} ${p.name}">−</button>
+          ${at ? html`<span class="who-at">${storeDot(at)}${storeName(at)}</span>` : ''}` : setAisle}</div>
+        <div class="si-qty" id="si-q-${it.id}">${got ? html`<span class="shop-qty">${weighed ? gramsText(it.grams) : `×${it.qty}`}</span>` : html`<span class="stepper ${weighed ? 'weighed' : ''}">
+          <button type="button" data-action="shop-qty" data-id="${it.id}" data-step="-1" aria-label="Decrease: ${weighed ? `${gramsText(stepOf(p))} less` : 'one less'} ${p.name}">${raw(MINUS)}</button>
           <span class="shop-qty" aria-label="${weighed ? gramsText(it.grams) : it.qty} of ${p.name}">${weighed ? gramsText(it.grams) : it.qty}</span>
-          <button type="button" data-action="shop-qty" data-id="${it.id}" data-step="1" aria-label="${weighed ? `${gramsText(stepOf(p))} more` : 'One more'} ${p.name}">+</button></span>`}</div>
+          <button type="button" data-action="shop-qty" data-id="${it.id}" data-step="1" aria-label="Increase: ${weighed ? `${gramsText(stepOf(p))} more` : 'one more'} ${p.name}">${raw(PLUS)}</button></span>
+          ${setAisle ? html`<span class="phone-only">${setAisle}</span>` : ''}`}</div>
         <div class="si-total num">${cost != null ? money2(cost) : got ? '—'
           : store != null && p.not_sold?.[store] ? html`<span class="muted small">Not sold here</span>`
           : html`<button type="button" class="linkish small" data-action="shop-item" data-id="${it.id}">+ price</button>`}
-          ${!got && cheaper ? html`<span class="cheaper-at" title="Save ${money(price - cheaper.cents)}">${storeDot(cheaper.store)}${money2(cheaper.cents)} at ${storeName(cheaper.store)}</span>` : ''}</div>
+          ${sim || cheapLine ? html`<span class="si-flags phone-only">${sim ? html`<span class="flag-swap" title="A cheaper similar product">${raw(SWAP_ICON)}</span>` : ''}${cheapLine ? html`<span class="save-chip">−${money2(price - cheaper.cents)}</span>` : ''}</span>` : ''}</div>
+        ${got ? '' : html`<button type="button" class="si-chev phone-only" data-action="shop-open" data-id="${it.id}" aria-expanded="${open ? 'true' : 'false'}"
+          aria-controls="si-q-${it.id}${cheapLine ? ` si-c-${it.id}` : ''}${sim ? ` si-s-${it.id}` : ''}" aria-label="${open ? 'Hide' : 'Show'} details for ${p.name}"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`}
+        ${swapLine}${cheapLine}
       </li>`;
     };
 
@@ -5136,9 +5269,9 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           <div class="field"><label for="pe-unit">Unit</label><select id="pe-unit" name="unit">${sold === 'pack' ? html`<option value="">None</option>` : ''}${unitOptions(sold, usualUnit)}</select></div>
           <div class="field pe-weight"><label for="pe-step">+/− step</label><select id="pe-step" name="step_g">${STEPS.map((g) => html`<option value="${g}" ${raw(Number(v('step_g', stepOf(p))) === g ? 'selected' : '')}>${gramsText(g)}</option>`)}</select></div>
         </div>
-        <div class="field pe-weight"><label for="pe-each">About how much one weighs</label>
+        <div class="field pe-each"><label for="pe-each">About how much one weighs</label>
           <span class="ip-each-in"><input id="pe-each" name="each_g" inputmode="numeric" value="${v('each_g', p.each_g ?? '')}" placeholder="Like 180"><span>g each</span></span>
-          <p class="muted small">For counting them on the list, like 6 bananas. Filled in from Woolworths when it says.</p></div>
+          <p class="muted small" id="pe-each-hint"></p></div>
         <h3 class="form-section"><span id="pe-price-label">${sold === 'weight' ? 'Price per kg' : 'Price per pack'}</span><span class="muted small">Leave blank if unknown</span></h3>
         <div class="fields three">${stores.map((s) => html`<div class="field price-field"><label for="pe-${s.id}">${storeDot(s.id)}${s.name}</label>
           <input id="pe-${s.id}" name="price-${s.id}" inputmode="decimal" class="${notSold(s) ? 'not-sold' : ''}" placeholder="${notSold(s) ? '⊘ Not sold' : '$'}" value="${v(`price-${s.id}`, moneyInput(priceShown(s)))}">
@@ -5177,6 +5310,12 @@ sudo docker compose up -d --build</pre>${s.extra}`;
           const m = mode();
           form.querySelectorAll('.pe-sold label').forEach((l) => l.classList.toggle('on', l.querySelector('input').checked));
           form.querySelectorAll('.pe-weight').forEach((el) => { el.hidden = m !== 'weight'; });
+          // What one weighs: for counting things bought by weight, and for pricing things bought
+          // each (2 onions) at a store that only gives a price per kg, like Aldi.
+          const counted = m === 'pack' && !MEASURE_OF[form.elements.unit.value];
+          form.querySelector('.pe-each').hidden = !(m === 'weight' || counted);
+          form.querySelector('#pe-each-hint').textContent = m === 'weight' ? 'For counting them on the list, like 6 bananas. Filled in from Woolworths when it says.'
+            : 'For a store that only gives a price per kg (like Aldi\'s loose onions): its price for one is worked out from this. Press Refresh now after changing it.';
           form.querySelector('#pe-size-label').textContent = m === 'weight' ? 'Usual amount' : m === 'volume' ? 'Bottle size' : 'Pack size';
           form.querySelector('#pe-price-label').textContent = m === 'weight' ? 'Price per kg' : 'Price per pack';
           form.querySelector('#pe-sold-hint').textContent = m === 'weight' ? `Goes on the list as a weight (or a count), with − / + by the step. Prices are per kg.${before ? ' Its size wasn\'t a weight, so type the price per kg.' : ''}`
@@ -5193,7 +5332,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         };
         form.addEventListener('input', (ev) => { if (before && ev.target.name !== 'sold_by') before = null; });
         form.addEventListener('change', (ev) => {
-          if (ev.target.name !== 'sold_by') { if (before && ev.target.name === 'unit') before = null; return; }
+          if (ev.target.name !== 'sold_by') { if (ev.target.name === 'unit') { if (before) before = null; show(); } return; }
           const m = mode();
           const unit = form.elements.unit;
           if (was === 'weight' && m !== 'weight' && before) {
@@ -5278,7 +5417,8 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         if (size && Number.isNaN(Number(size))) throw new Error('The size should be a number, like 2 or 500.');
         if (m === 'weight' && !(Number(size) > 0)) throw new Error('Give the usual amount, like 1 kg or 500 g.');
         const each = val(form, 'each_g');
-        if (m === 'weight' && each && !(Number.isInteger(Number(each)) && Number(each) > 0)) throw new Error('What one weighs should be a whole number of g, like 180.');
+        const counted = m === 'pack' && !MEASURE_OF[val(form, 'unit')];
+        if ((m === 'weight' || counted) && each && !(Number.isInteger(Number(each)) && Number(each) > 0)) throw new Error('What one weighs should be a whole number of g, like 180.');
         // Prices left alone stay as they were checked, even when they're now said per kg or per pack.
         const prices = {};
         const converted = [];
@@ -5296,7 +5436,8 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         await api('PATCH', `/shop/products/${p.id}`, {
           name: val(form, 'name'), size: size === '' ? null : Number(size), unit: val(form, 'unit') || null,
           sold_by: m, price_per: m === 'weight' ? 'kg' : 'each', prices, converted, not_sold: notSoldNow,
-          ...(m === 'weight' ? { step_g: Number(val(form, 'step_g')) || null, each_g: each ? Number(each) : null } : {}),
+          ...(m === 'weight' ? { step_g: Number(val(form, 'step_g')) || null } : {}),
+          ...(m === 'weight' || counted ? { each_g: each ? Number(each) : null } : {}),
         });
         await loadShop(state.shop.list);
         if (back) setTimeout(back); // once this popup has closed
@@ -5346,8 +5487,9 @@ sudo docker compose up -d --build</pre>${s.extra}`;
             <button type="button" class="icon sp-del" data-del="${p.id}" aria-label="Delete ${p.name}" title="Delete">${BIN_ICON}</button></li>`;
         }
         const meta = [sizeLabel(p), unitPrice(p, here ?? (best && best.cents))].filter(Boolean).join(' · ');
+        const pic = productPicture(p, store);
         return html`<li class="sp-row ${it ? 'on' : ''}">
-          <button type="button" class="sp-main" data-open="${p.id}"><span class="sp-name">${p.name}</span>${meta ? html`<span class="sp-meta">${meta}</span>` : ''}</button>
+          <button type="button" class="sp-main ${pic ? 'with-pic' : ''}" data-open="${p.id}">${pic ? html`<img class="pic sp-pic" src="${pic}" alt="" loading="lazy">` : ''}<span class="sp-txt"><span class="sp-name">${p.name}</span>${meta ? html`<span class="sp-meta">${meta}</span>` : ''}</span></button>
           ${store ? html`<span class="sp-here num">${here != null ? money2(here) : '—'}${here != null ? html`<small class="${priceIsAuto(p, store) ? 'sp-auto' : ''}">${priceIsAuto(p, store) ? 'auto' : 'manual'}</small>` : ''}</span>` : ''}
           <span class="sp-best num ${best ? (bestHereToo ? 'here' : 'away') : ''}">${best ? money2(best.cents) : '—'}${best ? html`<small>${bestHereToo ? 'here' : storeName(best.store)}${!bestHereToo && priceIsAuto(p, best.store) ? ' · auto' : ''}</small>` : ''}</span>
           <button type="button" class="sp-qty ${it ? 'on' : ''}" data-add="${p.id}" aria-label="${it ? `One more ${p.name}, ${it.qty} on the list` : `Add ${p.name} to the list`}">${it ? `×${it.qty}` : '+'}</button></li>`;
@@ -5841,6 +5983,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     const mineAt = (sid) => shopProduct(p.id)?.matches?.[sid];
     let tab = (stores.find((s) => !mineAt(s.id)?.url) || stores[0])?.id;
     const opened = new Set(); // stores showing their other results
+    let byPrice = false; // best match first, or cheapest per kg first
     // A store that sells it by the kg, picked while it's bought by the pack: offer to switch.
     let byKg = null;
 
@@ -5886,8 +6029,9 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       ].filter(Boolean).join(' · ');
       const note = r.special ? html`${bits ? ' · ' : ''}<span class="fp-special">Special${r.was_cents ? ` · was ${money2(r.was_cents)}` : ''}</span>` : '';
       const one = !loose && r.sold === 'each' && !r.per_kg_cents && BASE[p.unit] ? html`<div class="fp-sub">Price of one; the store doesn't say what one weighs.</div>` : '';
-      const per = loose ? (p.price_per !== 'each' ? (PER_LABELS[p.price_per] || '').toLowerCase() : `for ${sizeLabel(p)}`) : '';
+      const per = loose ? (p.price_per !== 'each' ? (PER_LABELS[p.price_per] || '').toLowerCase() : !sizeIn(p) && p.each_g ? `each (≈ ${gramsText(p.each_g)})` : `for ${sizeLabel(p)}`) : '';
       return html`<li class="fp-row${on ? ' on' : ''}"><label class="fp-pick"><input type="radio" name="fp-${s.id}" data-match="${s.id}" data-i="${r.i}" ${raw(on ? 'checked' : '')}>
+          <span class="fp-pic">${r.image ? html`<img class="pic" src="${pictureUrl(r.image)}" alt="" loading="lazy">` : ''}</span>
           <span class="fp-text"><b class="fp-name">${r.name}</b><span class="fp-sub">${bits}${note}</span>${one}</span>
           <span class="fp-price"><b class="num">${money2(cost)}</b>${per ? html`<span class="fp-per">${per}</span>` : ''}</span></label>
         <a class="fp-view" href="${r.url}" target="_blank" rel="noopener noreferrer" aria-label="View ${r.name} at ${s.name}" title="View at ${s.name}">↗</a></li>`;
@@ -5917,10 +6061,12 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       const { likely, others, kinds } = split(list, s.id);
       const unitWord = likely.some((r) => perUnit(r)?.per === 'L') && !likely.some((r) => perUnit(r)?.per === 'kg') ? 'L' : 'kg';
       const show = opened.has(s.id);
-      return html`<div class="fp-list-head"><span>Likely matches</span><span class="fp-sort">Sorted by price per ${unitWord}</span></div>
-        <ul class="fp-list">${likely.slice().sort(byUnit).map((r) => row(s, r, mine?.url === r.url))}</ul>
+      // Closest to the product first (its words, brand and size; see relevance in src/shop.js), or cheapest for the amount.
+      const order = byPrice ? byUnit : (a, b) => (b.score ?? 0) - (a.score ?? 0) || a.i - b.i;
+      return html`<div class="fp-list-head"><span>Likely matches</span><button type="button" class="fp-sort linkish" data-fp-sort>${byPrice ? `Cheapest per ${unitWord} first` : 'Best match first'} ⇅</button></div>
+        <ul class="fp-list ${list.some((r) => r.image) ? 'with-pics' : ''}">${likely.slice().sort(order).map((r) => row(s, r, mine?.url === r.url))}</ul>
         ${others.length ? html`<button type="button" class="fp-more" data-fp-more="${s.id}" aria-expanded="${show ? 'true' : 'false'}">${show ? 'Hide' : 'Show'} ${others.length} other ${others.length === 1 ? 'result' : 'results'}${kinds.length ? html` <span class="muted">${kinds.slice(0, 3).join(', ')}</span>` : ''}</button>
-          ${show ? html`<ul class="fp-list fp-others">${others.slice().sort(byUnit).map((r) => row(s, r, mine?.url === r.url))}</ul>` : ''}` : ''}
+          ${show ? html`<ul class="fp-list fp-others ${list.some((r) => r.image) ? 'with-pics' : ''}">${others.slice().sort(order).map((r) => row(s, r, mine?.url === r.url))}</ul>` : ''}` : ''}
         ${none}`;
     };
     const draw = (j) => {
@@ -5965,8 +6111,9 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         form.querySelector('#find-q').onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); again(); } };
         const pick = async (store, i) => {
           try {
-            await api('PUT', `/shop/products/${p.id}/matches`, { job: current.id, picks: { [store]: i } });
             const r = i != null && (current.results?.[store] || []).find((x) => x.i === i);
+            const thumb = r && r.image ? await thumbOf(pictureUrl(r.image)) : null;
+            await api('PUT', `/shop/products/${p.id}/matches`, { job: current.id, picks: { [store]: i }, ...(thumb ? { images: { [store]: thumb } } : {}) });
             if (r && (r.sold === 'kg' || r.sold === 'each') && r.per_kg_cents) byKg = store;
             await loadShop(state.shop.list);
             render();
@@ -5980,6 +6127,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         form.onclick = async (ev) => {
           if (solveClick(form, ev)) return;
           if (ev.target.closest('[data-find-go]')) { again(); return; }
+          if (ev.target.closest('[data-fp-sort]')) { byPrice = !byPrice; if (current) draw(current); return; }
           if (ev.target.closest('[data-find-back]')) { back(); return; }
           const t = ev.target.closest('[data-fp-tab]');
           if (t) { tab = Number(t.dataset.fpTab); if (current) draw(current); return; }
@@ -6309,6 +6457,15 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       await api('POST', '/shop/items/clear', { list: state.shop.list });
       await shopReload();
       toast(`Cleared ${got} ${got === 1 ? 'item' : 'items'}`);
+    },
+    // On a phone, a list row opens to show its amount, cheaper store and similar product.
+    'shop-open': (el) => {
+      const id = Number(el.dataset.id);
+      const open = !state.shopOpen.has(id);
+      if (open) state.shopOpen.add(id); else state.shopOpen.delete(id);
+      el.setAttribute('aria-expanded', String(open));
+      el.setAttribute('aria-label', `${open ? 'Hide' : 'Show'} details for ${shopProduct(state.shop.items.find((x) => x.id === id)?.product_id)?.name || 'this item'}`);
+      el.closest('li')?.setAttribute('data-expanded', String(open));
     },
     'shop-item': (el) => {
       const it = state.shop.items.find((x) => x.id === Number(el.dataset.id));

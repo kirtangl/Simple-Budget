@@ -43,6 +43,11 @@ function createChecker({ url = process.env.PRICE_CHECKER_URL, token = process.en
       return { image: Buffer.from(await res.arrayBuffer()), width: Number(res.headers.get('x-width')) || null, height: Number(res.headers.get('x-height')) || null };
     },
     input: (store, ev) => call('POST', `/input/${encodeURIComponent(store)}`, ev),
+    // A store's product picture, fetched by the checker: { type, body }.
+    async image(url) {
+      const res = await call('GET', `/image?url=${encodeURIComponent(url)}`, undefined, { raw: true });
+      return { type: res.headers.get('content-type') || 'image/jpeg', body: Buffer.from(await res.arrayBuffer()) };
+    },
   };
 }
 

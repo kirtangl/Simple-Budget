@@ -64,7 +64,16 @@ const approxGrams = (...texts) => {
 // usual), 'each' (loose, one at a time, like a banana at Woolworths) or 'kg' (loose, priced by the
 // kilo, like a banana at Aldi). per_kg_cents is its price per kg (or L) when known, so a loose item
 // can be priced by weight; for one sold each, it comes from the weight the store says one weighs.
-function result({ name, size, price, was, special, unit, url, available = true, sold = 'pack', grams = null }) {
+// A product picture's address, only from the stores' own image servers.
+const IMAGE_HOSTS = /(^|\.)(woolworths\.media|woolworths\.com\.au|coles\.com\.au|aldi\.cx|aldi\.com\.au)$/i;
+function imageOf(v) {
+  try {
+    const u = new URL(String(v || ''));
+    return u.protocol === 'https:' && IMAGE_HOSTS.test(u.hostname) ? u.href : null;
+  } catch { return null; }
+}
+
+function result({ name, size, price, was, special, unit, url, available = true, sold = 'pack', grams = null, image = null }) {
   const price_cents = cents(price);
   if (!tidy(name) || !price_cents || !url) return null;
   const was_cents = cents(was);
@@ -77,7 +86,8 @@ function result({ name, size, price, was, special, unit, url, available = true, 
     special: Boolean(special) || Boolean(was_cents && was_cents > price_cents),
     unit_price: tidy(unit), url, available: available !== false,
     sold, per_kg_cents: per_kg_cents || null, ...(sold === 'each' && g ? { each_grams: g } : {}),
+    ...(imageOf(image) ? { image: imageOf(image) } : {}),
   };
 }
 
-module.exports = { challenged, pageFetch, result, cents, perKg, approxGrams, Challenge };
+module.exports = { challenged, pageFetch, result, cents, perKg, approxGrams, imageOf, Challenge };

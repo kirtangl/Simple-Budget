@@ -459,6 +459,16 @@ const MIGRATIONS = [
     PRIMARY KEY (product_id, store_id)
   );
   `,
+  // 28: each account's own deposit rounding and buffer. Empty means the household default
+  // (the old Settings → Deposits values), so every account keeps the deposit it had.
+  `
+  ALTER TABLE accounts ADD COLUMN rounding TEXT;
+  ALTER TABLE accounts ADD COLUMN buffer_percent INTEGER;
+  `,
+  // 29: a small picture of each product's listing at a store, made when it's picked in Find prices.
+  `
+  ALTER TABLE shop_matches ADD COLUMN image TEXT;
+  `,
 ];
 
 function openDatabase(file) {
