@@ -2523,3 +2523,30 @@ li.deposit.dep2:hover, li.deposit.dep2:focus-within { position: relative; z-inde
 .dep-in { color: var(--brand); flex: none; }
 .dep-card-head .head-sub { font-size: 12px; }
 .dep-card-head { padding-bottom: 12px; margin-bottom: 0; border-bottom: 1px solid var(--line); }
+
+/* Once-off purchases (0.9.14) */
+li.bill.oneoff.faded { opacity: .55; }
+li.bill.oneoff.faded .title { color: var(--muted); }
+li.bill.oneoff .right { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+li.bill.oneoff .bin-btn { flex: none; margin-left: 6px; }
+.status.pending { background: color-mix(in srgb, var(--info) 16%, transparent); color: var(--info); }
+.dep-seg .oo, .hc-key .oo { background: var(--due); }
+.oneoff-fig b { color: var(--due); }
+.bills-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.add-oneoff { white-space: nowrap; }
+.oneoff-more { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.oneoff-more > summary { cursor: pointer; color: var(--link); font-size: .9rem; font-weight: 600; margin-bottom: 4px; }
+.oneoff-more[open] > summary { margin-bottom: 10px; }
+.o-h { margin: 12px 0 6px; font-size: .95rem; }
+.o-len { display: flex; gap: 6px; }
+.o-len input { flex: 1 1 60px; min-width: 0; }
+.o-len select { flex: 1 1 90px; min-width: 0; }
+.o-check { margin-top: 26px; }
+.type-list li { display: flex; align-items: center; gap: 6px; }
+.type-list .acct-btn { text-align: left; text-decoration: none; }
+li.bill.oneoff .grow { min-width: 0; }
+li.bill.oneoff .acct-tag { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+li.bill.oneoff .right { flex: 0 1 auto; max-width: 42%; text-align: right; }
+li.bill.oneoff .status.pending { white-space: normal; }
+/* On a phone the bin makes the rows too tight; Delete is in the popup a tap opens. */
+@media (max-width: 720px) { .o-check { margin-top: 0; } .oneoff-list .bin-btn { display: none; } }

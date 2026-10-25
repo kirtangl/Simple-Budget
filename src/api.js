@@ -79,6 +79,21 @@ const T = {
     if (n !== null && (n < min || n > max)) throw new BadRequest(`must be between ${min} and ${max}`);
     return n;
   },
+  // A date and time, kept as ISO in UTC (like 2026-10-25T03:30:00.000Z) so they sort as text.
+  moment: (v) => {
+    if (v === undefined || v === null || v === '') return null;
+    const ms = typeof v === 'string' ? Date.parse(v) : NaN;
+    const year = Number.isFinite(ms) ? new Date(ms).getUTCFullYear() : 0;
+    if (year < 1900 || year > 2199) throw new BadRequest('must be a date and time');
+    return new Date(ms).toISOString();
+  },
+  // A web address, like an order page. Only http and https, since it becomes a link.
+  link: (v) => {
+    const t = T.text(v);
+    if (t === null) return null;
+    if (!/^https?:\/\/[^\s]+$/i.test(t)) throw new BadRequest('must start with https:// or http://');
+    return t;
+  },
 };
 
 const LABELS = {
@@ -88,13 +103,16 @@ const LABELS = {
   start_date: 'Start date', target_date: 'Target date', interest_rate: 'Interest rate', term_months: 'Term (months)',
   interest_day: 'Interest day', principal_cents: 'Amount borrowed', repayment_cents: 'Repayment', balance_cents: 'Balance',
   balance_date: 'Balance date', scheduled_date: 'First repayment date', budget_date: 'First budgeted payment date',
+  account_id: 'Account', purchased_at: 'Date bought', clears_at: 'When it clears', quantity: 'Quantity', link: 'Link',
+  warranty_start: 'Warranty start', warranty_length: 'Warranty length', ext_length: 'Extended warranty length',
 };
 
 // The most rows each list can hold. Far more than a household needs, but it stops a
 // bad backup file from making every page slow.
 const MAX_ROWS = { accounts: 200, payees: 2000, categories: 500, subcategories: 2000, expenses: 2000,
-  incomes: 200, goals: 2000, loans: 500, goal_groups: 500 };
-const ROW_WORDS = { subcategories: 'sub categories', expenses: 'expenses and savings', goal_groups: 'goal categories' };
+  incomes: 200, goals: 2000, loans: 500, goal_groups: 500, purchase_types: 200, purchases: 100000 };
+const ROW_WORDS = { subcategories: 'sub categories', expenses: 'expenses and savings', goal_groups: 'goal categories',
+  purchase_types: 'tracked types', purchases: 'once-offs' };
 const tooMany = (name) => `That's more ${ROW_WORDS[name] || name} than Simple Budget can keep (${MAX_ROWS[name]}).`;
 
 // Each resource: table name, its fields with validators, and which are required.
@@ -213,6 +231,26 @@ const RESOURCES = {
     before: { balance_cents: (old, row) => estimatedBalance(old, row.balance_date || today()) } },
     order: 'paid_off, name COLLATE NOCASE',
     unique: { label: 'A loan' },
+  },
+  // Tracked types for once-offs (Settings → Tracked types). "Not tracked" is no type at all.
+  purchase_types: {
+    fields: { name: T.text, sort_order: T.int },
+    required: ['name'],
+    order: 'sort_order, name COLLATE NOCASE',
+    unique: { label: 'A tracked type' },
+  },
+  // Once-off purchases. Their routes are their own (see "Once-off purchases" in createApi),
+  // since a private one is only shown to whoever it belongs to.
+  purchases: {
+    own: true,
+    fields: { name: T.text, amount_cents: T.positiveCents, account_id: T.int, purchased_at: T.moment,
+      clear_mode: T.enumOf('instant', '24h', '48h', 'custom'), clears_at: T.moment, shop: T.text,
+      category_id: T.int, subcategory_id: T.int, type_id: T.int, tax_deductible: T.bool, notes: T.text,
+      payment_method: T.enumOf('card', 'cash', 'bpay', 'paypal', 'other'), quantity: T.range(1, 100000), serial: T.text, link: T.link,
+      warranty_start: T.date, warranty_length: T.range(1, 999), warranty_unit: T.enumOf('days', 'months', 'years'),
+      ext_provider: T.text, ext_length: T.range(1, 999), ext_unit: T.enumOf('days', 'months', 'years'), ext_notes: T.text,
+      keep_forever: T.bool, owner_id: T.int, private: T.bool, exclude: T.bool, goal_id: T.int },
+    required: ['name', 'amount_cents', 'account_id', 'purchased_at'],
   },
   // Categories on the Goals and Debts tabs. Goals refer to them by name (goals.group_name).
   goal_groups: {
@@ -410,6 +448,84 @@ function createApi(db) {
   // A price change dated today or earlier takes over before anything is worked out.
   router.use((req, res, next) => { applyPendingAmounts(db); next(); });
 
+  // ---------- Once-off purchases ----------
+  //
+  // Everyone's once-offs count in the numbers (it's money that left the account), but a
+  // private one is only shown to whoever it belongs to; anyone else sees "Private" and the amount.
+  const PURCHASE_DEFAULTS = { clear_mode: 'instant', tax_deductible: 0, keep_forever: 0, private: 0, exclude: 0 };
+  const loginOf = (req) => (req.login ? req.login.id : 0);
+  const canSee = (p, loginId) => !p.private || (p.owner_id ?? p.created_by) === loginId;
+  const masked = (p) => ({ id: p.id, name: 'Private', amount_cents: p.amount_cents, account_id: p.account_id, purchased_at: p.purchased_at,
+    clears_at: p.clears_at, clear_mode: p.clear_mode, exclude: p.exclude, private: 1, hidden: 1, category_id: null, subcategory_id: null });
+  const forLogin = (rows, loginId) => rows.map((p) => (canSee(p, loginId) ? { ...p } : masked(p)));
+  // The once-offs a cycle needs: bought in it, or bought before it and clearing in it.
+  const purchasesFor = (cycle) => {
+    const from = budget.startOfDay(cycle.start);
+    return db.prepare('SELECT * FROM purchases WHERE purchased_at < ? AND (purchased_at >= ? OR clears_at >= ?) ORDER BY purchased_at, id')
+      .all(budget.startOfDay(budget.addDays(cycle.end, 1)), from, from).map((p) => ({ ...p }));
+  };
+  // Once-offs still waiting for the bank at a moment, for Keep in account.
+  // Someone else's private ones are named "a once-off", since Keep in account can say which item the account is tightest after.
+  const pendingPurchases = (moment, loginId) => budget.pendingAt(db.prepare('SELECT * FROM purchases WHERE exclude = 0 AND purchased_at <= ? AND clears_at > ?')
+    .all(moment, moment).map((p) => (canSee(p, loginId) ? { ...p } : { ...p, name: 'a once-off' })), moment);
+
+  // A once-off as it will be saved: the body checked, merged over what's there, and its clearing time worked out.
+  function purchaseRow(body, before) {
+    const data = clean(RESOURCES.purchases, body, { partial: Boolean(before) });
+    const row = { ...(before || {}), ...data };
+    for (const [k, v] of Object.entries(PURCHASE_DEFAULTS)) if (row[k] == null) row[k] = v;
+    if (!row.amount_cents) throw new BadRequest('Amount should be more than $0.');
+    if (!db.prepare('SELECT 1 FROM accounts WHERE id = ?').get(row.account_id)) throw new BadRequest('Pick the account it came out of.');
+    const latest = new Date(Date.now() + 366 * 24 * 3600e3).toISOString();
+    if (row.purchased_at > latest) throw new BadRequest("Date bought can't be more than a year from now.");
+    if (row.clear_mode === 'custom') {
+      if (!row.clears_at) throw new BadRequest('Pick when it clears.');
+      if (row.clears_at < row.purchased_at) throw new BadRequest("It can't clear before it was bought.");
+    } else row.clears_at = budget.clearsAtFor(row.purchased_at, row.clear_mode);
+    if (row.subcategory_id != null && !db.prepare('SELECT 1 FROM subcategories WHERE id = ? AND category_id IS ?').get(row.subcategory_id, row.category_id ?? null)) {
+      row.subcategory_id = null;
+    }
+    for (const [key, table] of [['category_id', 'categories'], ['type_id', 'purchase_types'], ['goal_id', 'goals']]) {
+      if (row[key] != null && !db.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).get(row[key])) row[key] = null;
+    }
+    // A goal is only for one that isn't counted (paid for from what's saved in the goal).
+    if (!row.exclude) row.goal_id = null;
+    return row;
+  }
+  const PURCHASE_COLUMNS = [...Object.keys(RESOURCES.purchases.fields), 'created_by', 'created_at', 'updated_at'];
+  const getPurchase = (id) => { const p = db.prepare('SELECT * FROM purchases WHERE id = ?').get(Number(id)); return p ? { ...p } : null; };
+
+  router.get('/purchases/:id', (req, res) => {
+    const p = getPurchase(req.params.id);
+    if (!p || !canSee(p, loginOf(req))) return res.status(404).json({ error: 'Not found.' });
+    res.json(p);
+  });
+  router.post('/purchases', (req, res) => {
+    if (db.prepare('SELECT count(*) AS n FROM purchases').get().n >= MAX_ROWS.purchases) throw new BadRequest(tooMany('purchases'));
+    const now = new Date().toISOString();
+    // A new once-off is the buyer's own unless the form says Shared.
+    const body = { ...(req.body || {}) };
+    if (!('owner_id' in body)) body.owner_id = loginOf(req);
+    const row = { ...purchaseRow(body, null), created_by: loginOf(req), created_at: now, updated_at: now };
+    const cols = PURCHASE_COLUMNS.filter((c) => c in row);
+    const { lastInsertRowid } = db.prepare(`INSERT INTO purchases (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).run(...cols.map((c) => row[c] ?? null));
+    res.status(201).json(getPurchase(lastInsertRowid));
+  });
+  router.patch('/purchases/:id', (req, res) => {
+    const before = getPurchase(req.params.id);
+    if (!before || !canSee(before, loginOf(req))) return res.status(404).json({ error: 'Not found.' });
+    const row = { ...purchaseRow(req.body, before), updated_at: new Date().toISOString() };
+    const cols = PURCHASE_COLUMNS.filter((c) => c in row && c !== 'created_by' && c !== 'created_at');
+    db.prepare(`UPDATE purchases SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).run(...cols.map((c) => row[c] ?? null), before.id);
+    res.json(getPurchase(before.id));
+  });
+  router.delete('/purchases/:id', (req, res) => {
+    const before = getPurchase(req.params.id);
+    if (!before || !canSee(before, loginOf(req))) return res.status(404).json({ error: 'Not found.' });
+    db.prepare('DELETE FROM purchases WHERE id = ?').run(before.id);
+    res.json({ ok: true });
+  });
+
   // Everything the app needs to draw its lists, in one request. The deposits, and which rows
   // they cover (in_deposit), are the Overview's own numbers, so every page shows the same.
   router.get('/data', (req, res) => {
@@ -421,8 +537,10 @@ function createApi(db) {
     const loans = loansWithEstimates();
     const loanRows = loans.map((l) => budget.loanAsExpense(l, anchor));
     const incomes = list('incomes');
+    const bounds = budget.cycleBounds(anchor, budget.cycleIndexFor(anchor, now, pc), pc);
+    const oneoffs = forLogin(purchasesFor(bounds), loginOf(req));
     const cycle = budget.buildCycle({ anchor, index: budget.cycleIndexFor(anchor, now, pc), today: now, expenses: [...expenses, ...loanRows],
-      accounts, incomes, rules: depositRules(db), payCycle: pc });
+      accounts, incomes, rules: depositRules(db), payCycle: pc, oneoffs });
     const funded = new Set(budget.fundedRows([...expenses, ...loanRows], cycle.cycle, anchor));
     res.json({
       settings: settings(),
@@ -439,6 +557,10 @@ function createApi(db) {
       deposits: Object.fromEntries(cycle.accounts.map((a) => [a.account_id, a.deposit_cents])),
       goals: list('goals'),
       goal_groups: list('goal_groups'),
+      purchase_types: list('purchase_types'),
+      // This cycle's once-offs, as the Overview lists them (Budget → Once-offs).
+      // Someone else's private ones are left out of the lists; the deposits still include them.
+      oneoffs: cycle.bills.filter((b) => b.kind === 'oneoff' && !b.hidden),
       // The bell's dot, so it's up to date whenever the data is.
       notices: unread(db, req.login ? req.login.id : null),
     });
@@ -454,15 +576,20 @@ function createApi(db) {
     const index = budget.cycleIndexFor(anchor, now, pc) + offset;
     const rows = budgetRows();
     const accounts = list('accounts');
-    const cycle = budget.buildCycle({ anchor, index, today: now, expenses: rows, accounts, incomes: list('incomes'), rules: depositRules(db), payCycle: pc });
-    // What each account should be holding: today for this cycle, or at the start of any other cycle shown.
+    const bounds = budget.cycleBounds(anchor, index, pc);
+    const cycle = budget.buildCycle({ anchor, index, today: now, expenses: rows, accounts, incomes: list('incomes'), rules: depositRules(db), payCycle: pc,
+      oneoffs: forLogin(purchasesFor(bounds), loginOf(req)) });
+    // What each account should be holding: today for this cycle, or at the start of any other cycle shown,
+    // with the once-offs the bank hasn't taken yet at that moment.
     const heldOn = offset === 0 ? now : cycle.cycle.start;
-    const held = new Map(budget.heldEstimates(rows, accounts, { today: heldOn, anchor, payCycle: pc }).map((h) => [h.account_id, h]));
+    const moment = offset === 0 ? new Date().toISOString() : budget.startOfDay(heldOn);
+    const held = new Map(budget.heldEstimates(rows, accounts, { today: heldOn, anchor, payCycle: pc, pending: pendingPurchases(moment, loginOf(req)) }).map((h) => [h.account_id, h]));
     cycle.accounts.forEach((a) => {
       const h = held.get(a.account_id);
-      Object.assign(a, { held_cents: h?.held_cents ?? 0, low_on: h?.low_on ?? null, low_after: h?.low_after ?? null, ahead: h?.ahead ?? [] });
+      Object.assign(a, { held_cents: h?.held_cents ?? 0, low_on: h?.low_on ?? null, low_after: h?.low_after ?? null, ahead: h?.ahead ?? [],
+        pending_cents: h?.pending_cents ?? 0 });
     });
-    res.json({ offset, held_on: heldOn, ...cycle });
+    res.json({ offset, held_on: heldOn, ...cycle, bills: cycle.bills.filter((b) => !b.hidden) });
   });
 
   // Month-by-month totals for the next `months` months (Analytics → Annual trends).
@@ -504,6 +631,9 @@ function createApi(db) {
           else m.expenses_cents += e.amount_cents;
         }
       }
+      // Once-offs bought in the month (only the current month can have any so far, or a pre-order).
+      m.expenses_cents += db.prepare('SELECT coalesce(sum(amount_cents), 0) AS n FROM purchases WHERE exclude = 0 AND purchased_at >= ? AND purchased_at < ?')
+        .get(budget.startOfDay(start), budget.startOfDay(budget.addDays(end, 1))).n;
       m.surplus_cents = m.income_cents - m.expenses_cents - m.savings_cents;
       out.push(m);
     }
@@ -766,6 +896,7 @@ function createApi(db) {
   });
 
   for (const [name, resource] of Object.entries(RESOURCES)) {
+    if (resource.own) continue;
     const get = (id) => {
       const row = db.prepare(`SELECT * FROM ${name} WHERE id = ?`).get(id);
       return row ? { ...row } : null;
@@ -905,6 +1036,7 @@ function createApi(db) {
 //   { app: 'simple-budget', format_version, exported_at, settings: {...},
 //     accounts: [...], payees: [...], categories: [{..., subcategories: [...]}],
 //     expenses: [...], incomes: [...], goals: [...], goal_groups: [...], loans: [...],
+//     purchase_types: [...], purchases: [...],
 //     shopping: { stores, locations, sections, products, prices, spots, items } }
 //
 // To keep old backups restorable as the app grows:
@@ -920,7 +1052,8 @@ const BACKUP_UPGRADES = {
   // 2 added amount_history: the price, repayment, balance and rate history of expenses and loans.
   1: (data) => ({ ...data, amount_history: [] }),
 };
-const BACKUP_SECTIONS = ['accounts', 'payees', 'categories', 'incomes', 'expenses', 'goals', 'goal_groups', 'loans'];
+const BACKUP_SECTIONS = ['accounts', 'payees', 'categories', 'incomes', 'expenses', 'goals', 'goal_groups', 'loans',
+  'purchase_types', 'purchases'];
 const BACKUP_SETTINGS = ['pay_anchor_date', 'pay_frequency', 'pay_custom_days', 'rounding', 'buffer_percent'];
 
 function exportBackup(db) {
@@ -944,6 +1077,9 @@ function exportBackup(db) {
     goals: all('goals'),
     goal_groups: all('goal_groups'),
     loans: all('loans'),
+    purchase_types: all('purchase_types'),
+    // Once-offs keep whose they are and who added them, which match the logins on this server.
+    purchases: all('purchases'),
     // Who made each change isn't kept: logins aren't part of a backup.
     amount_history: db.prepare('SELECT kind, item_id, field, on_date, value, frequency, before_value FROM amount_history ORDER BY id').all()
       .map((row) => ({ ...row })),
@@ -1043,14 +1179,55 @@ function importBackup(db, input) {
     }
   };
 
+  // Once-offs have their own columns (who added it, when), so they're restored here rather than by restoreRows.
+  // Whose it is only carries over if that login is on this server; otherwise it becomes Shared.
+  const restorePurchases = () => {
+    if (!Array.isArray(data.purchases)) return;
+    // The main login (0) is always there; the others are rows in logins.
+    const login = (id) => (id === 0 || (Number.isInteger(id) && db.prepare('SELECT 1 FROM logins WHERE id = ?').get(id)) ? id : null);
+    const map = new Map();
+    let n = 0;
+    data.purchases.forEach((raw, i) => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { warnings.push(`Skipped once-off #${i + 1}: it isn't a valid entry.`); return; }
+      try {
+        // The account is needed when adding one, but a restored one keeps its place even if its account is gone.
+        const row = clean(RESOURCES.purchases, { ...raw, account_id: 0, category_id: ref('categories', 'categories', raw.category_id),
+          subcategory_id: ref('subcategories', 'subcategories', raw.subcategory_id), type_id: ref('purchase_types', 'purchase_types', raw.type_id),
+          goal_id: ref('goals', 'goals', raw.goal_id), owner_id: null }, { partial: false });
+        row.account_id = ref('accounts', 'accounts', raw.account_id);
+        for (const key of ['tax_deductible', 'keep_forever', 'private', 'exclude']) row[key] = row[key] ? 1 : 0;
+        row.clear_mode = row.clear_mode || 'instant';
+        if (row.clear_mode !== 'custom' || !row.clears_at || row.clears_at < row.purchased_at) {
+          if (row.clear_mode === 'custom') row.clear_mode = 'instant';
+          row.clears_at = budget.clearsAtFor(row.purchased_at, row.clear_mode);
+        }
+        row.owner_id = login(raw.owner_id);
+        if (row.owner_id === null) row.private = 0;
+        row.created_by = login(raw.created_by);
+        const now = new Date().toISOString();
+        row.created_at = T.moment(raw.created_at) || now;
+        row.updated_at = T.moment(raw.updated_at) || now;
+        map.set(Number(raw.id), insert('purchases', row));
+        n += 1;
+      } catch (err) {
+        if (!(err instanceof BadRequest)) throw err;
+        warnings.push(`Skipped once-off ${raw.name ? `"${raw.name}"` : `#${i + 1}`}: ${err.message}`);
+      }
+    });
+    idMaps.purchases = map;
+    counts.purchases = n;
+  };
+
   // Rows the file doesn't replace keep pointing at what they used to: an expense kept while
   // its category is restored from the file is linked to the restored category of the same name.
   const LINKS = [
     ['expenses', 'account_id', 'accounts'], ['expenses', 'payee_id', 'payees'], ['expenses', 'category_id', 'categories'],
     ['expenses', 'subcategory_id', 'subcategories'], ['loans', 'account_id', 'accounts'], ['loans', 'category_id', 'categories'],
-    ['goals', 'account_id', 'accounts'],
+    ['goals', 'account_id', 'accounts'], ['purchases', 'account_id', 'accounts'], ['purchases', 'category_id', 'categories'],
+    ['purchases', 'subcategory_id', 'subcategories'], ['purchases', 'type_id', 'purchase_types'], ['purchases', 'goal_id', 'goals'],
   ];
-  const LINK_WORDS = { account_id: 'the account', payee_id: 'the payee', category_id: 'the category', subcategory_id: 'the sub category' };
+  const LINK_WORDS = { account_id: 'the account', payee_id: 'the payee', category_id: 'the category', subcategory_id: 'the sub category',
+    type_id: 'the tracked type', goal_id: 'the goal' };
   const replaced = (present, table) => present.includes(table === 'subcategories' ? 'categories' : table);
   const noteLinks = (present) => LINKS.filter(([table, , to]) => !present.includes(table) && replaced(present, to))
     .map(([table, col, to]) => ({ table, col, to, rows: db.prepare(`SELECT t.id, t.name AS item, r.name AS name FROM ${table} t JOIN ${to} r ON r.id = t.${col}`).all() }));
@@ -1080,7 +1257,7 @@ function importBackup(db, input) {
     // Clear the sections the file contains. Expenses go first because they refer to the others.
     const present = BACKUP_SECTIONS.filter((s) => Array.isArray(data[s]));
     const links = noteLinks(present);
-    for (const section of ['expenses', 'loans', 'goals', 'goal_groups', 'incomes', 'categories', 'payees', 'accounts']) {
+    for (const section of ['purchases', 'purchase_types', 'expenses', 'loans', 'goals', 'goal_groups', 'incomes', 'categories', 'payees', 'accounts']) {
       if (present.includes(section)) db.exec(`DELETE FROM ${section}`);
     }
     if (present.includes('categories')) db.exec('DELETE FROM subcategories');
@@ -1130,6 +1307,8 @@ function importBackup(db, input) {
       }
       return out;
     });
+    restoreRows('purchase_types', data.purchase_types, 'purchase_types');
+    restorePurchases();
     restoreHistory();
     relink(links);
 

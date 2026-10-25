@@ -492,6 +492,7 @@
       <a role="tab" href="#/overview/analytics" aria-selected="${active === 'analytics' ? 'true' : 'false'}" tabindex="${active === 'analytics' ? '0' : '-1'}">Analytics</a></div>`;
 
   const DEPOSIT_KEY = [['out', 'Bills that have come out'], ['left', 'Bills still to come out'], ['sav', 'Savings (they stay in the account)'],
+    ['oo', 'Once-offs bought this pay'],
     ['extra', 'Extra: more than the bills and savings'], ['over', "Over: the transfer doesn't cover them"]];
   // Keep in account shows rounded up to the whole dollar; its popup shows the exact amount.
   const keepUp = (cents) => Math.ceil((cents || 0) / 100) * 100;
@@ -499,11 +500,13 @@
   // What "Keep in account" is made of, as plain lines (the hover, and the popup on a tap).
   function keepParts(c, r) {
     const when = c.cycle.is_current ? 'today' : `on ${fmtDate(c.held_on)}, once that deposit is in`;
-    const ahead = Math.max(0, r.held_cents - r.remaining_cents);
+    const pending = r.pending_cents || 0;
+    const ahead = Math.max(0, r.held_cents - r.remaining_cents - pending);
     return {
       when,
       lines: [
         [`Still to come out ${thisCycle()}`, r.remaining_cents],
+        ...(pending ? [["Once-offs the bank hasn't taken yet", pending]] : []),
         ...(ahead ? [['Held for bills further ahead', ahead]] : []),
       ],
       tight: r.held_cents > r.deposit_cents,
@@ -564,14 +567,15 @@
     const rows = state.data.accounts.map((a, i) => ({ a, r: accountsById.get(a.id), i })).filter((x) => x.r);
     // Accounts with nothing going in or out this cycle fold away.
     const saved = goalSavings();
-    const isUsed = ({ a, r }) => r.deposit_cents || r.bills_cents || r.savings_cents || r.held_cents || saved.has(a.id);
+    const isUsed = ({ a, r }) => r.deposit_cents || r.bills_cents || r.savings_cents || r.held_cents || r.oneoff_cents || saved.has(a.id);
     const used = rows.filter(isUsed);
     const unused = rows.filter((x) => !isUsed(x));
     state.cycleData = c;
     // Per account: the transfer, what to keep in the account, and a bar of where this cycle's transfer goes
     // (bills out, bills still to come, savings, and what's extra).
     const depositRow = (a, r, i) => {
-      const need = r.bills_cents + r.savings_cents;
+      const oneoff = r.oneoff_cents || 0;
+      const need = r.bills_cents + r.savings_cents + oneoff;
       const scale = Math.max(r.deposit_cents, need) || 1;
       const seg = (cents, cls, tip) => (cents > 0 ? html`<span class="${cls}" style="width:${((cents / scale) * 100).toFixed(2)}%" title="${tip}"></span>` : '');
       const over = r.spare_cents < 0;
@@ -584,24 +588,29 @@
                 <button type="button" class="dep-keep ${tight ? 'tight' : ''}" data-action="keep-details" data-id="${a.id}" aria-label="Keep ${money(keepUp(r.held_cents))} in account: show the breakdown">
                   <b class="num">${money(keepUp(r.held_cents))}</b><span class="kl">Keep in account</span>${keepCard(c, r)}</button>
               </div>
-              <div class="dep-seg" role="img" aria-label="${money(r.paid_cents)} of bills out, ${money(r.remaining_cents)} to come, ${money(r.savings_cents)} savings, ${over ? `${money(-r.spare_cents)} over` : `${money(r.spare_cents)} extra`}">
-                ${seg(r.paid_cents, 'out', `${money(r.paid_cents)} in bills has come out`)}${seg(r.remaining_cents, 'left', `${money(r.remaining_cents)} in bills still to come out`)}${seg(r.savings_cents, 'sav', `${money(r.savings_cents)} to savings`)}${seg(r.spare_cents, 'extra', `${money(r.spare_cents)} extra`)}
+              <div class="dep-seg" role="img" aria-label="${money(r.paid_cents)} of bills out, ${money(r.remaining_cents)} to come, ${money(r.savings_cents)} savings, ${oneoff ? `${money(oneoff)} once-offs, ` : ''}${over ? `${money(-r.spare_cents)} over` : `${money(r.spare_cents)} extra`}">
+                ${seg(r.paid_cents, 'out', `${money(r.paid_cents)} in bills has come out`)}${seg(r.remaining_cents, 'left', `${money(r.remaining_cents)} in bills still to come out`)}${seg(r.savings_cents, 'sav', `${money(r.savings_cents)} to savings`)}${seg(oneoff, 'oo', `${money(oneoff)} in once-offs`)}${seg(r.spare_cents, 'extra', `${money(r.spare_cents)} extra`)}
                 ${over ? html`<i class="dep-end" style="left:${((r.deposit_cents / scale) * 100).toFixed(2)}%" title="The ${money(r.deposit_cents)} transfer ends here"></i>` : ''}
               </div>
               <div class="dep-line">
                 <span title="This ${cycleWord()}'s bills from this account that haven't come out yet (savings not included)">${r.bills_cents ? html`<b class="num left-amt">${money(r.remaining_cents)}</b> of ${money(r.bills_cents)} left` : html`<span class="muted">No bills ${thisCycle()}</span>`}</span>
                 <span class="${r.savings_cents ? 'good-text' : 'muted'}" title="Savings from this account ${thisCycle()}. They stay in the account."><b class="num">${r.savings_cents ? '+' : ''}${money(r.savings_cents)}</b> Savings</span>
-                <span class="${over ? 'neg' : r.spare_cents ? 'info-text' : 'muted'}" title="${over ? `${r.savings_cents ? 'Bills + savings are' : 'Bills are'} ${money(need)}, ${money(-r.spare_cents)} more than this transfer` : r.spare_cents ? `${money(r.spare_cents)} more than this ${cycleWord()}'s bills and savings` : `Exactly this ${cycleWord()}'s bills and savings`}"><b class="num">${over ? '−' : r.spare_cents ? '+' : ''}${money(Math.abs(r.spare_cents))}</b> ${over ? 'Over' : r.spare_cents ? 'Extra' : 'Even'}</span>
+                <span class="${over ? 'neg' : r.spare_cents ? 'info-text' : 'muted'}" title="${over ? `${oneoff ? 'Bills, savings and once-offs are' : r.savings_cents ? 'Bills + savings are' : 'Bills are'} ${money(need)}, ${money(-r.spare_cents)} more than this transfer` : r.spare_cents ? `${money(r.spare_cents)} more than this ${cycleWord()}'s bills, savings${oneoff ? ' and once-offs' : ''}` : `Exactly this ${cycleWord()}'s bills and savings${oneoff ? ' and once-offs' : ''}`}"><b class="num">${over ? '−' : r.spare_cents ? '+' : ''}${money(Math.abs(r.spare_cents))}</b> ${over ? 'Over' : r.spare_cents ? 'Extra' : 'Even'}</span>
               </div>
-              ${saved.has(a.id) ? html`<div class="figures">
+              ${saved.has(a.id) || oneoff ? html`<div class="figures">
+                ${oneoff ? html`<span class="figure oneoff-fig" title="Once-offs bought ${thisCycle()} from this account. They lower the Extra; the deposit stays the same."><span class="label">Once-offs</span> <b class="num">−${money(oneoff)}</b>${r.oneoff_paid_cents < oneoff ? html` <span class="muted">(${money(oneoff - r.oneoff_paid_cents)} clearing)</span>` : ''}</span>` : ''}
                 ${saved.has(a.id) ? html`<span class="figure goal-saved" title="Saved so far in ${saved.get(a.id).goals.map((g) => g.name).join(', ')}"><span class="label">Goals</span> <b class="num">${money(saved.get(a.id).cents)} saved</b></span>` : ''}
               </div>` : ''}
             </div></li>`;
     };
     const empty = !state.data.expenses.length && !state.data.loans.length;
     // Savings only show as expenses when they're set to.
-    const bills = c.bills.filter((b) => b.is_expense);
-    const paidCount = bills.filter((b) => b.status === 'paid').length;
+    // Once-offs show too: greyed when they're from the last cycle or not counted.
+    const bills = c.bills.filter((b) => b.is_expense || b.kind === 'oneoff');
+    const regular = bills.filter((b) => b.kind !== 'oneoff');
+    const oneoffCount = bills.length - regular.length;
+    const counts = (b) => b.kind !== 'oneoff' || b.counted;
+    const paidCount = regular.filter((b) => b.status === 'paid').length;
     const status = { '': () => true, topay: (b) => b.status !== 'paid', paid: (b) => b.status === 'paid' }[state.billWhen] || (() => true);
     const inAccount = (b) => !state.billAccount || String(b.account_id ?? 'none') === state.billAccount;
     const shown = bills.filter((b) => inAccount(b) && status(b));
@@ -650,20 +659,24 @@
 
       <div class="grid grid-2 overview-main">
         <div class="bills-cell"><section class="card bills-card">
-          <div class="bills-head"><div class="card-head"><div><h2>Expenses</h2><div class="muted head-sub">${bills.length} bill${bills.length === 1 ? '' : 's'}<span class="cyc"> ${thisCycle()}</span>${paidCount ? ` · ${paidCount} paid` : ''}</div></div>
-            ${bills.length ? segButtons('billWhen', [['', 'All'], ['topay', 'To pay'], ['paid', 'Paid']], 'Show bills') : ''}</div>
+          <div class="bills-head"><div class="card-head"><div><h2>Expenses</h2><div class="muted head-sub">${regular.length} bill${regular.length === 1 ? '' : 's'}<span class="cyc"> ${thisCycle()}</span>${paidCount ? ` · ${paidCount} paid` : ''}${oneoffCount ? ` · ${oneoffCount} once-off${oneoffCount === 1 ? '' : 's'}` : ''}</div></div>
+            <div class="bills-tools">${bills.length ? segButtons('billWhen', [['', 'All'], ['topay', 'To pay'], ['paid', 'Paid']], 'Show bills') : ''}
+            <button type="button" class="small add-oneoff" data-action="new-oneoff">+ Once-off</button></div></div>
           ${bills.length ? html`<div class="filters">${accountChips('billAccount', billAccounts, bills.some((b) => b.account_id == null))}</div>` : ''}</div>
           <div class="bills-scroll">
           ${bills.length && !shown.length ? html`<p class="empty">${state.billWhen === 'topay' ? `Nothing left to pay ${thisCycle()}` : 'Nothing matches'}${state.billAccount ? ' in this account' : ''}.</p>` : ''}
           ${shown.length ? html`<ul class="list">${shown.map((b, n) => {
+            const today = state.data.settings.today;
+            // A "Today" line just before the first bill still to come out (a once-off by its date).
+            const upcoming = (x) => (x.kind === 'oneoff' ? x.date >= today : x.status !== 'paid');
+            const divider = c.cycle.is_current && upcoming(b) && !shown.slice(0, n).some(upcoming);
+            const line = divider ? html`<li class="today-line"><span>Today · ${fmtDate(today)}</span></li>` : '';
+            if (b.kind === 'oneoff') return html`${line}${oneoffRow(b)}`;
             const d = toDate(b.date);
             const a = account(b.account_id);
             const p = payee(b.payee_id);
             const action = b.kind === 'loan' ? html`data-action="loan-details" data-id="${b.loan_id}"` : html`data-action="bill-details" data-id="${b.expense_id}" data-date="${b.date}" data-amount="${b.amount_cents}" data-status="${b.status}"`;
-            // A "Today" line just before the first bill still to come out.
-            const today = state.data.settings.today;
-            const divider = c.cycle.is_current && b.status !== 'paid' && (n === 0 || shown[n - 1].status === 'paid');
-            return html`${divider ? html`<li class="today-line"><span>Today · ${fmtDate(today)}</span></li>` : ''}
+            return html`${line}
             <li class="bill ${b.status} clickable" ${action}>
               <div class="date-box"><b>${d.getUTCDate()}</b><span>${DAYS[d.getUTCDay()]}</span></div>
               <div class="grow"><div class="title">${b.name}${b.kind === 'saving' ? html` <span class="chip">Savings</span>` : b.kind === 'loan' ? html` <span class="chip">Loan</span>` : ''}</div>
@@ -674,7 +687,7 @@
             </li>`;
           })}</ul>` : bills.length ? '' : html`<p class="empty">No bills come out ${thisCycle()}.</p>`}
           </div>
-          ${bills.length ? html`<div class="bills-foot"><b class="num">${money(sumOf(bills.filter((b) => inAccount(b) && b.status !== 'paid')))}</b> to pay · <b class="num">${money(sumOf(bills.filter((b) => inAccount(b) && b.status === 'paid')))}</b> paid</div>` : ''}
+          ${bills.length ? html`<div class="bills-foot"><b class="num">${money(sumOf(bills.filter((b) => counts(b) && inAccount(b) && b.status !== 'paid')))}</b> to pay · <b class="num">${money(sumOf(bills.filter((b) => counts(b) && inAccount(b) && b.status === 'paid')))}</b> paid</div>` : ''}
         </section></div>
 
         <div class="stack">
@@ -694,6 +707,232 @@
       </div>
 
       ${goalsSummary()}`;
+  }
+
+  // ---------- Once-off purchases ----------
+  //
+  // Money spent once from an account. The deposit stays the same and the account's Extra goes down.
+  // Until the bank takes it (Instant, 24h, 48h or a chosen time) Keep in account holds it too.
+
+  const CLEAR_MODES = [['instant', 'Instant'], ['24h', 'In 24 hours'], ['48h', 'In 48 hours'], ['custom', 'On a date and time']];
+  const PAY_METHODS = [['card', 'Card'], ['cash', 'Cash'], ['bpay', 'BPAY'], ['paypal', 'PayPal'], ['other', 'Other']];
+  const LENGTH_UNITS = [['days', 'days'], ['months', 'months'], ['years', 'years']];
+  // A moment as this device shows it: "Wed 9am", "Wed 9:30am", with the date when it's more than a week away.
+  const clockText = (d) => `${d.getHours() % 12 || 12}${d.getMinutes() ? `:${String(d.getMinutes()).padStart(2, '0')}` : ''}${d.getHours() < 12 ? 'am' : 'pm'}`;
+  const whenText = (iso) => {
+    const d = new Date(iso);
+    const far = Math.abs(d - Date.now()) > 6 * 86400000;
+    return `${DAYS[d.getDay()]}${far ? ` ${d.getDate()} ${MONTHS[d.getMonth()]}` : ''} ${clockText(d)}`;
+  };
+  // "Paid", "Clears in 18h" or "Clears Wed 9am".
+  function clearText(b) {
+    if (b.status === 'paid') return 'Paid';
+    const hours = (Date.parse(b.clears_at) - Date.now()) / 3600e3;
+    if (hours < 1) return 'Clears within the hour';
+    if (hours < 24) return `Clears in ${Math.ceil(hours)}h`;
+    return `Clears ${whenText(b.clears_at)}`;
+  }
+  // A moment for a datetime-local box, on this device's clock.
+  const localStamp = (iso) => {
+    const d = iso ? new Date(iso) : new Date();
+    return `${localDate(d)}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+  const stampVal = (form, name, label) => {
+    const v = val(form, name);
+    if (!v) return null;
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) throw new Error(`${label} must be a date and time.`);
+    return d.toISOString();
+  };
+  // A warranty's last day: its start plus its length.
+  function warrantyEnd(start, length, unit) {
+    if (!start || !length) return null;
+    const d = toDate(start);
+    if (unit === 'days') d.setUTCDate(d.getUTCDate() + length);
+    else d.setUTCMonth(d.getUTCMonth() + (unit === 'years' ? 12 : 1) * length);
+    d.setUTCDate(d.getUTCDate() - 1);
+    return d.toISOString().slice(0, 10);
+  }
+  const pickList = (list, selected) => list.map(([k, label]) => html`<option value="${k}" ${k === selected ? raw('selected') : ''}>${label}</option>`);
+
+  // One once-off as a row in a list: the Overview's Expenses and Budget → Once-offs.
+  function oneoffMeta(b) {
+    const a = account(b.account_id);
+    const bits = [];
+    if (b.carried) bits.push(`From last ${cycleWord()}, ${b.status === 'paid' ? 'paid' : clearText(b).replace('Clears', 'clears')}`);
+    else if (b.excluded) bits.push('Not counted');
+    return html`${a ? html`<span class="acct-tag bubble" style="--acct:${accountColor(a.id)}"><span class="dot"></span>${a.name}</span>` : ''}${a && bits.length ? ' · ' : ''}${bits.join(' · ')}`;
+  }
+  function oneoffRow(b, tail = '') {
+    const d = toDate(b.date);
+    const faded = b.carried || b.excluded;
+    const open = b.hidden ? '' : html`data-action="edit-oneoff" data-id="${b.purchase_id}"`;
+    return html`<li class="bill oneoff ${b.status} ${faded ? 'faded' : ''} ${b.hidden ? '' : 'clickable'}" ${open}>
+      <div class="date-box"><b>${d.getUTCDate()}</b><span>${DAYS[d.getUTCDay()]}</span></div>
+      <div class="grow"><div class="title">${b.name} <span class="chip">Once-off</span>${b.private && !b.hidden ? html` <span class="chip">Private</span>` : ''}</div>
+        <div class="meta">${oneoffMeta(b)}</div></div>
+      <div class="right">${b.status === 'paid' ? html`<div class="num"><span class="tick" aria-label="Paid">✓</span> ${money(b.amount_cents)}</div>`
+        : html`<div class="num">${money(b.amount_cents)}</div><span class="status pending">${clearText(b)}</span>`}</div>${tail}
+    </li>`;
+  }
+
+  // Budget → Once-offs: this cycle's once-offs, with the ones still clearing from the last.
+  function renderOneoffs() {
+    const list = state.data.oneoffs || [];
+    const counted = list.filter((b) => b.counted);
+    const total = counted.reduce((s, b) => s + b.amount_cents, 0);
+    const pending = counted.filter((b) => b.status !== 'paid').reduce((s, b) => s + b.amount_cents, 0);
+    return html`<section class="card">
+      <div class="card-head"><div><h2>Once-offs ${thisCycle()}</h2><div class="muted head-sub">${counted.length} counted · ${money(total)}${pending ? ` · ${money(pending)} still clearing` : ''}</div></div></div>
+      ${list.length ? html`<ul class="list oneoff-list">${list.map((b) => oneoffRow(b, b.hidden ? ''
+        : html`<button type="button" class="icon bin-btn" data-action="delete-oneoff" data-id="${b.purchase_id}" aria-label="Delete ${b.name}">${BIN_ICON}</button>`))}</ul>`
+        : html`<p class="empty">No once-offs ${thisCycle()}. Use <b>+ Add once-off</b> for anything bought outside the regular bills.</p>`}
+    </section>
+    <p class="tab-hint">A once-off doesn't change the deposits. It comes out of the account's Extra, and Keep in account holds it until it clears.</p>`;
+  }
+
+  async function editOneoff(id) {
+    try { oneoffForm(await api('GET', `/purchases/${id}`)); } catch (err) { toast(err.message); }
+  }
+
+  function oneoffForm(p = {}) {
+    const subs = (catId) => category(catId)?.subcategories || [];
+    const me = state.me ? state.me.id : null;
+    const mine = p.id ? p.owner_id != null : true;
+    const other = p.owner_id != null && p.owner_id !== me ? (state.logins || []).find((l) => l.id === p.owner_id) : null;
+    const goals = state.data.goals.filter((g) => g.kind === 'goal' && (!g.done || g.id === p.goal_id));
+    const extra = ['shop', 'category_id', 'type_id', 'tax_deductible', 'notes', 'payment_method', 'quantity', 'serial', 'link', 'warranty_start', 'ext_provider', 'keep_forever']
+      .some((k) => p[k]);
+    const firstAccount = state.data.accounts[0] && state.data.accounts[0].id;
+    openForm({
+      title: p.id ? 'Edit once-off' : 'Add once-off',
+      cls: 'oneoff-pop',
+      body: html`
+        <div class="fields">
+          <div class="field full"><label for="o-name">What was it?</label><input id="o-name" name="name" value="${p.name || ''}" placeholder="e.g. Kettle" required></div>
+          <div class="field"><label for="o-amount">Amount ($)</label><input id="o-amount" name="amount" inputmode="decimal" value="${moneyInput(p.amount_cents)}" placeholder="0.00" required></div>
+          <div class="field"><label for="o-account">From account</label><select id="o-account" name="account_id">${options(state.data.accounts, p.id ? p.account_id : firstAccount, { empty: '— Pick one —' })}</select></div>
+          <div class="field"><label for="o-when">Bought</label><input id="o-when" type="datetime-local" name="purchased_at" value="${localStamp(p.purchased_at)}" required></div>
+          <div class="field"><label for="o-clear">Clears</label><select id="o-clear" name="clear_mode">${pickList(CLEAR_MODES, p.clear_mode || 'instant')}</select></div>
+          <div class="field full" id="o-custom" ${p.clear_mode === 'custom' ? '' : raw('hidden')}><label for="o-clears">Clears on</label>
+            <input id="o-clears" type="datetime-local" name="clears_at" value="${p.clear_mode === 'custom' ? localStamp(p.clears_at) : ''}"></div>
+          <div class="field full"><div class="hint" id="o-clear-hint"></div></div>
+          ${household() ? html`<div class="field"><label for="o-owner">Whose is it?</label><select id="o-owner" name="owner">
+              <option value="shared" ${mine ? '' : raw('selected')}>Shared</option>
+              ${other ? html`<option value="other" selected>${other.name}</option>` : ''}
+              <option value="mine" ${mine && !other ? raw('selected') : ''}>Mine</option></select></div>
+            <div class="field"><label class="check o-check"><input type="checkbox" name="private" ${p.private ? raw('checked') : ''}> Private</label>
+              <div class="hint">Hidden from the other logins. Their deposits still include it.</div></div>` : ''}
+          <div class="field full"><label class="check"><input type="checkbox" name="exclude" data-toggle="#o-goal-row" ${p.exclude ? raw('checked') : ''}> Don't count in expenses</label>
+            <div class="hint">Already covered, like a pre-order paid from a goal. It's kept as a record and doesn't change Extra or Keep in account.</div></div>
+          <div class="field full" id="o-goal-row" ${p.exclude ? '' : raw('hidden')}><label for="o-goal">Paid from goal (optional)</label>
+            <select id="o-goal" name="goal_id">${options(goals, p.goal_id)}</select></div>
+        </div>
+        <details class="oneoff-more" ${extra ? raw('open') : ''}><summary>More</summary>
+          <div class="fields">
+            <div class="field"><label for="o-shop">Shop</label><input id="o-shop" name="shop" value="${p.shop || ''}"></div>
+            <div class="field"><label for="o-pay">Paid by</label><select id="o-pay" name="payment_method"><option value="">—</option>${pickList(PAY_METHODS, p.payment_method)}</select></div>
+            <div class="field"><label for="o-cat">Category</label><select id="o-cat" name="category_id">${options(state.data.categories, p.category_id)}</select></div>
+            <div class="field"><label for="o-sub">Sub category</label><select id="o-sub" name="subcategory_id">${options(subs(p.category_id), p.subcategory_id)}</select></div>
+            <div class="field"><label for="o-type">Tracked type</label><select id="o-type" name="type_id">${options(state.data.purchase_types, p.type_id, { empty: 'Not tracked' })}</select></div>
+            <div class="field"><label class="check o-check"><input type="checkbox" name="tax_deductible" ${p.tax_deductible ? raw('checked') : ''}> Tax deductible</label></div>
+            <div class="field"><label for="o-qty">Quantity</label><input id="o-qty" name="quantity" inputmode="numeric" value="${p.quantity ?? ''}"></div>
+            <div class="field"><label for="o-serial">Serial or model no.</label><input id="o-serial" name="serial" value="${p.serial || ''}"></div>
+            <div class="field full"><label for="o-link">Link</label><input id="o-link" name="link" type="url" value="${p.link || ''}" placeholder="https://"></div>
+            <div class="field full"><label for="o-notes">Notes</label><textarea id="o-notes" name="notes" rows="2">${p.notes || ''}</textarea></div>
+            <h3 class="o-h full">Warranty</h3>
+            <div class="field"><label for="o-ws">Starts</label><input id="o-ws" type="date" name="warranty_start" value="${p.warranty_start || ''}"></div>
+            <div class="field"><label for="o-wl">Length</label><div class="o-len"><input id="o-wl" name="warranty_length" inputmode="numeric" value="${p.warranty_length ?? ''}">
+              <select name="warranty_unit" aria-label="Warranty length in">${pickList(LENGTH_UNITS, p.warranty_unit || 'years')}</select></div></div>
+            <div class="field full"><div class="hint" id="o-wend"></div></div>
+            <h3 class="o-h full">Extended warranty</h3>
+            <div class="field"><label for="o-ep">Provider</label><input id="o-ep" name="ext_provider" value="${p.ext_provider || ''}"></div>
+            <div class="field"><label for="o-el">Length</label><div class="o-len"><input id="o-el" name="ext_length" inputmode="numeric" value="${p.ext_length ?? ''}">
+              <select name="ext_unit" aria-label="Extended warranty length in">${pickList(LENGTH_UNITS, p.ext_unit || 'years')}</select></div></div>
+            <div class="field full"><div class="hint" id="o-eend"></div></div>
+            <div class="field full"><label for="o-en">Extended warranty notes</label><input id="o-en" name="ext_notes" value="${p.ext_notes || ''}"></div>
+            <div class="field full"><label class="check"><input type="checkbox" name="keep_forever" ${p.keep_forever ? raw('checked') : ''}> Keep forever</label>
+              <div class="hint">Never tidied away when old purchases are cleared out.</div></div>
+          </div>
+        </details>`,
+      afterRender: (form) => {
+        const el = form.elements;
+        const cat = el.category_id;
+        cat.addEventListener('change', () => { el.subcategory_id.innerHTML = options(subs(Number(cat.value))).s; });
+        const num = (name) => (/^\d+$/.test(val(form, name)) ? Number(val(form, name)) : null);
+        // The warranty ends (the extended one runs on from the end of the first, or from the start).
+        const sync = () => {
+          form.querySelector('#o-custom').hidden = el.clear_mode.value !== 'custom';
+          const bought = el.purchased_at.value && new Date(el.purchased_at.value);
+          const hours = { '24h': 24, '48h': 48 }[el.clear_mode.value];
+          form.querySelector('#o-clear-hint').textContent = !bought || Number.isNaN(bought.getTime()) ? ''
+            : el.clear_mode.value === 'instant' ? 'Paid straight away.'
+              : hours ? `Clears ${whenText(new Date(bought.getTime() + hours * 3600e3).toISOString())}. Keep in account holds it until then.`
+                : 'Keep in account holds it until then.';
+          const start = val(form, 'warranty_start');
+          const end = warrantyEnd(start, num('warranty_length'), el.warranty_unit.value);
+          form.querySelector('#o-wend').textContent = end ? `Ends ${fmtDate(end, true)}.` : '';
+          const extEnd = warrantyEnd(end ? addDaysIso(end, 1) : start, num('ext_length'), el.ext_unit.value);
+          form.querySelector('#o-eend').textContent = extEnd ? `Ends ${fmtDate(extEnd, true)}${end ? ', after the warranty' : ''}.` : '';
+        };
+        form.oninput = sync;
+        form.addEventListener('change', sync);
+        sync();
+      },
+      onSave: async (form) => {
+        const el = form.elements;
+        const intOf = (name, label) => {
+          const v = val(form, name);
+          if (!v) return null;
+          if (!/^\d+$/.test(v) || Number(v) < 1) throw new Error(`${label} must be a whole number.`);
+          return Number(v);
+        };
+        const body = {
+          name: val(form, 'name'), amount_cents: moneyVal(form, 'amount', 'Amount', { required: true }), account_id: idVal(form, 'account_id'),
+          purchased_at: stampVal(form, 'purchased_at', 'Bought'), clear_mode: el.clear_mode.value,
+          exclude: el.exclude.checked, goal_id: el.exclude.checked ? idVal(form, 'goal_id') : null,
+          shop: val(form, 'shop') || null, payment_method: val(form, 'payment_method') || null,
+          category_id: idVal(form, 'category_id'), subcategory_id: idVal(form, 'subcategory_id'), type_id: idVal(form, 'type_id'),
+          tax_deductible: el.tax_deductible.checked, quantity: intOf('quantity', 'Quantity'), serial: val(form, 'serial') || null,
+          link: val(form, 'link') || null, notes: val(form, 'notes') || null,
+          warranty_start: val(form, 'warranty_start') || null, warranty_length: intOf('warranty_length', 'Warranty length'), warranty_unit: el.warranty_unit.value,
+          ext_provider: val(form, 'ext_provider') || null, ext_length: intOf('ext_length', 'Extended warranty length'), ext_unit: el.ext_unit.value,
+          ext_notes: val(form, 'ext_notes') || null, keep_forever: el.keep_forever.checked,
+        };
+        if (!body.name) throw new Error('Please say what it was.');
+        if (!body.amount_cents) throw new Error('Amount should be more than $0.');
+        if (!body.account_id) throw new Error('Pick the account it came out of.');
+        if (!body.purchased_at) throw new Error('Say when it was bought.');
+        if (body.clear_mode === 'custom') {
+          body.clears_at = stampVal(form, 'clears_at', 'Clears on');
+          if (!body.clears_at) throw new Error('Pick when it clears.');
+        }
+        if (el.owner) {
+          // A private one is always somebody's, so Shared and Private makes it yours.
+          const who = el.owner.value;
+          body.private = el.private.checked;
+          if (who !== 'other') body.owner_id = who === 'mine' || body.private ? me : null;
+        } else body.owner_id = me;
+        await (p.id ? api('PATCH', `/purchases/${p.id}`, body) : api('POST', '/purchases', body));
+        await reload();
+      },
+      onDelete: p.id ? async () => { await api('DELETE', `/purchases/${p.id}`); await reload(); } : null,
+    });
+  }
+
+  // Settings → Tracked types: the kinds of purchase worth keeping an eye on. "Not tracked" is the default.
+  function settingsTypes() {
+    const types = state.data.purchase_types;
+    return html`
+      <div class="page-head" style="margin-bottom:12px"><p class="muted small" style="margin:0">Pick one on a once-off under More. Tax deductible is its own tick, so something can be both.</p>
+        <button class="primary" data-action="new-type">+ Add type</button></div>
+      <section class="card"><ul class="list type-list">
+        <li><span class="grow">Not tracked</span><span class="muted small">The default. It can't be removed.</span></li>
+        ${types.map((t, i) => html`<li><button class="acct-btn grow" data-action="rename-type" data-id="${t.id}">${t.name}</button>
+          <button type="button" class="icon" data-action="move-type" data-id="${t.id}" data-dir="-1" aria-label="Move ${t.name} up" ${i === 0 ? raw('disabled') : ''}>↑</button>
+          <button type="button" class="icon" data-action="move-type" data-id="${t.id}" data-dir="1" aria-label="Move ${t.name} down" ${i === types.length - 1 ? raw('disabled') : ''}>↓</button>
+          <button type="button" class="icon bin-btn" data-action="delete-type" data-id="${t.id}" aria-label="Remove ${t.name}">${BIN_ICON}</button></li>`)}
+      </ul></section>`;
   }
 
   // ---------- Price reviews and price history ----------
@@ -1100,6 +1339,16 @@
       const cat = state.data.categories[i];
       return { label: cat ? cat.name : 'No category', value: sc(value), color: cat ? colorFor(cat, i) : '#94a3b8' };
     });
+    // Per pay, the donut also has this pay's once-offs (they aren't averages, so only per pay).
+    const oneoffs = anaPeriod() === 'cycle' ? (state.data.oneoffs || []).filter((b) => b.counted) : [];
+    const donutCats = new Map(byCategory);
+    for (const b of oneoffs) donutCats.set(b.category_id ?? null, (donutCats.get(b.category_id ?? null) || 0) + b.amount_cents);
+    const donutSegments = oneoffs.length ? [...donutCats.entries()].sort((x, y) => y[1] - x[1]).map(([id, value]) => {
+      if (id === 'loans') return { label: 'Loans', value: sc(value), color: '#64748b' };
+      const i = state.data.categories.findIndex((c) => c.id === id);
+      const cat = state.data.categories[i];
+      return { label: cat ? cat.name : 'No category', value: sc(value), color: cat ? colorFor(cat, i) : '#94a3b8' };
+    }) : categorySegments;
     const byAccount = state.data.accounts.map((a) => ({ label: a.name, value: sc(depositFor(a.id)), color: accountColor(a.id) })).filter((x) => x.value > 0);
     const top = [...spend].sort((x, y) => y.per_pay_cents - x.per_pay_cents).slice(0, 10)
       .map((e) => ({ label: e.name, value: sc(e.per_pay_cents), account: e.account_id }));
@@ -1118,8 +1367,8 @@
       <section class="card ana-card">${yearAhead(months)}</section>
       <div class="ana-donuts">
         <section class="card ana-card">
-          <div class="ana-card-head"><h2>Expenses by category</h2><span class="ana-sub">average ${perText()}</span></div>
-          ${donutCard(categorySegments)}
+          <div class="ana-card-head"><h2>Expenses by category</h2><span class="ana-sub">average ${perText()}${oneoffs.length ? `, with this ${cycleWord()}'s once-offs` : ''}</span></div>
+          ${donutCard(donutSegments)}
         </section>
         <section class="card ana-card">
           <div class="ana-card-head"><h2>Deposits by account</h2><span class="ana-sub">${perText()}</span></div>
@@ -2905,14 +3154,14 @@
 
   // ---------- Settings ----------
 
-  const SETTINGS_TABS = [['income', 'Income'], ['accounts', 'Accounts'], ['payees', 'Payees'], ['categories', 'Categories'],
+  const SETTINGS_TABS = [['income', 'Income'], ['accounts', 'Accounts'], ['payees', 'Payees'], ['categories', 'Categories'], ['types', 'Tracked types'],
     ['appearance', 'Appearance'], ['security', 'Security'], ['updates', 'Updates'], ['backups', 'Backup and Storage'], ['advanced', 'Advanced'], ['price-checker', 'Price Checker']];
   // Old addresses of pages that have moved: the budget cycle (General) is on Income now.
   const SETTINGS_MOVED = { logins: 'security', cycle: 'income' };
 
   // Setting up the budget, then the app itself. Each page keeps its old address, so links and bookmarks still work.
   const SETTINGS_GROUPS = [
-    ['Your budget', ['income', 'accounts', 'payees', 'categories']],
+    ['Your budget', ['income', 'accounts', 'payees', 'categories', 'types']],
     ['Appearance & Security', ['appearance', 'security']],
     ['Backups & Updates', ['updates', 'backups', 'advanced']],
     ['Apps', ['price-checker']],
@@ -2925,7 +3174,7 @@
     if (SETTINGS_MOVED[sub]) sub = SETTINGS_MOVED[sub];
     const home = !SETTINGS_TABS.some(([k]) => k === sub);
     const tab = home ? 'income' : sub;
-    const body = { income: settingsIncome, accounts: settingsAccounts, payees: settingsPayees, categories: settingsCategories,
+    const body = { income: settingsIncome, accounts: settingsAccounts, payees: settingsPayees, categories: settingsCategories, types: settingsTypes,
       appearance: themeCard, security: settingsSecurity, updates: settingsUpdates, backups: settingsBackups, advanced: settingsAdvanced, 'price-checker': settingsPriceChecker }[tab]();
     const group = SETTINGS_GROUPS.find(([, keys]) => keys.includes(tab))[0];
     return html`
@@ -4024,6 +4273,47 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       copyText([a.bsb, a.account_number].filter(Boolean).join(' '), 'Bank details');
     },
     'new-expense': (el) => expenseForm(undefined, el.dataset.kind || 'expense'),
+    'new-oneoff': () => oneoffForm(),
+    'edit-oneoff': (el) => editOneoff(Number(el.dataset.id)),
+    'delete-oneoff': async (el) => {
+      const b = (state.data.oneoffs || []).find((x) => x.purchase_id === Number(el.dataset.id));
+      if (!b || !confirm(`Delete "${b.name}"? This cannot be undone.`)) return;
+      await api('DELETE', `/purchases/${b.purchase_id}`);
+      await reload();
+      render();
+    },
+    'new-type': async () => {
+      const name = await askText('New tracked type', 'Name');
+      if (!name) return;
+      await api('POST', '/purchase_types', { name, sort_order: state.data.purchase_types.length + 1 });
+      await reload();
+      render();
+    },
+    'rename-type': async (el) => {
+      const t = findById(state.data.purchase_types, el);
+      const name = t && await askText('Rename tracked type', 'Name', t.name);
+      if (!name || name === t.name) return;
+      await api('PATCH', `/purchase_types/${t.id}`, { name });
+      await reload();
+      render();
+    },
+    'move-type': async (el) => {
+      const list = [...state.data.purchase_types];
+      const i = list.findIndex((t) => t.id === Number(el.dataset.id));
+      const j = i + Number(el.dataset.dir);
+      if (i < 0 || j < 0 || j >= list.length) return;
+      [list[i], list[j]] = [list[j], list[i]];
+      await Promise.all(list.map((t, n) => api('PATCH', `/purchase_types/${t.id}`, { sort_order: n + 1 })));
+      await reload();
+      render();
+    },
+    'delete-type': async (el) => {
+      const t = findById(state.data.purchase_types, el);
+      if (!t || !confirm(`Remove "${t.name}"? Once-offs with it become Not tracked.`)) return;
+      await api('DELETE', `/purchase_types/${t.id}`);
+      await reload();
+      render();
+    },
     'edit-expense': (el) => { const e = findById(state.data.expenses, el); if (e) expenseForm(e); },
     'new-goal': (el) => goalForm(el.dataset.kind),
     'goal-list': (el) => goalListPopup(el.dataset.kind),
@@ -6798,6 +7088,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       tabs: {
         expenses: { label: 'Expenses', add: 'Add expense', action: 'new-expense', kind: 'expense', count: () => state.data.expenses.filter((e) => kindOf(e) === 'expense' || e.show_as_expense).length, render: () => renderExpenses('expense') },
         savings: { label: 'Savings', add: 'Add saving', action: 'new-expense', kind: 'saving', count: () => state.data.expenses.filter((e) => kindOf(e) === 'saving').length, render: () => renderExpenses('saving') },
+        oneoffs: { label: 'Once-offs', add: 'Add once-off', action: 'new-oneoff', count: () => (state.data.oneoffs || []).filter((b) => !b.carried).length, render: renderOneoffs },
         loans: { label: 'Loans', add: 'Add loan', action: 'new-loan', count: () => state.data.loans.length,
           render: () => html`${renderLoans()}<p class="tab-hint">Loan repayments feed into deposits like any other bill.</p>` },
       },
