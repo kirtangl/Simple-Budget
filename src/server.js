@@ -265,7 +265,7 @@ function createApp({ db, secureCookies = false, fetchImpl, dataDir = null, check
     const r = backups.restore(req.body && req.body.name);
     res.json({ ...backupsView(), ...r });
   }));
-  // Settings → Backups & Updates → Storage: how much room the app's files take, and what's left.
+  // Settings → Backup and Storage → Storage: how much room the app's files take, and what's left.
   app.get('/api/storage', auth.require, (req, res) => {
     const { page_count: pages } = db.prepare('PRAGMA page_count').get();
     const { page_size: size } = db.prepare('PRAGMA page_size').get();

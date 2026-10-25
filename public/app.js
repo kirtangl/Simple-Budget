@@ -628,7 +628,7 @@
 
       ${empty ? html`<div class="card welcome"><h2>Welcome!</h2><p>Start by adding your <a href="#/settings/accounts">accounts</a> and
         <a href="#/settings/income">income</a>, then add your bills on the <a href="#/budget/expenses">Expenses</a> tab.
-        Set your budget cycle under <a href="#/settings/cycle">Settings → General</a>.</p></div>` : ''}
+        Set your budget cycle under <a href="#/settings/income">Settings → Income</a>.</p></div>` : ''}
 
       <div class="stats">
         <div class="card stat"><div class="label">Income</div><div class="value num pos">${money(t.income_cents)}</div>
@@ -2905,13 +2905,14 @@
 
   // ---------- Settings ----------
 
-  const SETTINGS_TABS = [['income', 'Income'], ['accounts', 'Accounts'], ['payees', 'Payees'], ['categories', 'Categories'], ['cycle', 'General'],
-    ['appearance', 'Appearance'], ['security', 'Security'], ['updates', 'Updates'], ['backups', 'Backups'], ['advanced', 'Advanced'], ['price-checker', 'Price Checker']];
+  const SETTINGS_TABS = [['income', 'Income'], ['accounts', 'Accounts'], ['payees', 'Payees'], ['categories', 'Categories'],
+    ['appearance', 'Appearance'], ['security', 'Security'], ['updates', 'Updates'], ['backups', 'Backup and Storage'], ['advanced', 'Advanced'], ['price-checker', 'Price Checker']];
+  // Old addresses of pages that have moved: the budget cycle (General) is on Income now.
+  const SETTINGS_MOVED = { logins: 'security', cycle: 'income' };
 
   // Setting up the budget, then the app itself. Each page keeps its old address, so links and bookmarks still work.
   const SETTINGS_GROUPS = [
     ['Your budget', ['income', 'accounts', 'payees', 'categories']],
-    ['Site', ['cycle']],
     ['Appearance & Security', ['appearance', 'security']],
     ['Backups & Updates', ['updates', 'backups', 'advanced']],
     ['Apps', ['price-checker']],
@@ -2921,10 +2922,10 @@
   // A side list of the groups on a computer. On a phone, Settings on its own is the list, and each
   // page has a back arrow to it.
   function renderSettings(sub) {
-    if (sub === 'logins') sub = 'security'; // its old name
+    if (SETTINGS_MOVED[sub]) sub = SETTINGS_MOVED[sub];
     const home = !SETTINGS_TABS.some(([k]) => k === sub);
     const tab = home ? 'income' : sub;
-    const body = { income: settingsIncome, accounts: settingsAccounts, payees: settingsPayees, categories: settingsCategories, cycle: settingsCycle,
+    const body = { income: settingsIncome, accounts: settingsAccounts, payees: settingsPayees, categories: settingsCategories,
       appearance: themeCard, security: settingsSecurity, updates: settingsUpdates, backups: settingsBackups, advanced: settingsAdvanced, 'price-checker': settingsPriceChecker }[tab]();
     const group = SETTINGS_GROUPS.find(([, keys]) => keys.includes(tab))[0];
     return html`
@@ -2981,7 +2982,8 @@
             <div class="right"><div class="num" style="font-weight:700">${money(incomePerCycle(i))}</div><div class="meta">${aCycle()} after tax</div>
               ${(i.frequency || 'fortnightly') !== state.data.settings.pay_frequency ? html`<div class="meta num">(${money(i.after_tax_cents)} ${(INCOME_FREQ[i.frequency] || 'Fortnightly').toLowerCase()})</div>` : ''}</div>
           </li>`)}</ul>` : html`<p class="empty">No income added yet.</p>`}
-      </div>`;
+      </div>
+      ${settingsCycle()}`;
   }
 
   function incomeForm(i = {}) {
@@ -3552,19 +3554,19 @@ sudo docker compose up -d --build</pre>${s.extra}`;
   function settingsBackups() {
     const main = Boolean(state.me && state.me.main);
     return html`
+      ${storageCard()}
       ${updBackupsCard(main)}
       <div class="card">
         <h2>Download or restore a backup file</h2>
         <p class="muted small">Download everything (accounts, income, payees, categories, expenses, savings, loans, goals, debts, shopping and these settings)
           as a file you can keep somewhere safe. Restoring a backup <b>replaces</b> what's in the app now. Your password isn't included or changed.</p>
         <div class="row">
-          <a class="btn" href="api/export" download>Download backup</a>
-          ${main ? html`<label class="btn" style="margin:0;font-size:inherit">Restore from backup…
+          <a class="btn btn-good" href="api/export" download>Download backup</a>
+          ${main ? html`<label class="btn btn-bad" style="margin:0;font-size:inherit">Restore from backup…
             <input type="file" accept="application/json,.json" data-input="restore" hidden></label>` : ''}
         </div>
         ${main ? '' : html`<p class="muted small">Only the main login can restore a backup.</p>`}
-      </div>
-      ${storageCard()}`;
+      </div>`;
   }
 
   // Read-only: what the app's files take up on the server.
@@ -3623,7 +3625,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     return html`<section class="card upd-backups" id="upd-backups">
       <div class="upd-card-head"><div><h3>Kept on the server</h3>
         <p class="upd-card-sub">Made automatically before every update. Kept for the last ${b ? b.keep || 5 : 5}. Up to 20 made by hand.</p></div>
-        ${b && b.available ? html`<button class="linkish" data-action="backup-now">Back up now</button>` : ''}</div>
+        ${b && b.available ? html`<button class="primary" data-action="backup-now">Back up now</button>` : ''}</div>
       ${!b ? html`<p class="muted small">Couldn't load the backups.</p>`
         : !b.available ? html`<p class="muted small">This copy doesn't keep backups on the server. Download a backup file below instead.</p>`
         : b.backups.length ? html`<ul class="upd-backup-list">${b.backups.map((x) => html`<li>
@@ -4380,7 +4382,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       state.offset = 0;
       render();
       const total = Object.values(result.counts).reduce((a, b) => a + b, 0);
-      toast(result.backup ? `Restored ${total} items. What was there before is under Settings → Backups.` : `Restored ${total} items`);
+      toast(result.backup ? `Restored ${total} items. What was there before is under Settings → Backup and Storage.` : `Restored ${total} items`);
       if (result.warnings.length) alert(`Restored, with a few things to check:\n\n${result.warnings.join('\n')}`);
     } catch (err) {
       alert(`Restore failed: ${err.message}`);

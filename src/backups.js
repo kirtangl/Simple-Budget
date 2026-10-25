@@ -1,6 +1,6 @@
 'use strict';
 
-// Copies of the whole database in <data>/backups, listed in Settings → Backups.
+// Copies of the whole database in <data>/backups, listed in Settings → Backup and Storage.
 //   budget-before-v0.7.1-<time>.db    made before an update (the newest 5, 10 or 20 kept,
 //   budget-before-restore-<time>.db   with the ones made before a restore)
 //   budget-manual-<time>.db           made with "Back up now" (up to 20, kept until deleted)

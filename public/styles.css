@@ -441,7 +441,6 @@ input::-webkit-date-and-time-value { text-align: left; }
 .adv-fields .field { max-width: 640px; }
 .env-chip { background: var(--upcoming-soft); color: var(--upcoming); font-weight: 600; }
 .adv-info li { display: flex; gap: 8px; }
-}
 
 .tag button { min-height: 0; padding: 0 6px; border: 0; background: none; color: var(--muted); font-size: 1rem; }
 
@@ -496,6 +495,10 @@ dialog form > .dialog-actions:not([hidden]) ~ .error:empty { display: none; }
 
 .empty { text-align: center; color: var(--muted); padding: 24px 8px; }
 
+/* Download a backup (green) and restore one (red, since it replaces everything). */
+.btn.btn-good { background: var(--paid); border-color: var(--paid); color: var(--card); font-weight: 600; }
+.btn.btn-bad { background: var(--danger); border-color: var(--danger); color: var(--card); font-weight: 600; }
+.btn.btn-good:hover, .btn.btn-bad:hover { filter: brightness(1.08); text-decoration: none; }
 a.btn, label.btn { display: inline-flex; align-items: center; text-decoration: none; color: var(--text); font-size: inherit; margin: 0; }
 
 /* Text-style buttons for inline actions ("change", "Show 3 incomes") */
