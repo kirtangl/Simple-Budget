@@ -801,8 +801,9 @@
     const mine = p.id ? p.owner_id != null : true;
     const other = p.owner_id != null && p.owner_id !== me ? (state.logins || []).find((l) => l.id === p.owner_id) : null;
     const goals = state.data.goals.filter((g) => g.kind === 'goal' && (!g.done || g.id === p.goal_id));
-    const extra = ['shop', 'category_id', 'type_id', 'tax_deductible', 'notes', 'payment_method', 'quantity', 'serial', 'link', 'warranty_start', 'ext_provider', 'keep_forever']
-      .some((k) => p[k]);
+    // How many of the extra details are filled in, shown beside More (which starts folded).
+    const extra = ['shop', 'payment_method', 'category_id', 'type_id', 'tax_deductible', 'quantity', 'serial', 'link', 'notes', 'warranty_start', 'ext_provider', 'keep_forever']
+      .filter((k) => p[k]).length;
     const firstAccount = state.data.accounts[0] && state.data.accounts[0].id;
     openForm({
       title: p.id ? 'Edit once-off' : 'Add once-off',
@@ -828,7 +829,7 @@
           <div class="field full" id="o-goal-row" ${p.exclude ? '' : raw('hidden')}><label for="o-goal">Paid from goal (optional)</label>
             <select id="o-goal" name="goal_id">${options(goals, p.goal_id)}</select></div>
         </div>
-        <details class="oneoff-more" ${extra ? raw('open') : ''}><summary>More</summary>
+        <details class="oneoff-more"><summary>More${extra ? html` <span class="more-count" aria-label="${extra} filled in">${extra}</span>` : ''}</summary>
           <div class="fields">
             <div class="field"><label for="o-shop">Shop</label><input id="o-shop" name="shop" value="${p.shop || ''}"></div>
             <div class="field"><label for="o-pay">Paid by</label><select id="o-pay" name="payment_method"><option value="">—</option>${pickList(PAY_METHODS, p.payment_method)}</select></div>
@@ -1027,7 +1028,9 @@
         if (body.balance_date > today) throw new Error("The balance date can't be in the future.");
         await api('POST', `/loans/${l.id}/balance`, body);
         await reload();
-        toast(`${l.name} balance updated`);
+        // A statement older than the one already saved goes in the history; the newer balance stays.
+        if (l.balance_date && body.balance_date < l.balance_date) toast(`Added to the history for ${fmtDate(body.balance_date, true)}. The newer statement from ${fmtDate(l.balance_date, true)} stays the balance.`);
+        else toast(`${l.name} balance updated`);
         const id = l.id;
         setTimeout(() => loanDetails(id).catch(() => {}), 0);
       },
@@ -2287,8 +2290,18 @@
     await reload();
     await render();
     const debt = g.kind === 'debt';
-    if (!change) toast(sign > 0 ? `${g.name} is already ${debt ? 'fully paid' : 'fully saved'}.` : `Nothing to take out of ${g.name}.`);
-    else if (g.target_cents && next >= g.target_cents) toast(`${g.name} has reached its ${debt ? 'total' : 'target'}!`);
+    if (!change && !(sign > 0 && g.target_cents && next >= g.target_cents)) toast(`Nothing to take out of ${g.name}.`);
+    else if (g.target_cents && next >= g.target_cents) {
+      // Reaching the target is usually the end of it, so offer to move it to Completed.
+      const done = await askChoice({ title: debt ? 'All paid back' : 'Target reached', text: html`<b>${g.name}</b> has reached its ${debt ? 'total' : 'target'} of ${money(g.target_cents)}. Mark it as done? It moves to Completed, and you can undo it there.`,
+        choices: [{ label: 'Not yet', value: 'no' }, { label: 'Mark as done', value: 'yes', primary: true }] });
+      if (done === 'yes') {
+        await api('PATCH', `/goals/${g.id}`, { done: true });
+        await reload();
+        await render();
+        toast(`${g.name} is done`);
+      }
+    }
     else toast(`${change > 0 ? (debt ? 'Paid' : 'Added') : 'Took out'} ${money(Math.abs(change))}. Now ${money(next)} ${debt ? 'paid off' : 'saved'}.`);
   }
 
