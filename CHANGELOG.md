@@ -2,7 +2,7 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
-## v1.0.0 (25 October 2026)
+## v1.0.0 (30 October 2026)
 
 Simple Budget 1.0. Everything the household needs day to day is now in place and has been tested together: the fortnight's bills and deposits, Keep in account, once-off purchases, savings, goals, loans, shopping with prices, logins, backups and updates. From here, updates add to it without changing how you already use it. Your data, logins and settings carry straight over, and nothing needs doing on the server.
 
