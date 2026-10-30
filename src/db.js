@@ -5,6 +5,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
+const budget = require('./budget');
 
 // An account with no colour of its own is shown in the palette colour for its place in the list
 // (public/app.js PALETTE). This saves that colour on it, so moving or removing an account
@@ -532,7 +533,29 @@ const MIGRATIONS = [
   CREATE INDEX purchases_when ON purchases (purchased_at);
   CREATE INDEX purchases_clears ON purchases (clears_at);
   `,
+  // 32: the Purchases page's search. warranty_end is the last day either warranty covers
+  // (worked out on save; filled in for existing ones just after this runs), and indexes for
+  // each filter, newest first within it.
+  `
+  ALTER TABLE purchases ADD COLUMN warranty_end TEXT;
+  CREATE INDEX purchases_type ON purchases (type_id, purchased_at);
+  CREATE INDEX purchases_account ON purchases (account_id, purchased_at);
+  CREATE INDEX purchases_category ON purchases (category_id, purchased_at);
+  CREATE INDEX purchases_owner ON purchases (owner_id, purchased_at);
+  CREATE INDEX purchases_tax ON purchases (tax_deductible, purchased_at);
+  CREATE INDEX purchases_warranty ON purchases (warranty_end);
+  `,
 ];
+
+// Work done in code after a migration, by its number (1-based).
+const AFTER_MIGRATION = {
+  32: (db) => {
+    const set = db.prepare('UPDATE purchases SET warranty_end = ? WHERE id = ?');
+    for (const p of db.prepare('SELECT id, warranty_start, warranty_length, warranty_unit, ext_length, ext_unit FROM purchases WHERE warranty_start IS NOT NULL').all()) {
+      set.run(budget.purchaseWarrantyEnd(p), p.id);
+    }
+  },
+};
 
 function openDatabase(file) {
   if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -548,6 +571,7 @@ function openDatabase(file) {
       db.exec(MIGRATIONS[i]);
       db.exec(`PRAGMA user_version = ${i + 1}`);
       if (i === 0) seed(db);
+      if (AFTER_MIGRATION[i + 1]) AFTER_MIGRATION[i + 1](db);
     });
   }
   return db;
@@ -612,4 +636,4 @@ function setSetting(db, key, value) {
   settingStatement(db, 'set').run(key, value);
 }
 
-module.exports = { openDatabase, transaction, getSetting, setSetting, fillAccountColours };
+module.exports = { openDatabase, transaction, getSetting, setSetting, fillAccountColours, AFTER_MIGRATION };
