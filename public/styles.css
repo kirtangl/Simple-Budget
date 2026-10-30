@@ -367,6 +367,12 @@ input, select, textarea {
   width: 100%; font: inherit; font-size: 16px; color: var(--text);
   padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--inset);
 }
+/* Dropdowns draw their own arrow, set in from the right edge, in the theme's muted colour. */
+select:not([multiple]):not([size]) {
+  appearance: none; -webkit-appearance: none; padding-right: 34px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: right 17px top 50%, right 12px top 50%; background-size: 5px 5px; background-repeat: no-repeat;
+}
 input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
 input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--brand); }
 input[type="color"] { padding: 2px; height: 42px; }
@@ -729,7 +735,7 @@ button.info:hover { color: var(--brand); border-color: var(--brand); }
 
 /* Overview: account name with its colour dot under each bill */
 .acct-tag { display: inline-flex; align-items: center; gap: 5px; vertical-align: top; }
-.bill .meta:has(.acct-tag) { display: flex; align-items: center; flex-wrap: wrap; column-gap: 4px; }
+.bill .meta:has(.acct-tag) { display: flex; align-items: center; flex-wrap: wrap; column-gap: 4px; row-gap: 4px; margin-top: 4px; }
 .acct-tag .dot { width: 8px; height: 8px; }
 /* Overview expenses: the account in a bubble of its own colour, a deep shade of it inside. */
 .acct-tag.bubble { padding: 1px 8px 1px 6px; border-radius: 999px; border: 1px solid var(--acct); background: color-mix(in srgb, var(--acct) 14%, var(--card));
@@ -2537,6 +2543,8 @@ li.bill.oneoff .bin-btn { flex: none; margin-left: 6px; }
 .oneoff-more { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
 .oneoff-more > summary { cursor: pointer; color: var(--link); font-size: .9rem; font-weight: 600; margin-bottom: 4px; }
 .oneoff-more[open] > summary { margin-bottom: 10px; }
+.more-count { display: inline-grid; place-content: center; min-width: 20px; height: 20px; padding: 0 6px; margin-left: 4px; border-radius: 999px;
+  background: var(--brand-soft); color: var(--brand); font-size: .75rem; vertical-align: 1px; }
 .o-h { margin: 12px 0 6px; font-size: .95rem; }
 .o-len { display: flex; gap: 6px; }
 .o-len input { flex: 1 1 60px; min-width: 0; }

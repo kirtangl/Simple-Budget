@@ -7,7 +7,14 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 Simple Budget 1.0. Everything the household needs day to day is now in place and has been tested together: the fortnight's bills and deposits, Keep in account, once-off purchases, savings, goals, loans, shopping with prices, logins, backups and updates. From here, updates add to it without changing how you already use it. Your data, logins and settings carry straight over, and nothing needs doing on the server.
 
 ### Improved
+- **Reaching a goal or paying something back in full** now asks **Mark as done?** It moves to Completed, where you can undo it.
+- **More on a once-off** starts folded, with a small count of how many extra details are filled in.
+- **Dropdowns** have a neater arrow, set in from the right edge, in every theme.
+- **Updating a loan's balance with an older statement date** now says it was added to the history, and that the newer statement stays the balance.
 - **The README** has screenshots and up-to-date first steps: the budget cycle is under Settings → Income, and rounding and buffer are set for each account.
+
+### Fixed
+- The Once-off, Loan, Savings and Private chips no longer touch the account bubble under them.
 
 ## v0.9.14 (25 October 2026)
 
