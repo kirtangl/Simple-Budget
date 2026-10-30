@@ -592,15 +592,21 @@ function createApi(db) {
     const day = today();
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="simple-budget-purchases-${day}.csv"`);
-    res.write('﻿');
+    res.write('\ufeff'); // so spreadsheets read it as UTF-8
     res.write(`${['Date', 'Name', 'Amount', 'Account', 'Shop', 'Category', 'Sub category', 'Tracked type', 'Tax deductible', 'Whose', 'Paid by',
       'Quantity', 'Serial or model no.', 'Notes', 'Warranty ends', 'Warranty', 'Not counted', 'Link'].join(',')}\r\n`);
-    for (const p of db.prepare(`SELECT p.* FROM purchases p WHERE ${sql} ORDER BY p.purchased_at DESC, p.id DESC`).iterate(...params)) {
-      const status = budget.warrantyStatus(p.warranty_end, day);
-      res.write(`${[budget.localDateOf(p.purchased_at), p.name, (p.amount_cents / 100).toFixed(2), accounts.get(p.account_id), p.shop,
-        categories.get(p.category_id), subs.get(p.subcategory_id), p.type_id == null ? 'Not tracked' : types.get(p.type_id),
-        p.tax_deductible ? 'Yes' : '', p.owner_id == null ? 'Shared' : logins.get(p.owner_id), p.payment_method, p.quantity, p.serial, p.notes,
-        p.warranty_end, status ? WARRANTY_WORDS[status] : '', p.exclude ? 'Yes' : '', p.link].map(cell).join(',')}\r\n`);
+    // 500 rows at a time (statement.iterate() isn't in Node 22.13), each batch after the last one written.
+    const first = db.prepare(`SELECT p.* FROM purchases p WHERE ${sql} ORDER BY p.purchased_at DESC, p.id DESC LIMIT 500`);
+    const next = db.prepare(`SELECT p.* FROM purchases p WHERE ${sql} AND (p.purchased_at < ? OR (p.purchased_at = ? AND p.id < ?))
+      ORDER BY p.purchased_at DESC, p.id DESC LIMIT 500`);
+    for (let batch = first.all(...params); batch.length; batch = batch.length < 500 ? [] : next.all(...params, batch.at(-1).purchased_at, batch.at(-1).purchased_at, batch.at(-1).id)) {
+      for (const p of batch) {
+        const status = budget.warrantyStatus(p.warranty_end, day);
+        res.write(`${[budget.localDateOf(p.purchased_at), p.name, (p.amount_cents / 100).toFixed(2), accounts.get(p.account_id), p.shop,
+          categories.get(p.category_id), subs.get(p.subcategory_id), p.type_id == null ? 'Not tracked' : types.get(p.type_id),
+          p.tax_deductible ? 'Yes' : '', p.owner_id == null ? 'Shared' : logins.get(p.owner_id), p.payment_method, p.quantity, p.serial, p.notes,
+          p.warranty_end, status ? WARRANTY_WORDS[status] : '', p.exclude ? 'Yes' : '', p.link].map(cell).join(',')}\r\n`);
+      }
     }
     res.end();
   });
