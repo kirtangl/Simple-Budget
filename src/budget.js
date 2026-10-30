@@ -786,6 +786,45 @@ function workOutEstimates(loan, today) {
   };
 }
 
+// ---------- Warranties ----------
+//
+// A warranty's last day is its start plus its length, less a day (the same sums as the
+// purchase popup, so the date it shows is the one searched). An extended warranty runs on
+// from the day after the first one ends, or from the start when there isn't a first one.
+function warrantyEnd(start, length, unit) {
+  if (!start || !isValidDate(start) || !(length > 0)) return null;
+  const d = new Date(`${start}T00:00:00Z`);
+  if (unit === 'days') d.setUTCDate(d.getUTCDate() + length);
+  else d.setUTCMonth(d.getUTCMonth() + (unit === 'years' ? 12 : 1) * length);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+// The last day a purchase is covered, by either warranty, or null without one.
+function purchaseWarrantyEnd(p) {
+  const end = warrantyEnd(p.warranty_start, p.warranty_length, p.warranty_unit || 'years');
+  const ext = warrantyEnd(end ? addDays(end, 1) : p.warranty_start, p.ext_length, p.ext_unit || 'years');
+  return ext && (!end || ext > end) ? ext : end;
+}
+// The warranty dot, by the last covered day: green while covered, amber from 3 months before
+// it ends, orange for a year after it ends, then red.
+function warrantyStatus(end, today) {
+  if (!end) return null;
+  if (today > end) return today > addMonths(end, 12) ? 'red' : 'orange';
+  return today >= addMonths(end, -3) ? 'amber' : 'green';
+}
+// The same lines as dates to search by: a warranty ending after `amber` is green, on or after
+// `today` amber, on or after `orange` orange, and red before that. (On the last day of a month,
+// every end in the last days of the month 3 months on is already amber.)
+function warrantyCuts(today) {
+  const [y, m, d] = today.split('-').map(Number);
+  const lastDay = d === new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const ahead = addMonths(today, 3);
+  const amber = lastDay ? addDays(addMonths(`${ahead.slice(0, 7)}-01`, 1), -1) : ahead;
+  // A year back, except on 29 February: a year after 28 February is the 28th, already red.
+  const back = addMonths(today, -12);
+  return { amber, today, orange: addMonths(back, 12) < today ? addDays(back, 1) : back };
+}
+
 module.exports = {
   FREQUENCIES, PAY_FREQUENCIES, DEFAULT_PAY_CYCLE, payCycle, paysPerYear, monthlyStart,
   addDays, daysBetween, isValidDate, cycleIndexFor, cycleBounds,
@@ -794,4 +833,5 @@ module.exports = {
   scheduledRepayment, budgetedRepayment, nextDue, loanEndDate, calculatedRepayment, minimumBalance,
   loanRepayment, simulateLoan, loanEstimates, loanTimeline, loanHistory, ROUNDING, DEFAULT_DEPOSIT_RULES, roundUp, depositCents, buildCycle,
   heldEstimates, localDateOf, startOfDay, clearsAtFor, oneOffRows, pendingAt, CLEAR_HOURS,
+  warrantyEnd, purchaseWarrantyEnd, warrantyCuts, warrantyStatus,
 };

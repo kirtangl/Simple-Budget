@@ -2,6 +2,16 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
+## v1.0.1 (unreleased)
+
+### New
+- **Purchases**, a new page in the menu for finding anything you've bought. Search by name, shop, notes or serial number, and narrow it down by tracked type, Tax deductible, dates (this fortnight, this month, this financial year, last financial year or your own dates), account, category, whose it is and warranty. It shows the newest first, with how many match and their total, and loads more as you go.
+- **Warranty dots** on each purchase, and in its popup: green while it's covered, amber in its last 3 months, orange for a year after it ends, then red. An extended warranty counts when it runs later. A key under the list explains the colours.
+- **Export CSV** saves what the Purchases page is showing as a spreadsheet, handy at tax time.
+
+### Improved
+- Only tracked purchases show to start with; tick **Include not tracked** under Filters to see the rest. Other logins' private purchases never show there or in the export.
+
 ## v1.0.0 (30 October 2026)
 
 Simple Budget 1.0. Everything the household needs day to day is now in place and has been tested together: the fortnight's bills and deposits, Keep in account, once-off purchases, savings, goals, loans, shopping with prices, logins, backups and updates. From here, updates add to it without changing how you already use it. Your data, logins and settings carry straight over, and nothing needs doing on the server.
