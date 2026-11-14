@@ -130,6 +130,7 @@
   async function reload() {
     state.data = await api('GET', '/data');
     state.trends = null; // the year ahead is worked out from this data, so fetch it again next time
+    state.puStale = true; // and the Purchases page's results
     showBell(state.data.notices);
   }
 
@@ -818,6 +819,7 @@
           <div class="field full" id="o-custom" ${p.clear_mode === 'custom' ? '' : raw('hidden')}><label for="o-clears">Clears on</label>
             <input id="o-clears" type="datetime-local" name="clears_at" value="${p.clear_mode === 'custom' ? localStamp(p.clears_at) : ''}"></div>
           <div class="field full"><div class="hint" id="o-clear-hint"></div></div>
+          ${p.warranty_status ? html`<div class="field full"><div class="o-warranty">${warrantyText(p)}</div></div>` : ''}
           ${household() ? html`<div class="field"><label for="o-owner">Whose is it?</label><select id="o-owner" name="owner">
               <option value="shared" ${mine ? '' : raw('selected')}>Shared</option>
               ${other ? html`<option value="other" selected>${other.name}</option>` : ''}
@@ -919,6 +921,138 @@
       },
       onDelete: p.id ? async () => { await api('DELETE', `/purchases/${p.id}`); await reload(); } : null,
     });
+  }
+
+  // ---------- Purchases: every tracked once-off, to find again ----------
+  //
+  // The filters live in state.pu* (and are remembered on this device). The server does the
+  // searching and sends one page at a time; Load more adds the next page.
+  const PU_DEFAULTS = { puQuery: '', puRange: '', puFrom: '', puTo: '', puTypes: '', puUntracked: '', puTax: '', puAccount: '', puCategory: '', puWho: '', puWarranty: '' };
+  const PU_PAGE = 50;
+  const WARRANTY_DOTS = {
+    green: ['In warranty', 'var(--paid)'], amber: ['Ends within 3 months', 'var(--due)'],
+    orange: ['Ended in the last year', 'var(--firm)'], red: ['Ended over a year ago', 'var(--danger)'],
+  };
+  const PU_WARRANTY = [['', 'Any'], ['covered', 'Still covered'], ['green', 'In warranty'], ['amber', 'Ends within 3 months'],
+    ['orange', 'Ended in the last year'], ['red', 'Ended over a year ago'], ['any', 'Has a warranty'], ['none', 'No warranty']];
+  function loadPuFilters() {
+    if (state.puLoaded) return;
+    state.puLoaded = true;
+    Object.assign(state, PU_DEFAULTS);
+    try { Object.assign(state, Object.fromEntries(Object.entries(JSON.parse(recall('pu:filters') || '{}')).filter(([k, v]) => k in PU_DEFAULTS && typeof v === 'string'))); } catch { /* start fresh */ }
+  }
+  const savePuFilters = () => remember('pu:filters', JSON.stringify(Object.fromEntries(Object.keys(PU_DEFAULTS).map((k) => [k, state[k] || '']))));
+  // The date range for a quick pick, as local days.
+  function puDates(range) {
+    const today = state.data.settings.today;
+    const [y, m] = today.split('-').map(Number);
+    const fyStart = m >= 7 ? y : y - 1;
+    const pad = (n) => String(n).padStart(2, '0');
+    if (range === 'cycle') return state.data.cycle ? [state.data.cycle.start, state.data.cycle.end] : [today, today];
+    if (range === 'month') return [`${y}-${pad(m)}-01`, addDaysIso(`${m === 12 ? y + 1 : y}-${pad(m === 12 ? 1 : m + 1)}-01`, -1)];
+    if (range === 'fy') return [`${fyStart}-07-01`, `${fyStart + 1}-06-30`];
+    if (range === 'lastfy') return [`${fyStart - 1}-07-01`, `${fyStart}-06-30`];
+    if (range === 'custom') return [state.puFrom || '', state.puTo || ''];
+    return ['', ''];
+  }
+  const fyName = (offset) => { const [y, m] = state.data.settings.today.split('-').map(Number); const s = (m >= 7 ? y : y - 1) + offset; return `FY ${String(s).slice(2)}–${String(s + 1).slice(2)}`; };
+  function puQueryString(extra = {}) {
+    const [from, to] = puDates(state.puRange);
+    const q = { q: state.puQuery, from, to, types: state.puTypes, untracked: state.puUntracked, tax: state.puTax,
+      account: state.puAccount, category: state.puCategory, who: state.puWho, warranty: state.puWarranty, ...extra };
+    return new URLSearchParams(Object.entries(q).filter(([, v]) => v !== '' && v != null)).toString();
+  }
+  // How many filters (beyond the search and dates) are on, for the Filters button.
+  const puFilterCount = () => ['puTypes', 'puUntracked', 'puTax', 'puAccount', 'puCategory', 'puWho', 'puWarranty'].filter((k) => state[k]).length;
+
+  async function loadPurchases(more = false) {
+    loadPuFilters();
+    const qs = puQueryString();
+    if (!more && state.puResult && state.puResult.qs === qs && !state.puStale) return;
+    const offset = more ? state.puResult.items.length : 0;
+    const r = await api('GET', `/purchases/search?${puQueryString({ limit: PU_PAGE, offset })}`);
+    state.puResult = { qs, count: r.count, total_cents: r.total_cents, items: more ? [...state.puResult.items, ...r.items] : r.items };
+    state.puStale = false;
+  }
+
+  const warrantyDot = (p) => {
+    const w = WARRANTY_DOTS[p.warranty_status];
+    if (!w) return '';
+    const when = `${p.warranty_status === 'green' || p.warranty_status === 'amber' ? 'until' : 'ended'} ${fmtDate(p.warranty_end, true)}`;
+    return html`<span class="w-dot" style="--w:${w[1]}" title="${w[0]}: ${when}" role="img" aria-label="${w[0]}, ${when}"></span>`;
+  };
+  const warrantyText = (p) => {
+    if (!WARRANTY_DOTS[p.warranty_status]) return '';
+    const live = p.warranty_status === 'green' || p.warranty_status === 'amber';
+    return html`${warrantyDot(p)} ${live ? 'Covered until' : 'Warranty ended'} ${fmtDate(p.warranty_end, true)}`;
+  };
+  const warrantyKey = () => html`<p class="w-key" aria-label="Warranty colours">${Object.values(WARRANTY_DOTS).map(([t, c]) => html`<span><span class="w-dot" style="--w:${c}"></span>${t}</span>`)}</p>`;
+
+  function purchaseRowHtml(p) {
+    const d = new Date(p.purchased_at);
+    const a = account(p.account_id);
+    const type = p.type_id != null && byId(state.data.purchase_types, p.type_id);
+    const cat = category(p.category_id);
+    const owner = household() && p.owner_id != null && p.owner_id !== (state.me && state.me.id) ? (state.logins || []).find((l) => l.id === p.owner_id) : null;
+    const meta = [p.shop, cat && cat.name, owner && owner.name, p.owner_id == null && household() ? 'Shared' : ''].filter(Boolean);
+    return html`<li class="pu-row clickable" data-action="edit-oneoff" data-id="${p.id}">
+      <div class="date-box"><b>${d.getDate()}</b><span>${MONTHS[d.getMonth()]}${d.getFullYear() !== Number(state.data.settings.today.slice(0, 4)) ? html` ’${String(d.getFullYear()).slice(2)}` : ''}</span></div>
+      <div class="grow"><div class="title">${warrantyDot(p)}<span class="pu-name">${p.name}</span>${type ? html` <span class="chip">${type.name}</span>` : ''}${p.tax_deductible ? html` <span class="chip tax">Tax</span>` : ''}${p.private ? html` <span class="chip">Private</span>` : ''}${p.exclude ? html` <span class="chip">Not counted</span>` : ''}</div>
+        <div class="meta">${a ? html`<span class="acct-tag bubble" style="--acct:${accountColor(a.id)}"><span class="dot"></span>${a.name}</span>` : ''}${a && meta.length ? ' · ' : ''}${meta.join(' · ')}</div></div>
+      <div class="right"><div class="num">${money(p.amount_cents)}</div></div>
+    </li>`;
+  }
+
+  function renderPurchases() {
+    const r = state.puResult;
+    const types = state.data.purchase_types;
+    const picked = new Set(state.puTypes.split(',').filter(Boolean));
+    const ranges = [['', 'All dates'], ['cycle', `This ${cycleWord()}`], ['month', 'This month'], ['fy', `This year (${fyName(0)})`], ['lastfy', `Last year (${fyName(-1)})`], ['custom', 'Custom']];
+    const [from, to] = puDates(state.puRange);
+    const filters = puFilterCount();
+    const toggle = (key, on, text, value = '1') => html`<button type="button" class="acct-chip ${on ? 'on' : ''}" data-action="pu-set" data-key="${key}" data-value="${on ? '' : value}" aria-pressed="${on ? 'true' : 'false'}">${text}</button>`;
+    const typeChip = (t) => { const on = picked.has(String(t.id)); return html`<button type="button" class="acct-chip ${on ? 'on' : ''}" data-action="pu-type" data-id="${t.id}" aria-pressed="${on ? 'true' : 'false'}">${t.name}</button>`; };
+    const who = [['', 'Everyone'], ['shared', 'Shared'], ['mine', 'Mine'], ['others', 'Other people’s']];
+    const shown = r.items.length;
+    return html`<div id="pu-page">
+      <div class="page-head"><div><h1>Purchases</h1><p class="muted small">Everything you've tracked, to find again</p></div>
+        <a class="btn pu-export" href="api/purchases/export.csv?${puQueryString()}" download>Export CSV</a></div>
+      <section class="card pu-filters">
+        <label class="exp-search-wrap"><span class="ico" aria-hidden="true">⌕</span><input type="search" class="exp-search" placeholder="Search name, shop, notes or serial" value="${state.puQuery}" data-input="pu-query" aria-label="Search purchases"></label>
+        <div class="pu-ranges" role="group" aria-label="Dates">${ranges.map(([v, t]) => html`<button type="button" class="acct-chip ${state.puRange === v ? 'on' : ''}" data-action="pu-set" data-key="puRange" data-value="${v}" aria-pressed="${state.puRange === v ? 'true' : 'false'}">${t}</button>`)}</div>
+        ${state.puRange === 'custom' ? html`<div class="pu-custom"><div class="field"><label for="pu-from">From</label><input id="pu-from" type="date" value="${state.puFrom}" data-input="pu-from"></div>
+          <div class="field"><label for="pu-to">To</label><input id="pu-to" type="date" value="${state.puTo}" data-input="pu-to"></div></div>`
+          : state.puRange ? html`<p class="muted small pu-range-text">${fmtDate(from, true)} to ${fmtDate(to, true)}</p>` : ''}
+        <details class="pu-more" ${state.puOpen ?? filters ? raw('open') : ''}><summary>Filters${filters ? html` <span class="more-count" aria-label="${filters} on">${filters}</span>` : ''}</summary>
+          <div class="pu-grid">
+            <div class="pu-types full"><span class="pu-lbl">Tracked type</span><div class="acct-chips">${types.map(typeChip)}${toggle('puUntracked', state.puUntracked, 'Include not tracked')}</div></div>
+            <div class="pu-picks">
+              ${dropdown('puAccount', 'Account', [['', 'All'], ...state.data.accounts.map((a) => [String(a.id), a.name])])}
+              ${dropdown('puCategory', 'Category', [['', 'All'], ...state.data.categories.map((c) => [String(c.id), c.name])])}
+              ${household() ? dropdown('puWho', 'Whose', who) : ''}
+              ${dropdown('puWarranty', 'Warranty', PU_WARRANTY)}
+              ${toggle('puTax', state.puTax, 'Tax deductible only')}
+              <button type="button" class="exp-reset" data-action="pu-reset" ${filters || state.puQuery || state.puRange ? '' : raw('disabled')} title="Clear the search and filters">↺ Reset</button>
+            </div>
+          </div>
+        </details>
+      </section>
+      <p class="pu-sum"><b>${r.count === 1 ? '1 purchase' : `${r.count.toLocaleString()} purchases`}</b> · ${money(r.total_cents)}${shown < r.count ? html` <span class="muted">· showing ${shown.toLocaleString()}</span>` : ''}</p>
+      ${shown ? html`<section class="card pu-card"><ul class="list pu-list">${r.items.map(purchaseRowHtml)}</ul>
+          ${shown < r.count ? html`<button type="button" class="pu-load" data-action="pu-load-more">Load ${Math.min(PU_PAGE, r.count - shown)} more</button>` : ''}</section>`
+        : html`<section class="card"><p class="empty">No purchases match.${state.puUntracked ? '' : ' Only tracked ones show unless you tick Include not tracked under Filters.'}</p></section>`}
+      ${warrantyKey()}
+      <p class="tab-hint">Purchases are the once-offs you add with <b>+ Once-off</b>. Give one a tracked type under More to find it here, and add its warranty to see the dot.</p>
+    </div>`;
+  }
+  async function puRefresh(focusInput) {
+    savePuFilters();
+    const pos = focusInput && focusInput.selectionStart;
+    await render();
+    if (focusInput) {
+      const input = document.querySelector(`[data-input="${focusInput.dataset.input}"]`);
+      if (input) { input.focus(); if (pos != null && input.setSelectionRange && input.type === 'search') input.setSelectionRange(pos, pos); }
+    }
   }
 
   // Settings → Tracked types: the kinds of purchase worth keeping an eye on. "Not tracked" is the default.
@@ -4287,6 +4421,15 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     },
     'new-expense': (el) => expenseForm(undefined, el.dataset.kind || 'expense'),
     'new-oneoff': () => oneoffForm(),
+    'pu-set': (el) => { state[el.dataset.key] = el.dataset.value; puRefresh(); },
+    'pu-type': (el) => {
+      const ids = new Set(state.puTypes.split(',').filter(Boolean));
+      if (ids.has(el.dataset.id)) ids.delete(el.dataset.id); else ids.add(el.dataset.id);
+      state.puTypes = [...ids].join(',');
+      puRefresh();
+    },
+    'pu-reset': () => { Object.assign(state, PU_DEFAULTS); puRefresh(); },
+    'pu-load-more': async () => { await loadPurchases(true); await render(); },
     'edit-oneoff': (el) => editOneoff(Number(el.dataset.id)),
     'delete-oneoff': async (el) => {
       const b = (state.data.oneoffs || []).find((x) => x.purchase_id === Number(el.dataset.id));
@@ -4382,6 +4525,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     'dd-pick': (el) => {
       state[el.dataset.key] = el.dataset.value;
       const key = el.dataset.key;
+      if (key in PU_DEFAULTS) savePuFilters();
       render().then(() => document.querySelector(`.dd[data-dd="${key}"] .dd-btn`)?.focus());
     },
     'goal-panel': (el) => { const g = findById(state.data.goals, el); if (g) openGoalPanel(g, el.dataset.mode); },
@@ -4652,6 +4796,11 @@ sudo docker compose up -d --build</pre>${s.extra}`;
         });
       }, 200);
     }
+    if (key === 'pu-query') {
+      state.puQuery = ev.target.value;
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => puRefresh(ev.target), 250);
+    }
     if (key === 'bsb' || key === 'account-number') formatDigits(ev.target, key === 'bsb');
     if (ev.target.id === 'payfreq') document.querySelector('#custom-days').hidden = ev.target.value !== 'custom';
   });
@@ -4669,6 +4818,15 @@ sudo docker compose up -d --build</pre>${s.extra}`;
     for (let seen = 0; pos < value.length && seen < caretDigits; pos += 1) if (/\d/.test(value[pos])) seen += 1;
     input.setSelectionRange(pos, pos);
   }
+
+  document.addEventListener('change', (ev) => {
+    const key = ev.target.dataset.input;
+    if (key !== 'pu-from' && key !== 'pu-to') return;
+    state[key === 'pu-from' ? 'puFrom' : 'puTo'] = ev.target.value;
+    puRefresh();
+  });
+  // Opening or closing the Filters on the Purchases page is kept while it's redrawn.
+  document.addEventListener('toggle', (ev) => { if (ev.target.classList?.contains('pu-more')) state.puOpen = ev.target.open; }, true);
 
   document.addEventListener('change', async (ev) => {
     if (ev.target.dataset.input !== 'restore') return;
@@ -7181,6 +7339,7 @@ sudo docker compose up -d --build</pre>${s.extra}`;
       if (page === 'shopping' && (!state.shop || state.shop.list !== sub)) await loadShop(sub);
       if (SECTIONS[page]) out = renderSection(page, sub);
       else if (page === 'overview' && sub === 'analytics') out = await renderAnalytics();
+      else if (page === 'purchases') { await loadPurchases(); out = renderPurchases(); }
       else if (page === 'settings') {
         if (sub === 'updates' && !state.updates) await loadUpdates();
         if ((sub === 'updates' || sub === 'backups') && !state.backups) state.backups = await api('GET', '/backups').catch(() => null);

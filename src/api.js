@@ -490,15 +490,131 @@ function createApi(db) {
     }
     // A goal is only for one that isn't counted (paid for from what's saved in the goal).
     if (!row.exclude) row.goal_id = null;
+    row.warranty_end = budget.purchaseWarrantyEnd(row);
     return row;
   }
-  const PURCHASE_COLUMNS = [...Object.keys(RESOURCES.purchases.fields), 'created_by', 'created_at', 'updated_at'];
+  const PURCHASE_COLUMNS = [...Object.keys(RESOURCES.purchases.fields), 'warranty_end', 'created_by', 'created_at', 'updated_at'];
   const getPurchase = (id) => { const p = db.prepare('SELECT * FROM purchases WHERE id = ?').get(Number(id)); return p ? { ...p } : null; };
+
+  // ---------- Purchases page: search and export ----------
+  //
+  // Every filter is a WHERE clause (so the database and its indexes do the work, and only one
+  // page of rows is ever loaded). Someone else's private purchases are never matched.
+  const PAGE_MAX = 100;
+  const ids = (v) => String(v ?? '').split(',').filter(Boolean).map(Number).filter((n) => Number.isInteger(n) && n >= 0);
+  function purchaseSearch(q, loginId) {
+    const where = ['(p.private = 0 OR coalesce(p.owner_id, p.created_by) = ?)'];
+    const params = [loginId];
+    // Tracked types: the ones picked (or every tracked one), and Not tracked only when asked.
+    const types = ids(q.types);
+    const untracked = q.untracked === '1' || q.untracked === 'true';
+    if (types.length) {
+      where.push(`(p.type_id IN (${types.map(() => '?').join(', ')})${untracked ? ' OR p.type_id IS NULL' : ''})`);
+      params.push(...types);
+    } else if (!untracked) where.push('p.type_id IS NOT NULL');
+    if (q.tax === '1' || q.tax === 'true') where.push('p.tax_deductible = 1');
+    // Text: every word has to be in the name, shop, notes or serial.
+    const words = String(q.q ?? '').slice(0, 200).trim().split(/\s+/).filter(Boolean).slice(0, 8);
+    for (const w of words) {
+      const like = `%${w.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+      where.push("(p.name LIKE ? ESCAPE '\\' OR p.shop LIKE ? ESCAPE '\\' OR p.notes LIKE ? ESCAPE '\\' OR p.serial LIKE ? ESCAPE '\\')");
+      params.push(like, like, like, like);
+    }
+    // Dates are local days, from the first morning to the end of the last.
+    if (q.from) {
+      if (!budget.isValidDate(String(q.from))) throw new BadRequest('From must be a date.');
+      where.push('p.purchased_at >= ?'); params.push(budget.startOfDay(String(q.from)));
+    }
+    if (q.to) {
+      if (!budget.isValidDate(String(q.to))) throw new BadRequest('To must be a date.');
+      where.push('p.purchased_at < ?'); params.push(budget.startOfDay(budget.addDays(String(q.to), 1)));
+    }
+    for (const [key, col] of [['account', 'account_id'], ['category', 'category_id']]) {
+      const [id] = ids(q[key]);
+      if (q[key] && id !== undefined) { where.push(`p.${col} = ?`); params.push(id); }
+    }
+    // Whose: Shared (nobody's), Mine, and other people's (only their non-private ones get this far).
+    const who = String(q.who ?? '').split(',').filter((w) => ['shared', 'mine', 'others'].includes(w));
+    if (who.length && who.length < 3) {
+      const parts = [];
+      if (who.includes('shared')) parts.push('p.owner_id IS NULL');
+      if (who.includes('mine')) { parts.push('p.owner_id = ?'); params.push(loginId); }
+      if (who.includes('others')) { parts.push('(p.owner_id IS NOT NULL AND p.owner_id <> ?)'); params.push(loginId); }
+      where.push(`(${parts.join(' OR ')})`);
+    }
+    // Warranty, by the same lines as the dots.
+    const cut = budget.warrantyCuts(today());
+    const WARRANTY = {
+      any: ['p.warranty_end IS NOT NULL'],
+      covered: ['p.warranty_end >= ?', cut.today],
+      green: ['p.warranty_end > ?', cut.amber],
+      amber: ['p.warranty_end >= ? AND p.warranty_end <= ?', cut.today, cut.amber],
+      orange: ['p.warranty_end >= ? AND p.warranty_end < ?', cut.orange, cut.today],
+      red: ['p.warranty_end < ?', cut.orange],
+      none: ['p.warranty_end IS NULL'],
+    };
+    if (q.warranty && WARRANTY[q.warranty]) {
+      const [sql, ...args] = WARRANTY[q.warranty];
+      where.push(`(${sql})`); params.push(...args);
+    }
+    return { sql: where.join(' AND '), params };
+  }
+  // A purchase as the Purchases page shows it, with its warranty dot.
+  const withWarranty = (p, day = today()) => ({ ...p, warranty_status: budget.warrantyStatus(p.warranty_end, day) });
+
+  router.get('/purchases/search', (req, res) => {
+    const { sql, params } = purchaseSearch(req.query, loginOf(req));
+    const limit = Math.min(PAGE_MAX, Math.max(1, Number.parseInt(req.query.limit, 10) || 50));
+    const offset = Math.max(0, Number.parseInt(req.query.offset, 10) || 0);
+    const sum = db.prepare(`SELECT count(*) AS n, coalesce(sum(p.amount_cents), 0) AS cents FROM purchases p WHERE ${sql}`).get(...params);
+    const day = today();
+    const items = db.prepare(`SELECT p.* FROM purchases p WHERE ${sql} ORDER BY p.purchased_at DESC, p.id DESC LIMIT ? OFFSET ?`)
+      .all(...params, limit, offset).map((p) => withWarranty(p, day));
+    res.json({ items, count: sum.n, total_cents: sum.cents, offset, limit });
+  });
+
+  // The same search as a spreadsheet (for tax time), written out a row at a time.
+  router.get('/purchases/export.csv', (req, res) => {
+    const { sql, params } = purchaseSearch(req.query, loginOf(req));
+    const names = (table) => new Map(db.prepare(`SELECT id, name FROM ${table}`).all().map((r) => [r.id, r.name]));
+    const accounts = names('accounts');
+    const categories = names('categories');
+    const subs = names('subcategories');
+    const types = names('purchase_types');
+    const logins = new Map([[0, getSetting(db, 'main_login_name') || 'Main'], ...db.prepare('SELECT id, name FROM logins').all().map((r) => [r.id, r.name])]);
+    const WARRANTY_WORDS = { green: 'In warranty', amber: 'Ending soon', orange: 'Ended this year', red: 'Ended over a year ago' };
+    // Quoted, and a cell a spreadsheet would run as a formula starts with ' instead.
+    const cell = (v) => {
+      let t = v == null ? '' : String(v);
+      if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`;
+      return /[",\r\n']/.test(t) || t !== String(v ?? '') ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const day = today();
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="simple-budget-purchases-${day}.csv"`);
+    res.write('\ufeff'); // so spreadsheets read it as UTF-8
+    res.write(`${['Date', 'Name', 'Amount', 'Account', 'Shop', 'Category', 'Sub category', 'Tracked type', 'Tax deductible', 'Whose', 'Paid by',
+      'Quantity', 'Serial or model no.', 'Notes', 'Warranty ends', 'Warranty', 'Not counted', 'Link'].join(',')}\r\n`);
+    // 500 rows at a time (statement.iterate() isn't in Node 22.13), each batch after the last one written.
+    const first = db.prepare(`SELECT p.* FROM purchases p WHERE ${sql} ORDER BY p.purchased_at DESC, p.id DESC LIMIT 500`);
+    const next = db.prepare(`SELECT p.* FROM purchases p WHERE ${sql} AND (p.purchased_at < ? OR (p.purchased_at = ? AND p.id < ?))
+      ORDER BY p.purchased_at DESC, p.id DESC LIMIT 500`);
+    for (let batch = first.all(...params); batch.length; batch = batch.length < 500 ? [] : next.all(...params, batch.at(-1).purchased_at, batch.at(-1).purchased_at, batch.at(-1).id)) {
+      for (const p of batch) {
+        const status = budget.warrantyStatus(p.warranty_end, day);
+        res.write(`${[budget.localDateOf(p.purchased_at), p.name, (p.amount_cents / 100).toFixed(2), accounts.get(p.account_id), p.shop,
+          categories.get(p.category_id), subs.get(p.subcategory_id), p.type_id == null ? 'Not tracked' : types.get(p.type_id),
+          p.tax_deductible ? 'Yes' : '', p.owner_id == null ? 'Shared' : logins.get(p.owner_id), p.payment_method, p.quantity, p.serial, p.notes,
+          p.warranty_end, status ? WARRANTY_WORDS[status] : '', p.exclude ? 'Yes' : '', p.link].map(cell).join(',')}\r\n`);
+      }
+    }
+    res.end();
+  });
 
   router.get('/purchases/:id', (req, res) => {
     const p = getPurchase(req.params.id);
     if (!p || !canSee(p, loginOf(req))) return res.status(404).json({ error: 'Not found.' });
-    res.json(p);
+    res.json(withWarranty(p));
   });
   router.post('/purchases', (req, res) => {
     if (db.prepare('SELECT count(*) AS n FROM purchases').get().n >= MAX_ROWS.purchases) throw new BadRequest(tooMany('purchases'));
@@ -544,6 +660,8 @@ function createApi(db) {
     const funded = new Set(budget.fundedRows([...expenses, ...loanRows], cycle.cycle, anchor));
     res.json({
       settings: settings(),
+      // Today's pay cycle, e.g. for the Purchases page's "This fortnight".
+      cycle: { start: bounds.start, end: bounds.end },
       accounts,
       payees: list('payees'),
       categories: categoriesWithSubs(),
@@ -1204,6 +1322,7 @@ function importBackup(db, input) {
         row.owner_id = login(raw.owner_id);
         if (row.owner_id === null) row.private = 0;
         row.created_by = login(raw.created_by);
+        row.warranty_end = budget.purchaseWarrantyEnd(row);
         const now = new Date().toISOString();
         row.created_at = T.moment(raw.created_at) || now;
         row.updated_at = T.moment(raw.updated_at) || now;
