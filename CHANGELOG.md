@@ -2,7 +2,7 @@
 
 Each version's notes become its GitHub release notes and show in Settings → Updates, so they're written for the household, under `### New`, `### Improved` and `### Fixed`. Anything for whoever runs the server goes in a paragraph after them.
 
-## v1.0.1 (unreleased)
+## v1.0.1 (14 November 2026)
 
 ### New
 - **Purchases**, a new page in the menu for finding anything you've bought. Search by name, shop, notes or serial number, and narrow it down by tracked type, Tax deductible, dates (this fortnight, this month, this financial year, last financial year or your own dates), account, category, whose it is and warranty. It shows the newest first, with how many match and their total, and loads more as you go.
@@ -11,6 +11,8 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 
 ### Improved
 - Only tracked purchases show to start with; tick **Include not tracked** under Filters to see the rest. Other logins' private purchases never show there or in the export.
+
+This update also includes routine updates to the app's building blocks. Nothing needs doing on the server. If you like, you can get the newer updater (Watchtower) on each copy with `git pull` and then `sudo docker compose up -d` in its folder.
 
 ## v1.0.0 (30 October 2026)
 
