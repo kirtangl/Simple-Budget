@@ -12,7 +12,15 @@ Each version's notes become its GitHub release notes and show in Settings → Up
 ### Improved
 - Only tracked purchases show to start with; tick **Include not tracked** under Filters to see the rest. Other logins' private purchases never show there or in the export.
 
-This update also includes routine updates to the app's building blocks. Nothing needs doing on the server. If you like, you can get the newer updater (Watchtower) on each copy with `git pull` and then `sudo docker compose up -d` in its folder.
+This update also includes routine updates to the app's building blocks.
+
+### Extra steps
+- Optional: Update now never updates the updater (Watchtower) itself. To get its newer version, run these once in each copy's folder. Nothing breaks if you don't.
+
+```
+sudo git pull
+sudo docker compose pull && sudo docker compose up -d
+```
 
 ## v1.0.0 (30 October 2026)
 
